@@ -22,7 +22,7 @@ Public Class TiroFormViewer
     Private Const VirtualHostName As String = "appassets.local"
 
     ' Tracks if Webview is initialized
-    Private ReadOnly _initializationTask As Threading.Tasks.Task
+    Private _initializationTask As Threading.Tasks.Task
 
     ' Track if handshake has been received
     Private _handshakeReceivedSource As New TaskCompletionSource(Of Boolean)(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -35,7 +35,15 @@ Public Class TiroFormViewer
 
     Public Sub New()
         InitializeComponent()
+        ' Skip all runtime initialization at design time.
+        ' IMPORTANT: all FHIR/Sentry references must stay in InitializeRuntime(), NOT here.
+        ' The JIT resolves every type referenced in this method body before executing any code,
+        ' so even an early Return cannot guard against types referenced further down in this method.
+        If System.ComponentModel.LicenseManager.UsageMode = System.ComponentModel.LicenseUsageMode.Designtime Then Return
+        InitializeRuntime()
+    End Sub
 
+    Private Sub InitializeRuntime()
         ' Ensure Sentry is active for this session
         If Not SentrySdk.IsEnabled Then
             SentrySdk.Init(Sub(o)
