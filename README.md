@@ -122,9 +122,9 @@ handler.HandshakeReceived += async (_, _) =>
 
 | Package | Version | Used by |
 |---|---|---|
-| `Hl7.Fhir.Base` | 5.11.4 | Core |
-| `Hl7.Fhir.R5` | 5.11.4 | Fhir.R5, FormFiller, Sample, Tests |
-| `Hl7.Fhir.R4` | 5.11.4 | Fhir.R4 |
+| `Hl7.Fhir.Base` | 5.13.2 | Core |
+| `Hl7.Fhir.R5` | 5.13.2 | Fhir.R5, FormFiller, Sample, Tests |
+| `Hl7.Fhir.R4` | 5.13.2 | Fhir.R4 |
 | `System.Text.Json` | 9.0.2 | Core, Fhir.R5, Fhir.R4 |
 | `Microsoft.Extensions.Logging.Abstractions` | 9.0.7 | Core, Fhir.R5, Fhir.R4 |
 | `Microsoft.Web.WebView2` | 1.0.3650.58 | FormFiller, Sample |
