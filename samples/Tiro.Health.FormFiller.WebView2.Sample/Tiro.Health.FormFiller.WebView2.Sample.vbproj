@@ -49,7 +49,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj" />
     <ProjectReference Include="..\..\src\Tiro.Health.SmartWebMessaging.Fhir.R5\Tiro.Health.SmartWebMessaging.Fhir.R5.csproj" />
-    <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.vbproj" />
+    <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />

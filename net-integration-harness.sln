@@ -9,7 +9,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.SmartWebMessagi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.SmartWebMessaging.Fhir.R4", "src\Tiro.Health.SmartWebMessaging.Fhir.R4\Tiro.Health.SmartWebMessaging.Fhir.R4.csproj", "{C1A2B3C4-D5E6-F789-ABCD-000000000003}"
 EndProject
-Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "Tiro.Health.FormFiller.WebView2", "src\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.vbproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.FormFiller.WebView2", "src\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 EndProject
 Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "Tiro.Health.FormFiller.WebView2.Sample", "samples\Tiro.Health.FormFiller.WebView2.Sample\Tiro.Health.FormFiller.WebView2.Sample.vbproj", "{B1C2D3E4-F5A6-7890-BCDE-FA0123456789}"
 EndProject

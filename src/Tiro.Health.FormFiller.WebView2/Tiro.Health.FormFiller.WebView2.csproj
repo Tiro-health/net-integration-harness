@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Tiro.Health.FormFiller.WebView2</RootNamespace>
+    <AssemblyName>Tiro.Health.FormFiller.WebView2</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RuntimeIdentifiers>win</RuntimeIdentifiers>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>1591</NoWarn>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Hl7.Fhir.R5" Version="5.13.2" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3650.58" />
+    <PackageReference Include="Sentry" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
+    <PackageReference Include="System.Text.Json" Version="9.0.2" />
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj" />
+    <ProjectReference Include="..\Tiro.Health.SmartWebMessaging.Fhir.R5\Tiro.Health.SmartWebMessaging.Fhir.R5.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="WebAssets\index.html">
+      <LogicalName>$(RootNamespace).WebAssets.index.html</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="app.config" />
+  </ItemGroup>
+
+</Project>
