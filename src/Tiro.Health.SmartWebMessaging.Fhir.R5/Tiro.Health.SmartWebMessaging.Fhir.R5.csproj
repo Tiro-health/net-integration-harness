@@ -5,19 +5,18 @@
     <AssemblyName>Tiro.Health.SmartWebMessaging.Fhir.R5</AssemblyName>
     <RootNamespace>Tiro.Health.SmartWebMessaging.Fhir.R5</RootNamespace>
     <Version>1.0.0</Version>
-    <Authors>Tiro.health</Authors>
+    <Authors>Thibault Mahieu</Authors>
     <Company>Tiro.health</Company>
     <Description>SMART Web Messaging — FHIR R5 typed layer.</Description>
     <AutoGenerateBindingRedirects>True</AutoGenerateBindingRedirects>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Hl7.Fhir.R5" Version="5.13.2" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
     <PackageReference Include="System.Text.Json" Version="9.0.2" />
-    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
-    <PackageReference Include="System.Memory" Version="4.5.5" />
-    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
   </ItemGroup>
 
   <ItemGroup>

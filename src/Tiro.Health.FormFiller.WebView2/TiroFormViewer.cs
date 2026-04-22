@@ -112,8 +112,8 @@ namespace Tiro.Health.FormFiller.WebView2
                     }
                     return Task.FromResult("");
                 };
-
-                var startUri = "https://tiro-health.github.io/web-sdk-tutorial/html+js-smartwebmessaging/";
+                // TODO pass local index.html with virtual host mapping
+                var startUri = "https://tiro-health.github.io/web-sdk-tutorial/html+js-smartwebmessaging/"; 
                 WebView2Host.Source = new Uri(startUri);
 
                 initSpan?.Finish(SpanStatus.Ok);
@@ -128,8 +128,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void SMARTWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            if (_isDisposed) return;
-            if (WebView2Host?.CoreWebView2 == null) return;
+            if (_isDisposed || WebView2Host?.CoreWebView2 == null) return;
 
             var inboundJson = e?.WebMessageAsJson;
             if (string.IsNullOrEmpty(inboundJson)) return;
@@ -165,7 +164,9 @@ namespace Tiro.Health.FormFiller.WebView2
         private void OnPermissionRequested(object sender, CoreWebView2PermissionRequestedEventArgs e)
         {
             if (e.PermissionKind == CoreWebView2PermissionKind.Microphone)
+            {
                 e.State = CoreWebView2PermissionState.Allow;
+            }
         }
 
         private void OnHandshakeReceived(object sender, EventArgs e)

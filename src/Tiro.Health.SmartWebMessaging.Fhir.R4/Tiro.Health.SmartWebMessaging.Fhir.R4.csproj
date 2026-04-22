@@ -5,7 +5,7 @@
     <AssemblyName>Tiro.Health.SmartWebMessaging.Fhir.R4</AssemblyName>
     <RootNamespace>Tiro.Health.SmartWebMessaging.Fhir.R4</RootNamespace>
     <Version>1.0.0</Version>
-    <Authors>Tiro.health</Authors>
+    <Authors>Thibault Mahieu</Authors>
     <Company>Tiro.health</Company>
     <Description>SMART Web Messaging — FHIR R4 typed layer.</Description>
     <AutoGenerateBindingRedirects>True</AutoGenerateBindingRedirects>

@@ -15,7 +15,8 @@
       "Bash(dotnet test:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
-      "Bash(xargs -I{} powershell -Command \"[Reflection.AssemblyName]::GetAssemblyName\\(''{}''\\).Version\")"
+      "Bash(xargs -I{} powershell -Command \"[Reflection.AssemblyName]::GetAssemblyName\\(''{}''\\).Version\")",
+      "Bash(do echo:*)"
     ]
   }
 }
