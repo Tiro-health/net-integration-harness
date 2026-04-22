@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tiro Form Filler — Sample</title>
+    <link rel="preconnect" href="https://cdn.tiro.health" crossorigin>
+    <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer></script>
+    <style>
+        :root { color-scheme: light; }
+        html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background: #f7f8fa; color: #222; }
+        body { display: flex; flex-direction: column; }
+        header { padding: 8px 16px; background: #fff; border-bottom: 1px solid #e5e7eb; font-size: 0.85rem; color: #6b7280; }
+        main { flex: 1; overflow: auto; padding: 16px; }
+        footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; background: #fff; border-top: 1px solid #e5e7eb; }
+        button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
+        .btn-primary { background: #2563eb; color: #fff; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+        .btn-secondary { background: #fff; color: #111; border-color: #d1d5db; }
+        .btn-secondary:hover { background: #f3f4f6; }
+        tiro-form-filler { display: block; height: 100%; }
+    </style>
+</head>
+<body>
+    <header id="status">Connecting&hellip;</header>
+    <main>
+        <tiro-form-filler id="form-filler" sdc-endpoint-address="https://sdc.tiro.health/fhir/r5"></tiro-form-filler>
+    </main>
+    <footer>
+        <button id="cancel-btn" class="btn-secondary" type="button">Cancel</button>
+        <button id="submit-btn" class="btn-primary" type="button" disabled>Submit</button>
+    </footer>
+
+    <script>
+        const SmartWebMessaging = {
+            messagingHandle: "smart-web-messaging",
+            pendingRequests: new Map(),
+            context: null,
+
+            generateMessageId() { return crypto.randomUUID(); },
+            isWebView2() { return !!(window.chrome && window.chrome.webview); },
+            isIframe() { return window.parent !== window; },
+
+            sendMessage(message) {
+                if (this.isWebView2()) window.chrome.webview.postMessage(message);
+                else if (this.isIframe()) window.parent.postMessage(message, "*");
+                else console.warn("[SWM] No host available");
+            },
+
+            sendRequest(messageType, payload = {}) {
+                return new Promise((resolve, reject) => {
+                    const messageId = this.generateMessageId();
+                    this.pendingRequests.set(messageId, { resolve, reject });
+                    this.sendMessage({ messageId, messagingHandle: this.messagingHandle, messageType, payload });
+                    setTimeout(() => {
+                        if (this.pendingRequests.has(messageId)) {
+                            this.pendingRequests.delete(messageId);
+                            reject(new Error(`Request timeout: ${messageType}`));
+                        }
+                    }, 30000);
+                });
+            },
+
+            sendEvent(messageType, payload = {}) {
+                this.sendMessage({ messageId: this.generateMessageId(), messagingHandle: this.messagingHandle, messageType, payload });
+            },
+
+            sendResponse(responseToMessageId, payload) {
+                this.sendMessage({ messageId: this.generateMessageId(), responseToMessageId, additionalResponsesExpected: false, payload });
+            },
+
+            retryHandshake(retryIntervalMs = 1000, timeoutMs = 30000) {
+                return new Promise((resolve, reject) => {
+                    const start = Date.now();
+                    const attemptIds = [];
+                    let resolved = false;
+
+                    const onSuccess = (payload) => {
+                        if (resolved) return;
+                        resolved = true;
+                        attemptIds.forEach(id => this.pendingRequests.delete(id));
+                        resolve(payload);
+                    };
+
+                    const attempt = () => {
+                        if (resolved) return;
+                        const messageId = this.generateMessageId();
+                        attemptIds.push(messageId);
+                        this.pendingRequests.set(messageId, { resolve: onSuccess, reject: () => {} });
+                        this.sendMessage({ messageId, messagingHandle: this.messagingHandle, messageType: "status.handshake", payload: {} });
+                        setTimeout(() => {
+                            if (!resolved && (Date.now() - start) < timeoutMs) attempt();
+                        }, retryIntervalMs);
+                    };
+
+                    setTimeout(() => {
+                        if (!resolved) {
+                            attemptIds.forEach(id => this.pendingRequests.delete(id));
+                            reject(new Error("Handshake timeout"));
+                        }
+                    }, timeoutMs);
+
+                    attempt();
+                });
+            },
+
+            handleMessage(message) {
+                if (message.responseToMessageId) {
+                    const pending = this.pendingRequests.get(message.responseToMessageId);
+                    if (pending) {
+                        if (message.payload && message.payload.$type === "error") pending.reject(new Error(message.payload.errorMessage));
+                        else pending.resolve(message.payload);
+                        if (!message.additionalResponsesExpected) this.pendingRequests.delete(message.responseToMessageId);
+                    }
+                    return;
+                }
+                if (message.messageType) this.handleHostMessage(message);
+            },
+
+            handleHostMessage(message) {
+                const handlers = {
+                    "sdc.configure":            () => { /* no-op in sample */ },
+                    "sdc.configureContext":     () => { this.context = { ...this.context, ...message.payload }; },
+                    "sdc.displayQuestionnaire": () => displayQuestionnaire(message.payload),
+                    "ui.form.requestSubmit":    () => submitForm(),
+                    "ui.form.persist":          () => { /* no-op in sample */ },
+                };
+                const handler = handlers[message.messageType];
+                if (handler) {
+                    handler();
+                    this.sendResponse(message.messageId, { $type: "base" });
+                } else {
+                    this.sendResponse(message.messageId, { $type: "error", errorMessage: `Unknown message type: ${message.messageType}`, errorType: "UnknownMessageTypeException" });
+                }
+            },
+
+            init() {
+                if (this.isWebView2()) {
+                    window.chrome.webview.addEventListener("message", (e) => this.handleMessage(e.data));
+                } else if (this.isIframe()) {
+                    window.addEventListener("message", (e) => { if (e.source === window.parent) this.handleMessage(e.data); });
+                } else {
+                    setStatus("Standalone mode — embed in WebView2 or iframe.");
+                    return;
+                }
+                this.retryHandshake().then(
+                    () => setStatus("Connected — waiting for questionnaire…"),
+                    (err) => setStatus("Handshake failed: " + err.message)
+                );
+            },
+        };
+
+        const formFiller = document.getElementById("form-filler");
+        const submitBtn = document.getElementById("submit-btn");
+        const cancelBtn = document.getElementById("cancel-btn");
+        const statusEl = document.getElementById("status");
+
+        function setStatus(text) { statusEl.textContent = text; }
+
+        function displayQuestionnaire(payload) {
+            const { questionnaire, questionnaireResponse, context } = payload || {};
+            if (context) SmartWebMessaging.context = { ...SmartWebMessaging.context, ...context };
+            if (!questionnaire) { setStatus("No questionnaire in payload"); return; }
+
+            if (SmartWebMessaging.context && Array.isArray(SmartWebMessaging.context.launchContext)) {
+                const launchContext = {};
+                SmartWebMessaging.context.launchContext.forEach(item => {
+                    if (item.name && item.contentResource) launchContext[item.name] = item.contentResource;
+                });
+                if (Object.keys(launchContext).length > 0)
+                    formFiller.setAttribute("launch-context", JSON.stringify(launchContext));
+            }
+
+            if (questionnaireResponse)
+                formFiller.setAttribute("initial-response", JSON.stringify(questionnaireResponse));
+
+            formFiller.setAttribute("questionnaire",
+                typeof questionnaire === "string" ? questionnaire : JSON.stringify(questionnaire));
+        }
+
+        function submitForm() {
+            if (!formFiller.questionnaire) { setStatus("No form loaded"); return; }
+            formFiller.submit();
+        }
+
+        function sanitize(value) {
+            if (value === null) return undefined;
+            if (typeof value !== "object") return value;
+            if (Array.isArray(value)) return value.map(sanitize).filter(v => v !== undefined);
+            const out = {};
+            for (const [k, v] of Object.entries(value)) {
+                const s = sanitize(v);
+                if (s !== undefined) out[k] = s;
+            }
+            return out;
+        }
+
+        async function sendFormSubmission(response) {
+            response.status = "completed";
+            response = sanitize(response);
+            try {
+                const narrative = await formFiller.sdcClient.generateNarrative(response);
+                response.text = narrative;
+            } catch (err) {
+                console.warn("[Sample] Narrative generation failed:", err);
+            }
+            const outcome = {
+                resourceType: "OperationOutcome",
+                issue: [{ severity: "information", code: "informational", diagnostics: "Form submitted successfully" }],
+            };
+            try {
+                await SmartWebMessaging.sendRequest("form.submitted", { response, outcome });
+                setStatus("Submitted.");
+            } catch (err) {
+                setStatus("Submission failed: " + err.message);
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            formFiller.addEventListener("tiro-ready", () => {
+                submitBtn.disabled = false;
+                setStatus("Questionnaire loaded.");
+            });
+            formFiller.addEventListener("tiro-submit", (e) => sendFormSubmission(e.detail.response));
+            formFiller.addEventListener("tiro-error", (e) => setStatus("Error: " + (e.detail.error?.message ?? e.detail.type)));
+
+            submitBtn.addEventListener("click", submitForm);
+            cancelBtn.addEventListener("click", () => {
+                SmartWebMessaging.sendEvent("ui.done", {});
+                setStatus("Cancelled.");
+            });
+
+            SmartWebMessaging.init();
+        });
+    </script>
+</body>
+</html>

@@ -18,6 +18,14 @@ namespace Tiro.Health.FormFiller.WebView2
         public event EventHandler<FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome>> FormSubmitted;
         public event EventHandler<CloseApplicationEventArgs> CloseApplication;
 
+        /// <summary>
+        /// Optional folder containing a consumer-supplied <c>index.html</c> (and any supporting assets).
+        /// When null, the <c>index.html</c> shipped with this package is used.
+        /// Set this before the control's handle is created (e.g. via object initializer, or before
+        /// adding the control to its parent form).
+        /// </summary>
+        public string WebContentFolder { get; set; }
+
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandler _smartWebMessageHandler;
         private const string VirtualHostName = "appassets.local";
@@ -114,9 +122,17 @@ namespace Tiro.Health.FormFiller.WebView2
                     }
                     return Task.FromResult("");
                 };
-                // TODO pass local index.html with virtual host mapping
-                var startUri = "https://tiro-health.github.io/web-sdk-tutorial/html+js-smartwebmessaging/"; 
-                WebView2Host.Source = new Uri(startUri);
+
+                var contentFolder = !string.IsNullOrEmpty(WebContentFolder)
+                    ? WebContentFolder
+                    : DefaultWebContent.FolderPath;
+
+                coreWebView2.SetVirtualHostNameToFolderMapping(
+                    VirtualHostName,
+                    contentFolder,
+                    CoreWebView2HostResourceAccessKind.Allow);
+
+                WebView2Host.Source = new Uri($"https://{VirtualHostName}/index.html");
 
                 initSpan?.Finish(SpanStatus.Ok);
             }

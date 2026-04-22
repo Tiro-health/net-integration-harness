@@ -5,13 +5,19 @@ Public Class Form1
     ' Flag that keeps track if form has been submitted
     Private isFormSubmitted As Boolean = False
 
+    Public Sub New()
+        InitializeComponent()
+        TiroFormViewer.WebContentFolder = System.IO.Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory, "WebContent")
+    End Sub
+
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
         Await InitializeViewerAsync()
     End Sub
 
-    Private Async Function InitializeViewerAsync() As Task(Of Task)
+    Private Async Function InitializeViewerAsync() As System.Threading.Tasks.Task
         Dim patient As Patient = New Patient() With {
             .Name = New List(Of HumanName) From {
                 New HumanName() With {
@@ -77,6 +83,7 @@ Public Class Form1
     ' ----------------------------------------------------
     Private Sub HandleCloseApplication(ByVal sender As Object, ByVal e As CloseApplicationEventArgs)
         isFormSubmitted = True
+        MessageBox.Show("Closing.", "Closing")
         Me.Close()
     End Sub
 
