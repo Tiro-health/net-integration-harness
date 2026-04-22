@@ -16,6 +16,7 @@ namespace Tiro.Health.FormFiller.WebView2
     public partial class TiroFormViewer : UserControl
     {
         public event EventHandler<FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome>> FormSubmitted;
+        public event EventHandler<CloseApplicationEventArgs> CloseApplication;
 
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandler _smartWebMessageHandler;
@@ -63,6 +64,7 @@ namespace Tiro.Health.FormFiller.WebView2
             _smartWebMessageHandler = new SmartMessageHandler();
             _smartWebMessageHandler.HandshakeReceived += OnHandshakeReceived;
             _smartWebMessageHandler.FormSubmitted += OnFormSubmitted;
+            _smartWebMessageHandler.CloseApplication += OnCloseApplication;
 
             _initializationTask = InitializeWebViewAsync();
         }
@@ -172,6 +174,11 @@ namespace Tiro.Health.FormFiller.WebView2
         private void OnHandshakeReceived(object sender, EventArgs e)
         {
             _handshakeReceivedSource.TrySetResult(true);
+        }
+
+        private void OnCloseApplication(object sender, CloseApplicationEventArgs e)
+        {
+            CloseApplication?.Invoke(this, e);
         }
 
         private void OnFormSubmitted(object sender, FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome> e)

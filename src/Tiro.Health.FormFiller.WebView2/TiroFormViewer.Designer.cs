@@ -23,6 +23,7 @@ namespace Tiro.Health.FormFiller.WebView2
                     {
                         _smartWebMessageHandler.FormSubmitted -= OnFormSubmitted;
                         _smartWebMessageHandler.HandshakeReceived -= OnHandshakeReceived;
+                        _smartWebMessageHandler.CloseApplication -= OnCloseApplication;
                     }
 
                     // 3. Cleanup the Sentry transaction

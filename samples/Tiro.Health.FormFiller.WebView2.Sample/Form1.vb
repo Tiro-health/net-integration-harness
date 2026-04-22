@@ -1,5 +1,5 @@
 Imports Hl7.Fhir.Model
-Imports Tiro.Health.SmartWebMessaging.Fhir.R5
+Imports Tiro.Health.SmartWebMessaging.Events
 
 Public Class Form1
     ' Flag that keeps track if form has been submitted
@@ -7,6 +7,7 @@ Public Class Form1
 
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
+        AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
         Await InitializeViewerAsync()
     End Sub
 
@@ -34,8 +35,8 @@ Public Class Form1
 
     ' ----------------------------------------------------
     ' EVENT HANDLER FOR FORM SUBMISSION
-    ' ----------------------------------------------------
-    Private Sub HandleFormSubmitted(ByVal sender As Object, ByVal e As FormSubmittedEventArgs)
+    ' ----------------------------, it ------------------------
+    Private Sub HandleFormSubmitted(ByVal sender As Object, ByVal e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
 
         ' Check if there are validation errors
         If e.Outcome IsNot Nothing AndAlso e.Outcome.Success = False Then
@@ -69,6 +70,14 @@ Public Class Form1
         isFormSubmitted = True
         Me.Close()
 
+    End Sub
+
+    ' ----------------------------------------------------
+    ' EVENT HANDLER FOR CLOSE APPLICATION (ui.done)
+    ' ----------------------------------------------------
+    Private Sub HandleCloseApplication(ByVal sender As Object, ByVal e As CloseApplicationEventArgs)
+        isFormSubmitted = True
+        Me.Close()
     End Sub
 
     Private Async Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles MyBase.FormClosing
