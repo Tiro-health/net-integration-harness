@@ -7,7 +7,6 @@ using Hl7.Fhir.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tiro.Health.SmartWebMessaging;
-using Tiro.Health.SmartWebMessaging.Events;
 using Tiro.Health.SmartWebMessaging.Message.Payload;
 
 namespace Tiro.Health.SmartWebMessaging.Fhir.R4
@@ -18,9 +17,6 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R4
     public class SmartMessageHandler
         : SmartMessageHandlerBase<Resource, QuestionnaireResponse, OperationOutcome>
     {
-        // Typed events for R4 consumers
-        public event EventHandler<FormSubmittedEventArgs> FormSubmitted;
-
         // ---------------------------------------------------------------------------
         // Constructors
         // ---------------------------------------------------------------------------
@@ -50,14 +46,6 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R4
         }
 
         // ---------------------------------------------------------------------------
-        // Template method overrides — raise R4-typed events
-        // ---------------------------------------------------------------------------
-        protected override void OnFormSubmitted(QuestionnaireResponse response, OperationOutcome outcome)
-        {
-            FormSubmitted?.Invoke(this, new FormSubmittedEventArgs(response, outcome));
-        }
-
-        // ---------------------------------------------------------------------------
         // R4-typed convenience send overloads
         // ---------------------------------------------------------------------------
 
@@ -70,11 +58,7 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R4
             Practitioner author = null,
             Func<Tiro.Health.SmartWebMessaging.Message.SmartMessageResponse, System.Threading.Tasks.Task> responseHandler = null)
         {
-            var launchContext = new List<LaunchContext<Resource>>();
-            if (patient != null) launchContext.Add(new LaunchContext<Resource>("patient", contentResource: patient));
-            if (encounter != null) launchContext.Add(new LaunchContext<Resource>("encounter", contentResource: encounter));
-            if (author != null) launchContext.Add(new LaunchContext<Resource>("user", contentResource: author));
-
+            var launchContext = BuildLaunchContext(patient, encounter, author);
             return SendSdcConfigureContextAsync(launchContext: launchContext, responseHandler: responseHandler);
         }
 
@@ -124,16 +108,5 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R4
             if (author != null) ctx.Add(new LaunchContext<Resource>("user", contentResource: author));
             return ctx;
         }
-    }
-
-    // ---------------------------------------------------------------------------
-    // Concrete event arg types for R4 consumers
-    // ---------------------------------------------------------------------------
-
-    public sealed class FormSubmittedEventArgs
-        : FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome>
-    {
-        public FormSubmittedEventArgs(QuestionnaireResponse response, OperationOutcome outcome)
-            : base(response, outcome) { }
     }
 }

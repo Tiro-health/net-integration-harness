@@ -658,13 +658,13 @@ namespace Tiro.Health.SmartWebMessaging.Tests
     public void TestFormSubmit()
     {
       // Create a mock for the FormSubmitted event handler
-      var mockFormSubmittedEventHandler = new Mock<EventHandler<FormSubmittedEventArgs>>();
+      var mockFormSubmittedEventHandler = new Mock<EventHandler<FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome>>>();
 
       // Create an instance of SmartMessageHandler
       var messageHandler = new SmartMessageHandler();
 
       // Variable to capture the event args
-      FormSubmittedEventArgs capturedFormSubmittedArgs = null!;
+      FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome> capturedFormSubmittedArgs = null!;
 
       // Subscribe the mock event handler to the FormSubmitted event
       messageHandler.FormSubmitted += (sender, args) =>
@@ -767,7 +767,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       StringAssert.Contains(result, "\"$type\":\"base\"");
 
       // Verify that the FormSubmitted event was fired once
-      mockFormSubmittedEventHandler.Verify(m => m(It.IsAny<object>(), It.IsAny<FormSubmittedEventArgs>()), Times.Once);
+      mockFormSubmittedEventHandler.Verify(m => m(It.IsAny<object>(), It.IsAny<FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome>>()), Times.Once);
 
       // Verify the event args contain the correct data
       Assert.IsNotNull(capturedFormSubmittedArgs);

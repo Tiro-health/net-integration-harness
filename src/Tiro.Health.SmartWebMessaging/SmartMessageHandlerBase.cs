@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Hl7.Fhir.Model;
@@ -28,9 +29,10 @@ namespace Tiro.Health.SmartWebMessaging
 
         public JsonSerializerOptions SerializeOptions { get; }
 
-        // FHIR-free events declared on the base class
+        // Events
         public event EventHandler<HandshakeReceivedEventArgs> HandshakeReceived;
         public event EventHandler<CloseApplicationEventArgs> CloseApplication;
+        public event EventHandler<FormSubmittedEventArgs<TQuestionnaireResponse, TOperationOutcome>> FormSubmitted;
 
         private readonly ConcurrentDictionary<string, Func<SmartMessageResponse, Task>> _responseListeners
             = new ConcurrentDictionary<string, Func<SmartMessageResponse, Task>>();
@@ -45,12 +47,21 @@ namespace Tiro.Health.SmartWebMessaging
         {
             _logger = logger ?? NullLogger.Instance;
             SerializeOptions = serializeOptions ?? throw new ArgumentNullException(nameof(serializeOptions));
+            EnsurePayloadResolver(SerializeOptions);
         }
 
-        // ---------------------------------------------------------------------------
-        // Template methods — override in concrete class to raise typed events
-        // ---------------------------------------------------------------------------
-        protected virtual void OnFormSubmitted(TQuestionnaireResponse response, TOperationOutcome outcome) { }
+        private static void EnsurePayloadResolver(JsonSerializerOptions options)
+        {
+            if (options.TypeInfoResolver is PayloadTypeInfoResolver<TResource, TQuestionnaireResponse>)
+                return;
+            var inner = options.TypeInfoResolver ?? new DefaultJsonTypeInfoResolver();
+            options.TypeInfoResolver = new PayloadTypeInfoResolver<TResource, TQuestionnaireResponse>(inner);
+        }
+
+        protected virtual void OnFormSubmitted(TQuestionnaireResponse response, TOperationOutcome outcome)
+        {
+            FormSubmitted?.Invoke(this, new FormSubmittedEventArgs<TQuestionnaireResponse, TOperationOutcome>(response, outcome));
+        }
 
         // ---------------------------------------------------------------------------
         // Public message entry point

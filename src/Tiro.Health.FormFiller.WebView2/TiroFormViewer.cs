@@ -15,7 +15,7 @@ namespace Tiro.Health.FormFiller.WebView2
 {
     public partial class TiroFormViewer : UserControl
     {
-        public event EventHandler<FormSubmittedEventArgs> FormSubmitted;
+        public event EventHandler<FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome>> FormSubmitted;
 
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandler _smartWebMessageHandler;
@@ -174,7 +174,7 @@ namespace Tiro.Health.FormFiller.WebView2
             _handshakeReceivedSource.TrySetResult(true);
         }
 
-        private void OnFormSubmitted(object sender, FormSubmittedEventArgs e)
+        private void OnFormSubmitted(object sender, FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome> e)
         {
             try
             {
