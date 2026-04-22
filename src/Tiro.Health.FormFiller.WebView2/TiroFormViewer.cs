@@ -28,7 +28,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandler _smartWebMessageHandler;
-        private const string VirtualHostName = "appassets.local";
+        private const string VirtualHostName = "appassets.example"; // https://github.com/MicrosoftEdge/WebView2Feedback/issues/2381
 
         // Tracks if WebView is initialized
         private Task _initializationTask;
