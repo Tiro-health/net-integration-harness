@@ -5,8 +5,6 @@ using System.Text.Json.Serialization;
 namespace Tiro.Health.SmartWebMessaging.Message.Payload
 {
     [JsonDerivedType(typeof(RequestPayload), typeDiscriminator: "base")]
-    [JsonDerivedType(typeof(ScratchpadDelete), typeDiscriminator: "scratchpadDelete")]
-    [JsonDerivedType(typeof(ScratchpadRead), typeDiscriminator: "scratchpadRead")]
     [JsonDerivedType(typeof(SdcConfigure), typeDiscriminator: "sdcConfigure")]
     public class RequestPayload
     {

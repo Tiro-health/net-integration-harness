@@ -20,7 +20,6 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R4
     {
         // Typed events for R4 consumers
         public event EventHandler<FormSubmittedEventArgs> FormSubmitted;
-        public event EventHandler<ResourceChangedEventArgs> ResourceChanged;
 
         // ---------------------------------------------------------------------------
         // Constructors
@@ -56,11 +55,6 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R4
         protected override void OnFormSubmitted(QuestionnaireResponse response, OperationOutcome outcome)
         {
             FormSubmitted?.Invoke(this, new FormSubmittedEventArgs(response, outcome));
-        }
-
-        protected override void OnResourceChanged(Resource resource)
-        {
-            ResourceChanged?.Invoke(this, new ResourceChangedEventArgs(resource));
         }
 
         // ---------------------------------------------------------------------------
@@ -141,11 +135,5 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R4
     {
         public FormSubmittedEventArgs(QuestionnaireResponse response, OperationOutcome outcome)
             : base(response, outcome) { }
-    }
-
-    public sealed class ResourceChangedEventArgs
-        : ResourceChangedEventArgs<Resource>
-    {
-        public ResourceChangedEventArgs(Resource resource) : base(resource) { }
     }
 }

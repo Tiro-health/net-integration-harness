@@ -21,7 +21,6 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R5
     {
         // Typed events for R5 consumers
         public event EventHandler<FormSubmittedEventArgs> FormSubmitted;
-        public event EventHandler<ResourceChangedEventArgs> ResourceChanged;
 
         // ---------------------------------------------------------------------------
         // Constructors
@@ -76,19 +75,9 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R5
                 var info = _inner.GetTypeInfo(type, options);
                 if (info == null) return null;
 
-                if (type == typeof(ResponsePayload))
+                if (type == typeof(RequestPayload))
                 {
                     EnsurePolymorphism(info);
-                    info.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(typeof(ScratchpadCreateResponse<OperationOutcome>), "scratchpadCreate"));
-                    info.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(typeof(ScratchpadUpdateResponse<OperationOutcome>), "scratchpadUpdate"));
-                    info.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(typeof(ScratchpadDeleteResponse<OperationOutcome>), "scratchpadDelete"));
-                    info.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(typeof(ScratchpadReadResponse<Resource, OperationOutcome>), "scratchpadRead"));
-                }
-                else if (type == typeof(RequestPayload))
-                {
-                    EnsurePolymorphism(info);
-                    info.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(typeof(ScratchpadCreate<Resource>), "scratchpadCreate"));
-                    info.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(typeof(ScratchpadUpdate<Resource>), "scratchpadUpdate"));
                     info.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(typeof(SdcConfigureContext<Resource>), "sdcConfigureContext"));
                     info.PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(typeof(SdcDisplayQuestionnaire<Resource, QuestionnaireResponse>), "sdcDisplayQuestionnaire"));
                 }
@@ -119,11 +108,6 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R5
         protected override void OnFormSubmitted(QuestionnaireResponse response, OperationOutcome outcome)
         {
             FormSubmitted?.Invoke(this, new FormSubmittedEventArgs(response, outcome));
-        }
-
-        protected override void OnResourceChanged(Resource resource)
-        {
-            ResourceChanged?.Invoke(this, new ResourceChangedEventArgs(resource));
         }
 
         // ---------------------------------------------------------------------------
@@ -204,11 +188,5 @@ namespace Tiro.Health.SmartWebMessaging.Fhir.R5
     {
         public FormSubmittedEventArgs(QuestionnaireResponse response, OperationOutcome outcome)
             : base(response, outcome) { }
-    }
-
-    public sealed class ResourceChangedEventArgs
-        : ResourceChangedEventArgs<Resource>
-    {
-        public ResourceChangedEventArgs(Resource resource) : base(resource) { }
     }
 }

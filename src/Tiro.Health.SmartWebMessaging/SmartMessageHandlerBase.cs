@@ -25,7 +25,6 @@ namespace Tiro.Health.SmartWebMessaging
         where TResource : Resource
     {
         private readonly ILogger _logger;
-        private readonly Scratchpad<TResource> _scratchpad = new Scratchpad<TResource>();
 
         public JsonSerializerOptions SerializeOptions { get; }
 
@@ -52,7 +51,6 @@ namespace Tiro.Health.SmartWebMessaging
         // Template methods — override in concrete class to raise typed events
         // ---------------------------------------------------------------------------
         protected virtual void OnFormSubmitted(TQuestionnaireResponse response, TOperationOutcome outcome) { }
-        protected virtual void OnResourceChanged(TResource resource) { }
 
         // ---------------------------------------------------------------------------
         // Public message entry point
@@ -126,30 +124,6 @@ namespace Tiro.Health.SmartWebMessaging
 
                 switch (message.MessageType)
                 {
-                    case "scratchpad.create":
-                        _logger.LogDebug("Handling scratchpad.create.");
-                        var createPayload = JsonSerializer.Deserialize<ScratchpadCreate<TResource>>(payloadJson, SerializeOptions);
-                        response = HandleScratchpadCreate(message, createPayload);
-                        break;
-
-                    case "scratchpad.update":
-                        _logger.LogDebug("Handling scratchpad.update.");
-                        var updatePayload = JsonSerializer.Deserialize<ScratchpadUpdate<TResource>>(payloadJson, SerializeOptions);
-                        response = HandleScratchpadUpdate(message, updatePayload);
-                        break;
-
-                    case "scratchpad.delete":
-                        _logger.LogDebug("Handling scratchpad.delete.");
-                        var deletePayload = JsonSerializer.Deserialize<ScratchpadDelete>(payloadJson, SerializeOptions);
-                        response = HandleScratchpadDelete(message, deletePayload);
-                        break;
-
-                    case "scratchpad.read":
-                        _logger.LogDebug("Handling scratchpad.read.");
-                        var readPayload = JsonSerializer.Deserialize<ScratchpadRead>(payloadJson, SerializeOptions);
-                        response = HandleScratchpadRead(message, readPayload);
-                        break;
-
                     case "status.handshake":
                         _logger.LogDebug("Handling status.handshake.");
                         response = HandleHandshake(message, message.Payload);
@@ -197,47 +171,6 @@ namespace Tiro.Health.SmartWebMessaging
         // ---------------------------------------------------------------------------
         // Individual request handlers
         // ---------------------------------------------------------------------------
-        private SmartMessageResponse HandleScratchpadCreate(SmartMessageRequest message, ScratchpadCreate<TResource> payload)
-        {
-            string location = _scratchpad.CreateResource(payload.Resource);
-            OnResourceChanged(payload.Resource);
-            _logger.LogDebug("ResourceChanged raised for MessageId: {MessageId}", message.MessageId);
-            return new SmartMessageResponse(Guid.NewGuid().ToString(), message.MessageId, false,
-                new ScratchpadCreateResponse<TOperationOutcome>("201 Created", location, default));
-        }
-
-        private SmartMessageResponse HandleScratchpadUpdate(SmartMessageRequest message, ScratchpadUpdate<TResource> payload)
-        {
-            _scratchpad.UpdateResource(payload.Resource);
-            OnResourceChanged(payload.Resource);
-            _logger.LogDebug("ResourceChanged raised for MessageId: {MessageId}", message.MessageId);
-            return new SmartMessageResponse(Guid.NewGuid().ToString(), message.MessageId, false,
-                new ScratchpadUpdateResponse<TOperationOutcome>("200 OK", default));
-        }
-
-        private SmartMessageResponse HandleScratchpadDelete(SmartMessageRequest message, ScratchpadDelete payload)
-        {
-            _scratchpad.DeleteResource(payload.Location);
-            return new SmartMessageResponse(Guid.NewGuid().ToString(), message.MessageId, false,
-                new ScratchpadDeleteResponse<TOperationOutcome>("200 OK", default));
-        }
-
-        private SmartMessageResponse HandleScratchpadRead(SmartMessageRequest message, ScratchpadRead payload)
-        {
-            if (payload.Location == null)
-            {
-                IEnumerable<TResource> resources = _scratchpad.GetAllResources();
-                return new SmartMessageResponse(Guid.NewGuid().ToString(), message.MessageId, false,
-                    new ScratchpadReadResponse<TResource, TOperationOutcome>(default, resources, default));
-            }
-            else
-            {
-                TResource resource = _scratchpad.GetResource(payload.Location);
-                return new SmartMessageResponse(Guid.NewGuid().ToString(), message.MessageId, false,
-                    new ScratchpadReadResponse<TResource, TOperationOutcome>(resource, null, default));
-            }
-        }
-
         private SmartMessageResponse HandleHandshake(SmartMessageRequest message, RequestPayload payload)
         {
             _logger.LogDebug("Raising HandshakeReceived for MessageId: {MessageId}", message.MessageId);
