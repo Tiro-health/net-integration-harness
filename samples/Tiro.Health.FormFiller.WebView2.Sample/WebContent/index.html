@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tiro Form Filler — Sample</title>
-    <link rel="preconnect" href="https://cdn.tiro.health" crossorigin>
+    <link rel="preload" as="script" href="https://browser.sentry-cdn.com/10.33.0/bundle.tracing.min.js" crossorigin="anonymous">
+    <link rel="preload" as="script" href="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js">
+    <script src="https://browser.sentry-cdn.com/10.33.0/bundle.tracing.min.js" defer crossorigin="anonymous"></script>
     <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer></script>
     <style>
         :root { color-scheme: light; }
@@ -43,9 +45,21 @@
             isIframe() { return window.parent !== window; },
 
             sendMessage(message) {
-                if (this.isWebView2()) window.chrome.webview.postMessage(message);
-                else if (this.isIframe()) window.parent.postMessage(message, "*");
-                else console.warn("[SWM] No host available");
+                const doSend = () => {
+                    if (this.isWebView2()) window.chrome.webview.postMessage(message);
+                    else if (this.isIframe()) window.parent.postMessage(message, "*");
+                    else console.warn("[SWM] No host available");
+                };
+                if (typeof Sentry !== "undefined" && typeof Sentry.startSpan === "function") {
+                    Sentry.startSpan({ op: "swm.send", name: message.messageType || "response" }, (span) => {
+                        span.setAttribute("swm.messageId", message.messageId);
+                        span.setAttribute("swm.messageType", message.messageType || null);
+                        span.setAttribute("swm.isResponse", !!message.responseToMessageId);
+                        doSend();
+                    });
+                } else {
+                    doSend();
+                }
             },
 
             sendRequest(messageType, payload = {}) {
@@ -106,16 +120,28 @@
             },
 
             handleMessage(message) {
-                if (message.responseToMessageId) {
-                    const pending = this.pendingRequests.get(message.responseToMessageId);
-                    if (pending) {
-                        if (message.payload && message.payload.$type === "error") pending.reject(new Error(message.payload.errorMessage));
-                        else pending.resolve(message.payload);
-                        if (!message.additionalResponsesExpected) this.pendingRequests.delete(message.responseToMessageId);
+                const doHandle = () => {
+                    if (message.responseToMessageId) {
+                        const pending = this.pendingRequests.get(message.responseToMessageId);
+                        if (pending) {
+                            if (message.payload && message.payload.$type === "error") pending.reject(new Error(message.payload.errorMessage));
+                            else pending.resolve(message.payload);
+                            if (!message.additionalResponsesExpected) this.pendingRequests.delete(message.responseToMessageId);
+                        }
+                        return;
                     }
-                    return;
+                    if (message.messageType) this.handleHostMessage(message);
+                };
+                if (typeof Sentry !== "undefined" && typeof Sentry.startSpan === "function") {
+                    Sentry.startSpan({ op: "swm.receive", name: message.messageType || "response" }, (span) => {
+                        span.setAttribute("swm.messageId", message.messageId || message.responseToMessageId);
+                        span.setAttribute("swm.messageType", message.messageType || null);
+                        span.setAttribute("swm.isResponse", !!message.responseToMessageId);
+                        doHandle();
+                    });
+                } else {
+                    doHandle();
                 }
-                if (message.messageType) this.handleHostMessage(message);
             },
 
             handleHostMessage(message) {
@@ -218,6 +244,15 @@
         }
 
         document.addEventListener("DOMContentLoaded", () => {
+            if (typeof Sentry !== "undefined" && typeof Sentry.init === "function") {
+                Sentry.init({
+                    dsn: "https://5b3c2798d1b788d50ee2f655ad3ca731@o4509350631292928.ingest.de.sentry.io/4510703453405264",
+                    tracesSampleRate: 1.0,
+                    integrations: [Sentry.browserTracingIntegration()],
+                    release: "tiro-formfiller-sample",
+                });
+            }
+
             formFiller.addEventListener("tiro-ready", () => {
                 submitBtn.disabled = false;
                 setStatus("Questionnaire loaded.");
