@@ -892,5 +892,65 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         Assert.IsTrue(sentMessage.Contains("\"contentResource\":{\"resourceType\":\"Practitioner\",\"id\":\"PR789\""));
     }
 
+    [TestMethod]
+    public void TestFormSubmit_MissingResponse_ReturnsValidationError()
+    {
+      var messageHandler = new SmartMessageHandler();
+      bool eventFired = false;
+      messageHandler.FormSubmitted += (_, _) => eventFired = true;
+
+      // form.submitted with only outcome — response is missing entirely.
+      // [Required] on FormSubmit.Response must reject this before the event fires.
+      string jsonString = """
+                {
+                 "messageId": "bad-submit-1",
+                 "messagingHandle": "smart-web-messaging",
+                 "messageType": "form.submitted",
+                 "payload": {
+                   "outcome": { "resourceType": "OperationOutcome", "issue": [] }
+                 }
+                }
+             """;
+
+      var result = messageHandler.HandleMessage(jsonString);
+
+      Assert.IsFalse(eventFired, "FormSubmitted must not fire when required fields are missing.");
+      StringAssert.Contains(result, "\"responseToMessageId\":\"bad-submit-1\"");
+      StringAssert.Contains(result, "\"$type\":\"error\"");
+      StringAssert.Contains(result, "\"errorType\":\"ValidationException\"");
+      StringAssert.Contains(result, "Response");
+    }
+
+    [TestMethod]
+    public void TestFormSubmit_MissingOutcome_ReturnsValidationError()
+    {
+      var messageHandler = new SmartMessageHandler();
+      bool eventFired = false;
+      messageHandler.FormSubmitted += (_, _) => eventFired = true;
+
+      string jsonString = """
+                {
+                 "messageId": "bad-submit-2",
+                 "messagingHandle": "smart-web-messaging",
+                 "messageType": "form.submitted",
+                 "payload": {
+                   "response": {
+                     "resourceType": "QuestionnaireResponse",
+                     "questionnaire": "http://example.org/q",
+                     "status": "completed"
+                   }
+                 }
+                }
+             """;
+
+      var result = messageHandler.HandleMessage(jsonString);
+
+      Assert.IsFalse(eventFired, "FormSubmitted must not fire when required fields are missing.");
+      StringAssert.Contains(result, "\"responseToMessageId\":\"bad-submit-2\"");
+      StringAssert.Contains(result, "\"$type\":\"error\"");
+      StringAssert.Contains(result, "\"errorType\":\"ValidationException\"");
+      StringAssert.Contains(result, "Outcome");
+    }
+
   }
 }

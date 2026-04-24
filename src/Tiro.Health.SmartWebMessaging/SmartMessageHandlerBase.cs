@@ -143,6 +143,13 @@ namespace Tiro.Health.SmartWebMessaging
                     case "form.submitted":
                         _logger.LogDebug("Handling form.submitted.");
                         var formPayload = JsonSerializer.Deserialize<FormSubmit<TQuestionnaireResponse, TOperationOutcome>>(payloadJson, SerializeOptions);
+                        if (formPayload == null)
+                            throw new ValidationException("form.submitted payload was null.");
+                        // [Required] attributes aren't enforced by System.Text.Json — validate
+                        // explicitly before raising FormSubmitted so subscribers never see null
+                        // Response or Outcome. Outer catch turns ValidationException into an
+                        // error response.
+                        Validator.ValidateObject(formPayload, new ValidationContext(formPayload), validateAllProperties: true);
                         response = HandleFormSubmit(message, formPayload);
                         break;
 
