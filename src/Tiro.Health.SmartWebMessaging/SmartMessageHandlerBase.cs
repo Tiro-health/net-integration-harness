@@ -91,7 +91,7 @@ namespace Tiro.Health.SmartWebMessaging
                         return HandleRequestMessage(request);
 
                     case SmartMessageResponse response:
-                        HandleResponseMessage(response);
+                        _ = HandleResponseMessageAsync(response);
                         return null;
 
                     default:
@@ -213,28 +213,40 @@ namespace Tiro.Health.SmartWebMessaging
         // ---------------------------------------------------------------------------
         // Response handling
         // ---------------------------------------------------------------------------
-        private async void HandleResponseMessage(SmartMessageResponse responseMessage)
+        // Fire-and-forget from the sync HandleMessage caller (discard return via `_ =`).
+        // Outer try/catch is the backstop: this runs with no awaiter to observe faults,
+        // so anything that escapes would hit TaskScheduler.UnobservedTaskException / the
+        // UI thread's ThreadException handler and can crash the app.
+        private async Task HandleResponseMessageAsync(SmartMessageResponse responseMessage)
         {
-            _logger.LogInformation("Handling response for ResponseToMessageId: {Id}", responseMessage.ResponseToMessageId);
-            if (_responseListeners.TryGetValue(responseMessage.ResponseToMessageId, out var listener))
+            try
             {
-                try
+                if (responseMessage == null) return;
+                _logger.LogInformation("Handling response for ResponseToMessageId: {Id}", responseMessage.ResponseToMessageId);
+                if (_responseListeners.TryGetValue(responseMessage.ResponseToMessageId, out var listener))
                 {
-                    await listener(responseMessage);
+                    try
+                    {
+                        await listener(responseMessage);
+                    }
+                    catch (Exception e)
+                    {
+                        _logger.LogError(e, "Exception in response listener for ResponseToMessageId: {Id}", responseMessage.ResponseToMessageId);
+                    }
+                    finally
+                    {
+                        if (!responseMessage.AdditionalResponsesExpected)
+                            _responseListeners.TryRemove(responseMessage.ResponseToMessageId, out _);
+                    }
                 }
-                catch (Exception e)
+                else
                 {
-                    _logger.LogError(e, "Exception in response listener for ResponseToMessageId: {Id}", responseMessage.ResponseToMessageId);
-                }
-                finally
-                {
-                    if (!responseMessage.AdditionalResponsesExpected)
-                        _responseListeners.TryRemove(responseMessage.ResponseToMessageId, out _);
+                    _logger.LogWarning("No listener found for ResponseToMessageId: {Id}", responseMessage.ResponseToMessageId);
                 }
             }
-            else
+            catch (Exception e)
             {
-                _logger.LogWarning("No listener found for ResponseToMessageId: {Id}", responseMessage.ResponseToMessageId);
+                try { _logger.LogError(e, "Unhandled exception in response handler"); } catch { /* never rethrow from a fire-and-forget trap */ }
             }
         }
 
