@@ -5,6 +5,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using System.Threading;
 using System.Threading.Tasks;
 using Hl7.Fhir.Model;
 using Hl7.Fhir.Serialization;
@@ -233,68 +234,88 @@ namespace Tiro.Health.SmartWebMessaging
         // ---------------------------------------------------------------------------
         // Send helpers
         // ---------------------------------------------------------------------------
-        public async Task<string> SendRequestAsync(SmartMessageRequest request, Func<SmartMessageResponse, Task> responseHandler = null)
+        public async Task<string> SendRequestAsync(
+            SmartMessageRequest request,
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             if (SendMessage == null)
                 throw new InvalidOperationException("SendMessage delegate must be set before sending requests");
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (responseHandler != null)
+            {
                 _responseListeners[request.MessageId] = responseHandler;
+                // If the caller later cancels, drop the listener so the response (if it ever arrives)
+                // is ignored. Cleanup on successful response still happens in HandleResponseMessage;
+                // double-remove is harmless.
+                if (cancellationToken.CanBeCanceled)
+                    cancellationToken.Register(
+                        state => _responseListeners.TryRemove((string)state, out _),
+                        request.MessageId);
+            }
 
             string requestJson = JsonSerializer.Serialize(request, SerializeOptions);
             return await SendMessage(requestJson);
         }
 
-        public async Task<string> SendRequestAsync(string messageType, RequestPayload payload, Func<SmartMessageResponse, Task> responseHandler = null)
+        public Task<string> SendRequestAsync(
+            string messageType,
+            RequestPayload payload,
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             var message = new SmartMessageRequest(Guid.NewGuid().ToString(), "smart-web-messaging", messageType, payload);
-            return await SendRequestAsync(message, responseHandler);
+            return SendRequestAsync(message, responseHandler, cancellationToken);
         }
 
-        public async Task<string> SendMessageAsync(string messageType, RequestPayload payload = null, Func<SmartMessageResponse, Task> responseHandler = null)
+        public Task<string> SendMessageAsync(
+            string messageType,
+            RequestPayload payload = null,
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Sending {MessageType}", messageType);
-            if (SendMessage == null)
-                throw new InvalidOperationException("SendMessage delegate must be set before sending messages");
-
             var message = new SmartMessageRequest(Guid.NewGuid().ToString(), "smart-web-messaging", messageType, payload ?? new RequestPayload());
-
-            if (responseHandler != null)
-                _responseListeners[message.MessageId] = responseHandler;
-
-            string requestJson = JsonSerializer.Serialize(message, SerializeOptions);
-            return await SendMessage(requestJson);
+            return SendRequestAsync(message, responseHandler, cancellationToken);
         }
 
-        public async Task<string> SendFormRequestSubmitAsync(Func<SmartMessageResponse, Task> responseHandler = null)
+        public Task<string> SendFormRequestSubmitAsync(
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
-            return await SendMessageAsync("ui.form.requestSubmit", new RequestPayload(), responseHandler);
+            return SendMessageAsync("ui.form.requestSubmit", new RequestPayload(), responseHandler, cancellationToken);
         }
 
-        public async Task<string> SendFormPersistAsync(Func<SmartMessageResponse, Task> responseHandler = null)
+        public Task<string> SendFormPersistAsync(
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
-            return await SendMessageAsync("ui.form.persist", new RequestPayload(), responseHandler);
+            return SendMessageAsync("ui.form.persist", new RequestPayload(), responseHandler, cancellationToken);
         }
 
-        public async Task<string> SendSdcConfigureAsync(
+        public Task<string> SendSdcConfigureAsync(
             string terminologyServer = null,
             string dataServer = null,
             object configuration = null,
-            Func<SmartMessageResponse, Task> responseHandler = null)
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             var payload = new SdcConfigure(terminologyServer, dataServer, configuration);
-            return await SendMessageAsync("sdc.configure", payload, responseHandler);
+            return SendMessageAsync("sdc.configure", payload, responseHandler, cancellationToken);
         }
 
-        public async Task<string> SendSdcConfigureContextAsync(
+        public Task<string> SendSdcConfigureContextAsync(
             ResourceReference subject = null,
             ResourceReference author = null,
             ResourceReference encounter = null,
             List<LaunchContext<TResource>> launchContext = null,
-            Func<SmartMessageResponse, Task> responseHandler = null)
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             var payload = new SdcConfigureContext<TResource>(subject, author, encounter, launchContext);
-            return await SendMessageAsync("sdc.configureContext", payload, responseHandler);
+            return SendMessageAsync("sdc.configureContext", payload, responseHandler, cancellationToken);
         }
 
         /// <summary>
@@ -305,25 +326,28 @@ namespace Tiro.Health.SmartWebMessaging
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
-            Func<SmartMessageResponse, Task> responseHandler = null)
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             return SendSdcConfigureContextAsync(
                 launchContext: BuildLaunchContext(patient, encounter, author),
-                responseHandler: responseHandler);
+                responseHandler: responseHandler,
+                cancellationToken: cancellationToken);
         }
 
-        public async Task<string> SendSdcDisplayQuestionnaireAsync(
+        public Task<string> SendSdcDisplayQuestionnaireAsync(
             object questionnaire,
             TQuestionnaireResponse questionnaireResponse = default,
             ResourceReference subject = null,
             ResourceReference author = null,
             ResourceReference encounter = null,
             List<LaunchContext<TResource>> launchContext = null,
-            Func<SmartMessageResponse, Task> responseHandler = null)
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             var context = new SdcDisplayQuestionnaireContext<TResource>(subject, author, encounter, launchContext);
             var payload = new SdcDisplayQuestionnaire<TResource, TQuestionnaireResponse>(questionnaire, questionnaireResponse, context);
-            return await SendMessageAsync("sdc.displayQuestionnaire", payload, responseHandler);
+            return SendMessageAsync("sdc.displayQuestionnaire", payload, responseHandler, cancellationToken);
         }
 
         /// <summary>
@@ -336,13 +360,15 @@ namespace Tiro.Health.SmartWebMessaging
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
-            Func<SmartMessageResponse, Task> responseHandler = null)
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             return SendSdcDisplayQuestionnaireAsync(
                 questionnaire: (object)questionnaire,
                 questionnaireResponse: questionnaireResponse,
                 launchContext: BuildLaunchContext(patient, encounter, author),
-                responseHandler: responseHandler);
+                responseHandler: responseHandler,
+                cancellationToken: cancellationToken);
         }
 
         /// <summary>
@@ -355,13 +381,15 @@ namespace Tiro.Health.SmartWebMessaging
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
-            Func<SmartMessageResponse, Task> responseHandler = null)
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
             return SendSdcDisplayQuestionnaireAsync(
                 questionnaire: (object)questionnaireCanonicalUrl,
                 questionnaireResponse: questionnaireResponse,
                 launchContext: BuildLaunchContext(patient, encounter, author),
-                responseHandler: responseHandler);
+                responseHandler: responseHandler,
+                cancellationToken: cancellationToken);
         }
 
         /// <summary>

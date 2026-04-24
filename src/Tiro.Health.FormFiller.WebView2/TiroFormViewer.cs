@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Task = System.Threading.Tasks.Task;
@@ -56,6 +57,13 @@ namespace Tiro.Health.FormFiller.WebView2
 
         // Track if control is disposed
         private bool _isDisposed = false;
+
+        // Cancelled in Dispose; linked into every async operation so in-flight waits
+        // observe control teardown and fail fast with OperationCanceledException.
+        private readonly CancellationTokenSource _lifetimeCts = new CancellationTokenSource();
+
+        // Default deadline for handshake waits, applied on top of any caller-supplied token.
+        private const int HandshakeTimeoutMs = 30000;
 
         /// <summary>
         /// Default ctor used by the WinForms designer and at runtime in closed subclasses.
@@ -258,84 +266,113 @@ namespace Tiro.Health.FormFiller.WebView2
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
-            TQR intitialResponse = default)
+            TQR intitialResponse = default,
+            CancellationToken cancellationToken = default)
         {
-            try
+            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
             {
-                _transaction?.SetTag("questionnaire_url", questionnaireCanonicalUrl);
-
-                await _initializationTask;
-
-                var handshakeTask = _handshakeReceivedSource.Task;
-                var timeoutTask = Task.Delay(30000);
-                var completedTask = await Task.WhenAny(handshakeTask, timeoutTask);
-
-                if (completedTask == timeoutTask)
+                linkedCts.CancelAfter(HandshakeTimeoutMs);
+                try
                 {
-                    var timeoutEx = new TimeoutException($"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
-                    SentrySdk.CaptureException(timeoutEx);
+                    _transaction?.SetTag("questionnaire_url", questionnaireCanonicalUrl);
+
+                    await _initializationTask.WaitAsync(linkedCts.Token);
+                    await WaitForHandshakeAsync(linkedCts.Token, cancellationToken,
+                        timeoutMessage: $"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
+
+                    await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
+                        questionnaireCanonicalUrl: questionnaireCanonicalUrl,
+                        questionnaireResponse: intitialResponse,
+                        patient: patient,
+                        encounter: encounter,
+                        author: author,
+                        cancellationToken: linkedCts.Token);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
+                {
                     if (_transaction != null)
                     {
-                        _transaction.Finish(SpanStatus.DeadlineExceeded);
+                        _transaction.Finish(SpanStatus.Cancelled);
                         _transaction = null;
                     }
-                    throw timeoutEx;
+                    throw;
                 }
-
-                await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
-                    questionnaireCanonicalUrl: questionnaireCanonicalUrl,
-                    questionnaireResponse: intitialResponse,
-                    patient: patient,
-                    encounter: encounter,
-                    author: author);
-            }
-            catch (Exception ex)
-            {
-                if (_transaction != null)
+                catch (Exception ex)
                 {
-                    _transaction.Finish(ex);
-                    _transaction = null;
+                    if (_transaction != null)
+                    {
+                        _transaction.Finish(ex);
+                        _transaction = null;
+                    }
+                    SentrySdk.CaptureException(ex);
+                    throw;
                 }
-                SentrySdk.CaptureException(ex);
-                throw;
             }
         }
 
-        public async Task SendFormRequestSubmitAsync(Func<SmartMessageResponse, Task> responseHandler = null)
+        public async Task SendFormRequestSubmitAsync(
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
         {
-            try
+            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
             {
-                await _initializationTask;
-
-                var handshakeTask = _handshakeReceivedSource.Task;
-                var timeoutTask = Task.Delay(30000);
-                var completedTask = await Task.WhenAny(handshakeTask, timeoutTask);
-
-                if (completedTask == timeoutTask)
+                linkedCts.CancelAfter(HandshakeTimeoutMs);
+                try
                 {
-                    var timeoutEx = new TimeoutException("Handshake timeout during Form Request Submit.");
-                    SentrySdk.CaptureException(timeoutEx);
+                    await _initializationTask.WaitAsync(linkedCts.Token);
+                    await WaitForHandshakeAsync(linkedCts.Token, cancellationToken,
+                        timeoutMessage: "Handshake timeout during Form Request Submit.");
+
+                    await _smartWebMessageHandler.SendFormRequestSubmitAsync(responseHandler, linkedCts.Token);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
+                {
                     if (_transaction != null)
                     {
-                        _transaction.Finish(SpanStatus.DeadlineExceeded);
+                        _transaction.Finish(SpanStatus.Cancelled);
                         _transaction = null;
                     }
-                    throw timeoutEx;
+                    throw;
                 }
-
-                await _smartWebMessageHandler.SendFormRequestSubmitAsync(responseHandler);
-            }
-            catch (Exception ex)
-            {
-                SentrySdk.CaptureException(ex);
-                if (_transaction != null)
+                catch (Exception ex)
                 {
-                    _transaction.Finish(ex);
-                    _transaction = null;
+                    if (_transaction != null)
+                    {
+                        _transaction.Finish(ex);
+                        _transaction = null;
+                    }
+                    SentrySdk.CaptureException(ex);
+                    throw;
                 }
-                throw;
             }
         }
 
+        /// <summary>
+        /// Awaits the handshake task, observing the linked cancellation source (user token + lifetime + 30s timeout).
+        /// Distinguishes the three cancellation sources so cancellation rethrows, lifetime disposal rethrows,
+        /// and the bare timeout is translated to a <see cref="TimeoutException"/> with the supplied message.
+        /// </summary>
+        private async Task WaitForHandshakeAsync(CancellationToken linkedToken, CancellationToken userToken, string timeoutMessage)
+        {
+            try
+            {
+                await _handshakeReceivedSource.Task.WaitAsync(linkedToken);
+            }
+            catch (OperationCanceledException) when (userToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                var timeoutEx = new TimeoutException(timeoutMessage);
+                SentrySdk.CaptureException(timeoutEx);
+                if (_transaction != null)
+                {
+                    _transaction.Finish(SpanStatus.DeadlineExceeded);
+                    _transaction = null;
+                }
+                throw timeoutEx;
+            }
+        }
     }
 }
