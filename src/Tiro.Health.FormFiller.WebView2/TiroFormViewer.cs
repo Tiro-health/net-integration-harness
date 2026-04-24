@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Task = System.Threading.Tasks.Task;
@@ -9,7 +8,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
 using Tiro.Health.SmartWebMessaging.Message;
-using Tiro.Health.SmartWebMessaging.Message.Payload;
 using Sentry;
 
 namespace Tiro.Health.FormFiller.WebView2
@@ -156,7 +154,7 @@ namespace Tiro.Health.FormFiller.WebView2
                 {
                     if (!_isDisposed && _transaction != null)
                     {
-                        var messageType = ExtractJsonField(jsonMessage, "messageType");
+                        var messageType = JsonProbe.ExtractStringField(jsonMessage, "messageType");
                         var spanName = !string.IsNullOrEmpty(messageType) ? messageType : "outbound";
 
                         var span = _transaction.StartChild("sdc.send", spanName);
@@ -190,7 +188,7 @@ namespace Tiro.Health.FormFiller.WebView2
             if (_isDisposed) return;
             if (string.IsNullOrEmpty(inboundJson)) return;
 
-            var messageType = ExtractJsonField(inboundJson, "messageType");
+            var messageType = JsonProbe.ExtractStringField(inboundJson, "messageType");
             var spanName = !string.IsNullOrEmpty(messageType) ? messageType : "inbound";
 
             var span = _transaction?.StartChild("sdc.receive", spanName);
@@ -284,11 +282,12 @@ namespace Tiro.Health.FormFiller.WebView2
                     throw timeoutEx;
                 }
 
-                var launchContext = BuildLaunchContext(patient, encounter, author);
                 await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
-                    questionnaire: (object)questionnaireCanonicalUrl,
+                    questionnaireCanonicalUrl: questionnaireCanonicalUrl,
                     questionnaireResponse: intitialResponse,
-                    launchContext: launchContext);
+                    patient: patient,
+                    encounter: encounter,
+                    author: author);
             }
             catch (Exception ex)
             {
@@ -300,15 +299,6 @@ namespace Tiro.Health.FormFiller.WebView2
                 SentrySdk.CaptureException(ex);
                 throw;
             }
-        }
-
-        private static List<LaunchContext<TResource>> BuildLaunchContext(TResource patient, TResource encounter, TResource author)
-        {
-            var ctx = new List<LaunchContext<TResource>>();
-            if (patient != null) ctx.Add(new LaunchContext<TResource>("patient", contentResource: patient));
-            if (encounter != null) ctx.Add(new LaunchContext<TResource>("encounter", contentResource: encounter));
-            if (author != null) ctx.Add(new LaunchContext<TResource>("user", contentResource: author));
-            return ctx.Count > 0 ? ctx : null;
         }
 
         public async Task SendFormRequestSubmitAsync(Func<SmartMessageResponse, Task> responseHandler = null)
@@ -347,38 +337,5 @@ namespace Tiro.Health.FormFiller.WebView2
             }
         }
 
-        private static string ExtractJsonField(string json, string fieldName)
-        {
-            if (string.IsNullOrEmpty(json)) return null;
-
-            try
-            {
-                var searchKey = $"\"{fieldName}\"";
-                var keyIndex = json.IndexOf(searchKey, StringComparison.Ordinal);
-                if (keyIndex < 0) return null;
-
-                var colonIndex = json.IndexOf(':', keyIndex + searchKey.Length);
-                if (colonIndex < 0) return null;
-
-                var startQuote = json.IndexOf('"', colonIndex + 1);
-                if (startQuote < 0) return null;
-
-                var endQuote = startQuote + 1;
-                while (endQuote < json.Length)
-                {
-                    if (json[endQuote] == '"' && json[endQuote - 1] != '\\')
-                        break;
-                    endQuote++;
-                }
-
-                if (endQuote >= json.Length) return null;
-
-                return json.Substring(startQuote + 1, endQuote - startQuote - 1);
-            }
-            catch
-            {
-                return null;
-            }
-        }
     }
 }

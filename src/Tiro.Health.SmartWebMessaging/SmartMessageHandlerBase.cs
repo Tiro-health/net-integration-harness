@@ -5,7 +5,6 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Hl7.Fhir.Model;
 using Hl7.Fhir.Serialization;
@@ -298,6 +297,21 @@ namespace Tiro.Health.SmartWebMessaging
             return await SendMessageAsync("sdc.configureContext", payload, responseHandler);
         }
 
+        /// <summary>
+        /// Sends <c>sdc.configureContext</c>, wrapping the supplied FHIR resources in a launch context
+        /// (names: "patient", "encounter", "user"). Each resource parameter is optional.
+        /// </summary>
+        public Task<string> SendSdcConfigureContextAsync(
+            TResource patient = default,
+            TResource encounter = default,
+            TResource author = default,
+            Func<SmartMessageResponse, Task> responseHandler = null)
+        {
+            return SendSdcConfigureContextAsync(
+                launchContext: BuildLaunchContext(patient, encounter, author),
+                responseHandler: responseHandler);
+        }
+
         public async Task<string> SendSdcDisplayQuestionnaireAsync(
             object questionnaire,
             TQuestionnaireResponse questionnaireResponse = default,
@@ -310,6 +324,58 @@ namespace Tiro.Health.SmartWebMessaging
             var context = new SdcDisplayQuestionnaireContext<TResource>(subject, author, encounter, launchContext);
             var payload = new SdcDisplayQuestionnaire<TResource, TQuestionnaireResponse>(questionnaire, questionnaireResponse, context);
             return await SendMessageAsync("sdc.displayQuestionnaire", payload, responseHandler);
+        }
+
+        /// <summary>
+        /// Sends <c>sdc.displayQuestionnaire</c> with a <typeparamref name="TResource"/> questionnaire
+        /// and FHIR-resource launch context (patient/encounter/user).
+        /// </summary>
+        public Task<string> SendSdcDisplayQuestionnaireAsync(
+            TResource questionnaire,
+            TQuestionnaireResponse questionnaireResponse = default,
+            TResource patient = default,
+            TResource encounter = default,
+            TResource author = default,
+            Func<SmartMessageResponse, Task> responseHandler = null)
+        {
+            return SendSdcDisplayQuestionnaireAsync(
+                questionnaire: (object)questionnaire,
+                questionnaireResponse: questionnaireResponse,
+                launchContext: BuildLaunchContext(patient, encounter, author),
+                responseHandler: responseHandler);
+        }
+
+        /// <summary>
+        /// Sends <c>sdc.displayQuestionnaire</c> with a canonical URL reference to the questionnaire
+        /// and FHIR-resource launch context (patient/encounter/user).
+        /// </summary>
+        public Task<string> SendSdcDisplayQuestionnaireAsync(
+            string questionnaireCanonicalUrl,
+            TQuestionnaireResponse questionnaireResponse = default,
+            TResource patient = default,
+            TResource encounter = default,
+            TResource author = default,
+            Func<SmartMessageResponse, Task> responseHandler = null)
+        {
+            return SendSdcDisplayQuestionnaireAsync(
+                questionnaire: (object)questionnaireCanonicalUrl,
+                questionnaireResponse: questionnaireResponse,
+                launchContext: BuildLaunchContext(patient, encounter, author),
+                responseHandler: responseHandler);
+        }
+
+        /// <summary>
+        /// Builds a launch-context list from optional patient/encounter/user resources.
+        /// Returns <c>null</c> if none are supplied, so the emitted payload omits the list entirely.
+        /// </summary>
+        protected static List<LaunchContext<TResource>> BuildLaunchContext(
+            TResource patient, TResource encounter, TResource author)
+        {
+            var ctx = new List<LaunchContext<TResource>>();
+            if (patient != null) ctx.Add(new LaunchContext<TResource>("patient", contentResource: patient));
+            if (encounter != null) ctx.Add(new LaunchContext<TResource>("encounter", contentResource: encounter));
+            if (author != null) ctx.Add(new LaunchContext<TResource>("user", contentResource: author));
+            return ctx.Count > 0 ? ctx : null;
         }
 
         // ---------------------------------------------------------------------------
@@ -339,10 +405,6 @@ namespace Tiro.Health.SmartWebMessaging
         // ---------------------------------------------------------------------------
         // Utilities
         // ---------------------------------------------------------------------------
-        public string GetMessageIdFromJson(string json)
-        {
-            var match = Regex.Match(json, "\"messageId\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.IgnoreCase);
-            return match.Success ? match.Groups[1].Value : null;
-        }
+        public string GetMessageIdFromJson(string json) => JsonProbe.ExtractStringField(json, "messageId");
     }
 }
