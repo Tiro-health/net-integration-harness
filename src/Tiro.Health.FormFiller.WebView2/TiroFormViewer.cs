@@ -6,7 +6,6 @@ using Task = System.Threading.Tasks.Task;
 using Hl7.Fhir.Model;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Web.WebView2.Core;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
 using Tiro.Health.SmartWebMessaging.Message;
@@ -37,6 +36,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandlerBase<TResource, TQR, TOO> _smartWebMessageHandler;
+        private IEmbeddedBrowser _browser;
 
         /// <summary>
         /// The underlying SMART Web Messaging handler. Cast to the version-specific handler type
@@ -59,6 +59,10 @@ namespace Tiro.Health.FormFiller.WebView2
         // Track if control is disposed
         private bool _isDisposed = false;
 
+        /// <summary>
+        /// Default ctor used by the WinForms designer and at runtime in closed subclasses.
+        /// Construction-time dependencies (browser + handler) come from the <c>Create*</c> factory methods.
+        /// </summary>
         protected TiroFormViewer()
         {
             InitializeComponent();
@@ -68,6 +72,20 @@ namespace Tiro.Health.FormFiller.WebView2
             // so even an early return cannot guard against types referenced further down in this method.
             if (System.ComponentModel.LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
                 return;
+            _browser = CreateBrowser();
+            _smartWebMessageHandler = CreateMessageHandler();
+            InitializeRuntime();
+        }
+
+        /// <summary>
+        /// DI ctor for tests and advanced consumers. Bypasses the factory methods —
+        /// both dependencies are injected directly. Not used by the designer.
+        /// </summary>
+        protected TiroFormViewer(IEmbeddedBrowser browser, SmartMessageHandlerBase<TResource, TQR, TOO> handler)
+        {
+            InitializeComponent();
+            _browser = browser ?? throw new ArgumentNullException(nameof(browser));
+            _smartWebMessageHandler = handler ?? throw new ArgumentNullException(nameof(handler));
             InitializeRuntime();
         }
 
@@ -76,6 +94,12 @@ namespace Tiro.Health.FormFiller.WebView2
         /// Called once, during runtime initialization.
         /// </summary>
         protected abstract SmartMessageHandlerBase<TResource, TQR, TOO> CreateMessageHandler();
+
+        /// <summary>
+        /// Constructs the embedded browser adapter. Override in tests to inject a fake.
+        /// Default: <see cref="WebView2EmbeddedBrowser"/>.
+        /// </summary>
+        protected virtual IEmbeddedBrowser CreateBrowser() => new WebView2EmbeddedBrowser();
 
         private void InitializeRuntime()
         {
@@ -91,12 +115,15 @@ namespace Tiro.Health.FormFiller.WebView2
 
             _transaction = SentrySdk.StartTransaction("SDC Form", "sdc.form");
 
-            _smartWebMessageHandler = CreateMessageHandler();
             _smartWebMessageHandler.HandshakeReceived += OnHandshakeReceived;
             _smartWebMessageHandler.FormSubmitted += OnFormSubmitted;
             _smartWebMessageHandler.CloseApplication += OnCloseApplication;
 
-            _initializationTask = InitializeWebViewAsync();
+            _browser.MessageReceived += OnBrowserMessageReceived;
+            _browser.Control.Dock = DockStyle.Fill;
+            this.Controls.Add(_browser.Control);
+
+            _initializationTask = InitializeBrowserAsync();
         }
 
         /// <summary>
@@ -117,21 +144,17 @@ namespace Tiro.Health.FormFiller.WebView2
             SentrySdk.Flush(TimeSpan.FromSeconds(1.0));
         }
 
-        private async Task InitializeWebViewAsync()
+        private async Task InitializeBrowserAsync()
         {
             var initSpan = _transaction?.StartChild("sdc.initialize", "Initialize WebView");
 
             try
             {
-                await WebView2Host.EnsureCoreWebView2Async();
-
-                var coreWebView2 = WebView2Host.CoreWebView2;
-                coreWebView2.WebMessageReceived += SMARTWebMessageReceived;
-                coreWebView2.PermissionRequested += OnPermissionRequested;
+                await _browser.InitializeAsync();
 
                 _smartWebMessageHandler.SendMessage = (string jsonMessage) =>
                 {
-                    if (WebView2Host.CoreWebView2 != null && _transaction != null)
+                    if (!_isDisposed && _transaction != null)
                     {
                         var messageType = ExtractJsonField(jsonMessage, "messageType");
                         var spanName = !string.IsNullOrEmpty(messageType) ? messageType : "outbound";
@@ -140,7 +163,7 @@ namespace Tiro.Health.FormFiller.WebView2
                         span.SetExtra("message", jsonMessage);
                         span.Finish(SpanStatus.Ok);
 
-                        WebView2Host.CoreWebView2.PostWebMessageAsJson(jsonMessage);
+                        _browser.PostMessage(jsonMessage);
                     }
                     return Task.FromResult("");
                 };
@@ -149,12 +172,8 @@ namespace Tiro.Health.FormFiller.WebView2
                     ? WebContentFolder
                     : DefaultWebContent.FolderPath;
 
-                coreWebView2.SetVirtualHostNameToFolderMapping(
-                    VirtualHostName,
-                    contentFolder,
-                    CoreWebView2HostResourceAccessKind.Allow);
-
-                WebView2Host.Source = new Uri($"https://{VirtualHostName}/index.html");
+                _browser.MapVirtualHost(VirtualHostName, contentFolder);
+                _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
 
                 initSpan?.Finish(SpanStatus.Ok);
             }
@@ -166,11 +185,9 @@ namespace Tiro.Health.FormFiller.WebView2
             }
         }
 
-        private void SMARTWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+        private void OnBrowserMessageReceived(object sender, string inboundJson)
         {
-            if (_isDisposed || WebView2Host?.CoreWebView2 == null) return;
-
-            var inboundJson = e?.WebMessageAsJson;
+            if (_isDisposed) return;
             if (string.IsNullOrEmpty(inboundJson)) return;
 
             var messageType = ExtractJsonField(inboundJson, "messageType");
@@ -183,13 +200,13 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 var responseJson = _smartWebMessageHandler?.HandleMessage(inboundJson);
 
-                if (!string.IsNullOrEmpty(responseJson) && !_isDisposed && WebView2Host?.CoreWebView2 != null)
+                if (!string.IsNullOrEmpty(responseJson) && !_isDisposed)
                 {
                     var responseSpan = _transaction?.StartChild("sdc.response", spanName + ".response");
                     responseSpan?.SetExtra("message", responseJson);
                     responseSpan?.Finish(SpanStatus.Ok);
 
-                    WebView2Host.CoreWebView2.PostWebMessageAsJson(responseJson);
+                    _browser.PostMessage(responseJson);
                 }
 
                 span?.Finish(SpanStatus.Ok);
@@ -198,14 +215,6 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 span?.Finish(ex);
                 SentrySdk.CaptureException(ex);
-            }
-        }
-
-        private void OnPermissionRequested(object sender, CoreWebView2PermissionRequestedEventArgs e)
-        {
-            if (e.PermissionKind == CoreWebView2PermissionKind.Microphone)
-            {
-                e.State = CoreWebView2PermissionState.Allow;
             }
         }
 
