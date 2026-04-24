@@ -9,6 +9,8 @@
     <Company>Tiro.health</Company>
     <Description>SMART Web Messaging — FHIR R4 typed layer.</Description>
     <AutoGenerateBindingRedirects>True</AutoGenerateBindingRedirects>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
   </PropertyGroup>
 
   <ItemGroup>

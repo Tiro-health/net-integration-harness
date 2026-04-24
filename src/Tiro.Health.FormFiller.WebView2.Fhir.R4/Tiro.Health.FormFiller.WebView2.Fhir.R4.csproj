@@ -3,8 +3,8 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <OutputType>Library</OutputType>
-    <RootNamespace>Tiro.Health.FormFiller.WebView2</RootNamespace>
-    <AssemblyName>Tiro.Health.FormFiller.WebView2</AssemblyName>
+    <RootNamespace>Tiro.Health.FormFiller.WebView2.Fhir.R4</RootNamespace>
+    <AssemblyName>Tiro.Health.FormFiller.WebView2.Fhir.R4</AssemblyName>
     <UseWindowsForms>true</UseWindowsForms>
     <RuntimeIdentifiers>win</RuntimeIdentifiers>
     <Deterministic>true</Deterministic>
@@ -14,30 +14,19 @@
     <Version>1.0.0</Version>
     <Authors>Thibault Mahieu</Authors>
     <Company>Tiro.health</Company>
-    <Description>SMART Web Messaging — WinForms WebView2 form filler control.</Description>
+    <Description>SMART Web Messaging — WinForms WebView2 form filler control (FHIR R4 binding).</Description>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Hl7.Fhir.Base" Version="5.13.2" />
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3650.58" />
-    <PackageReference Include="Sentry" Version="6.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
+    <PackageReference Include="Hl7.Fhir.R4" Version="5.13.2" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj" />
     <ProjectReference Include="..\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="WebAssets\index.html">
-      <LogicalName>$(RootNamespace).WebAssets.index.html</LogicalName>
-    </EmbeddedResource>
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="app.config" />
+    <ProjectReference Include="..\Tiro.Health.SmartWebMessaging.Fhir.R4\Tiro.Health.SmartWebMessaging.Fhir.R4.csproj" />
   </ItemGroup>
 
 </Project>

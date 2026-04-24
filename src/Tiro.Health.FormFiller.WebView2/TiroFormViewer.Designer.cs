@@ -1,6 +1,6 @@
 namespace Tiro.Health.FormFiller.WebView2
 {
-    partial class TiroFormViewer
+    partial class TiroFormViewer<TResource, TQR, TOO>
     {
         private System.ComponentModel.IContainer components = null;
 

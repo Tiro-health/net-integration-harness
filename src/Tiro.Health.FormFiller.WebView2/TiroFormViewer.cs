@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Task = System.Threading.Tasks.Task;
@@ -6,16 +7,24 @@ using Hl7.Fhir.Model;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Web.WebView2.Core;
-using Tiro.Health.SmartWebMessaging.Fhir.R5;
+using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
 using Tiro.Health.SmartWebMessaging.Message;
+using Tiro.Health.SmartWebMessaging.Message.Payload;
 using Sentry;
 
 namespace Tiro.Health.FormFiller.WebView2
 {
-    public partial class TiroFormViewer : UserControl
+    /// <summary>
+    /// FHIR-version-agnostic abstract base. Derive a closed sealed subclass
+    /// (e.g. <c>TiroFormViewerR5</c>) that binds <typeparamref name="TResource"/>,
+    /// <typeparamref name="TQR"/>, and <typeparamref name="TOO"/> to the concrete
+    /// FHIR types and supplies the version-specific <see cref="SmartMessageHandlerBase{T,Q,O}"/>.
+    /// </summary>
+    public abstract partial class TiroFormViewer<TResource, TQR, TOO> : UserControl
+        where TResource : Resource
     {
-        public event EventHandler<FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome>> FormSubmitted;
+        public event EventHandler<FormSubmittedEventArgs<TQR, TOO>> FormSubmitted;
         public event EventHandler<CloseApplicationEventArgs> CloseApplication;
 
         /// <summary>
@@ -27,7 +36,14 @@ namespace Tiro.Health.FormFiller.WebView2
         public string WebContentFolder { get; set; }
 
         private ILogger _logger = NullLogger.Instance;
-        private SmartMessageHandler _smartWebMessageHandler;
+        private SmartMessageHandlerBase<TResource, TQR, TOO> _smartWebMessageHandler;
+
+        /// <summary>
+        /// The underlying SMART Web Messaging handler. Cast to the version-specific handler type
+        /// (e.g. <c>Tiro.Health.SmartWebMessaging.Fhir.R5.SmartMessageHandler</c>) to access version-specific send overloads.
+        /// </summary>
+        public SmartMessageHandlerBase<TResource, TQR, TOO> MessageHandler => _smartWebMessageHandler;
+
         private const string VirtualHostName = "appassets.example"; // https://github.com/MicrosoftEdge/WebView2Feedback/issues/2381
 
         // Tracks if WebView is initialized
@@ -43,7 +59,7 @@ namespace Tiro.Health.FormFiller.WebView2
         // Track if control is disposed
         private bool _isDisposed = false;
 
-        public TiroFormViewer()
+        protected TiroFormViewer()
         {
             InitializeComponent();
             // Skip all runtime initialization at design time.
@@ -54,6 +70,12 @@ namespace Tiro.Health.FormFiller.WebView2
                 return;
             InitializeRuntime();
         }
+
+        /// <summary>
+        /// Constructs the version-specific <see cref="SmartMessageHandlerBase{T,Q,O}"/> for this control.
+        /// Called once, during runtime initialization.
+        /// </summary>
+        protected abstract SmartMessageHandlerBase<TResource, TQR, TOO> CreateMessageHandler();
 
         private void InitializeRuntime()
         {
@@ -69,7 +91,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
             _transaction = SentrySdk.StartTransaction("SDC Form", "sdc.form");
 
-            _smartWebMessageHandler = new SmartMessageHandler();
+            _smartWebMessageHandler = CreateMessageHandler();
             _smartWebMessageHandler.HandshakeReceived += OnHandshakeReceived;
             _smartWebMessageHandler.FormSubmitted += OnFormSubmitted;
             _smartWebMessageHandler.CloseApplication += OnCloseApplication;
@@ -197,7 +219,7 @@ namespace Tiro.Health.FormFiller.WebView2
             CloseApplication?.Invoke(this, e);
         }
 
-        private void OnFormSubmitted(object sender, FormSubmittedEventArgs<QuestionnaireResponse, OperationOutcome> e)
+        private void OnFormSubmitted(object sender, FormSubmittedEventArgs<TQR, TOO> e)
         {
             try
             {
@@ -217,10 +239,10 @@ namespace Tiro.Health.FormFiller.WebView2
 
         public async Task SetContextAsync(
             string questionnaireCanonicalUrl,
-            Patient patient,
-            Encounter encounter = null,
-            Practitioner author = null,
-            QuestionnaireResponse intitialResponse = null)
+            TResource patient = default,
+            TResource encounter = default,
+            TResource author = default,
+            TQR intitialResponse = default)
         {
             try
             {
@@ -244,7 +266,11 @@ namespace Tiro.Health.FormFiller.WebView2
                     throw timeoutEx;
                 }
 
-                await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(questionnaireCanonicalUrl, intitialResponse, patient, encounter, author);
+                var launchContext = BuildLaunchContext(patient, encounter, author);
+                await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
+                    questionnaire: (object)questionnaireCanonicalUrl,
+                    questionnaireResponse: intitialResponse,
+                    launchContext: launchContext);
             }
             catch (Exception ex)
             {
@@ -256,6 +282,15 @@ namespace Tiro.Health.FormFiller.WebView2
                 SentrySdk.CaptureException(ex);
                 throw;
             }
+        }
+
+        private static List<LaunchContext<TResource>> BuildLaunchContext(TResource patient, TResource encounter, TResource author)
+        {
+            var ctx = new List<LaunchContext<TResource>>();
+            if (patient != null) ctx.Add(new LaunchContext<TResource>("patient", contentResource: patient));
+            if (encounter != null) ctx.Add(new LaunchContext<TResource>("encounter", contentResource: encounter));
+            if (author != null) ctx.Add(new LaunchContext<TResource>("user", contentResource: author));
+            return ctx.Count > 0 ? ctx : null;
         }
 
         public async Task SendFormRequestSubmitAsync(Func<SmartMessageResponse, Task> responseHandler = null)

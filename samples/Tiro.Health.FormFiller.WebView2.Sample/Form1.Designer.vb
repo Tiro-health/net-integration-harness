@@ -22,7 +22,7 @@ Partial Class Form1
     'Do not modify it using the code editor.
     <System.Diagnostics.DebuggerStepThrough()>
     Private Sub InitializeComponent()
-        TiroFormViewer = New Tiro.Health.FormFiller.WebView2.TiroFormViewer()
+        TiroFormViewer = New Tiro.Health.FormFiller.WebView2.Fhir.R4.TiroFormViewerR4()
         SuspendLayout()
         ' 
         ' TiroFormViewer
@@ -45,6 +45,6 @@ Partial Class Form1
         ResumeLayout(False)
     End Sub
 
-    Friend WithEvents TiroFormViewer As Tiro.Health.FormFiller.WebView2.TiroFormViewer
+    Friend WithEvents TiroFormViewer As Tiro.Health.FormFiller.WebView2.Fhir.R4.TiroFormViewerR4
 
 End Class
