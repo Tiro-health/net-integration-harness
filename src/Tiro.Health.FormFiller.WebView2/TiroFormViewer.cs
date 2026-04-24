@@ -55,8 +55,10 @@ namespace Tiro.Health.FormFiller.WebView2
         // Single transaction for entire form lifecycle
         private ITransactionTracer _transaction;
 
-        // Track if control is disposed
-        private bool _isDisposed = false;
+        // Track if control is disposed. volatile so writes on the UI thread during Dispose
+        // are immediately visible to the WebView2 message callback and any async continuations
+        // that use it as a fast-path skip guard.
+        private volatile bool _isDisposed = false;
 
         // Cancelled in Dispose; linked into every async operation so in-flight waits
         // observe control teardown and fail fast with OperationCanceledException.
@@ -140,11 +142,8 @@ namespace Tiro.Health.FormFiller.WebView2
             _isDisposed = true;
             try
             {
-                if (_transaction != null)
-                {
-                    _transaction.Finish(SpanStatus.InternalError);
-                    _transaction = null;
-                }
+                var tx = Interlocked.Exchange(ref _transaction, null);
+                tx?.Finish(SpanStatus.InternalError);
             }
             catch { }
             SentrySdk.Flush(TimeSpan.FromSeconds(1.0));
@@ -160,12 +159,15 @@ namespace Tiro.Health.FormFiller.WebView2
 
                 _smartWebMessageHandler.SendMessage = (string jsonMessage) =>
                 {
-                    if (!_isDisposed && _transaction != null)
+                    // Snapshot the transaction once — another thread may null it between
+                    // the null-check and StartChild otherwise (double-finish race).
+                    var tx = _transaction;
+                    if (!_isDisposed && tx != null)
                     {
                         var messageType = JsonProbe.ExtractStringField(jsonMessage, "messageType");
                         var spanName = !string.IsNullOrEmpty(messageType) ? messageType : "outbound";
 
-                        var span = _transaction.StartChild("sdc.send", spanName);
+                        var span = tx.StartChild("sdc.send", spanName);
                         span.SetExtra("message", jsonMessage);
                         span.Finish(SpanStatus.Ok);
 
@@ -236,20 +238,19 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void OnFormSubmitted(object sender, FormSubmittedEventArgs<TQR, TOO> e)
         {
+            // Consume the transaction atomically — if Dispose or an async catch already
+            // claimed it, tx is null here and the span is already finished.
+            var tx = Interlocked.Exchange(ref _transaction, null);
             try
             {
                 FormSubmitted?.Invoke(this, e);
                 var status = IsOutcomeSuccessful(e.Outcome) ? SpanStatus.Ok : SpanStatus.InvalidArgument;
-                _transaction?.Finish(status);
+                tx?.Finish(status);
             }
             catch (Exception ex)
             {
-                _transaction?.Finish(ex);
+                tx?.Finish(ex);
                 SentrySdk.CaptureException(ex);
-            }
-            finally
-            {
-                _transaction = null;
             }
         }
 
@@ -290,20 +291,12 @@ namespace Tiro.Health.FormFiller.WebView2
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
                 {
-                    if (_transaction != null)
-                    {
-                        _transaction.Finish(SpanStatus.Cancelled);
-                        _transaction = null;
-                    }
+                    Interlocked.Exchange(ref _transaction, null)?.Finish(SpanStatus.Cancelled);
                     throw;
                 }
                 catch (Exception ex)
                 {
-                    if (_transaction != null)
-                    {
-                        _transaction.Finish(ex);
-                        _transaction = null;
-                    }
+                    Interlocked.Exchange(ref _transaction, null)?.Finish(ex);
                     SentrySdk.CaptureException(ex);
                     throw;
                 }
@@ -327,20 +320,12 @@ namespace Tiro.Health.FormFiller.WebView2
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
                 {
-                    if (_transaction != null)
-                    {
-                        _transaction.Finish(SpanStatus.Cancelled);
-                        _transaction = null;
-                    }
+                    Interlocked.Exchange(ref _transaction, null)?.Finish(SpanStatus.Cancelled);
                     throw;
                 }
                 catch (Exception ex)
                 {
-                    if (_transaction != null)
-                    {
-                        _transaction.Finish(ex);
-                        _transaction = null;
-                    }
+                    Interlocked.Exchange(ref _transaction, null)?.Finish(ex);
                     SentrySdk.CaptureException(ex);
                     throw;
                 }
@@ -366,11 +351,7 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 var timeoutEx = new TimeoutException(timeoutMessage);
                 SentrySdk.CaptureException(timeoutEx);
-                if (_transaction != null)
-                {
-                    _transaction.Finish(SpanStatus.DeadlineExceeded);
-                    _transaction = null;
-                }
+                Interlocked.Exchange(ref _transaction, null)?.Finish(SpanStatus.DeadlineExceeded);
                 throw timeoutEx;
             }
         }
