@@ -55,10 +55,66 @@ namespace Tiro.Health.FormFiller.WebView2
         // Single transaction for entire form lifecycle
         private ITransactionTracer _transaction;
 
-        // Track if control is disposed. volatile so writes on the UI thread during Dispose
-        // are immediately visible to the WebView2 message callback and any async continuations
-        // that use it as a fast-path skip guard.
-        private volatile bool _isDisposed = false;
+        // Explicit lifecycle state. Backed by int so Interlocked CAS/Exchange can transition
+        // it atomically. Reads go through Volatile.Read for visibility across threads.
+        private int _state = (int)TiroFormViewerState.Initializing;
+
+        /// <summary>Current lifecycle state. See <see cref="TiroFormViewerState"/>.</summary>
+        public TiroFormViewerState State => (TiroFormViewerState)Volatile.Read(ref _state);
+
+        /// <summary>CAS transition: only moves state if currently equals <paramref name="from"/>.</summary>
+        private bool TryTransition(TiroFormViewerState from, TiroFormViewerState to)
+            => Interlocked.CompareExchange(ref _state, (int)to, (int)from) == (int)from;
+
+        /// <summary>
+        /// Advances to <paramref name="to"/> unless already <see cref="TiroFormViewerState.Disposed"/>
+        /// (which is terminal). Returns the previous state.
+        /// </summary>
+        private TiroFormViewerState AdvanceUnlessDisposed(TiroFormViewerState to)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref _state);
+                if (current == (int)TiroFormViewerState.Disposed) return TiroFormViewerState.Disposed;
+                if (Interlocked.CompareExchange(ref _state, (int)to, current) == current)
+                    return (TiroFormViewerState)current;
+            }
+        }
+
+        /// <summary>Unconditional transition to Disposed; returns the previous state.</summary>
+        private TiroFormViewerState MarkDisposed()
+            => (TiroFormViewerState)Interlocked.Exchange(ref _state, (int)TiroFormViewerState.Disposed);
+
+        /// <summary>Fast-path guard for <see cref="SetContextAsync"/>.</summary>
+        private void GuardCanSetContext()
+        {
+            switch (State)
+            {
+                case TiroFormViewerState.Disposed:
+                    throw new ObjectDisposedException(GetType().Name);
+                case TiroFormViewerState.Submitted:
+                    throw new InvalidOperationException(
+                        "Cannot set context: the form has already been submitted. Create a new viewer for a second form.");
+                case TiroFormViewerState.ContextSet:
+                    throw new InvalidOperationException(
+                        "Context has already been set on this viewer. Create a new viewer for a second form.");
+                    // Initializing and Ready are both valid; SetContextAsync internally
+                    // awaits handshake if still Initializing.
+            }
+        }
+
+        /// <summary>Fast-path guard for <see cref="SendFormRequestSubmitAsync"/>.</summary>
+        private void GuardCanSendFormRequest()
+        {
+            switch (State)
+            {
+                case TiroFormViewerState.Disposed:
+                    throw new ObjectDisposedException(GetType().Name);
+                case TiroFormViewerState.Submitted:
+                    throw new InvalidOperationException("The form has already been submitted.");
+                    // Initializing, Ready, and ContextSet are all valid.
+            }
+        }
 
         // Cancelled in Dispose; linked into every async operation so in-flight waits
         // observe control teardown and fail fast with OperationCanceledException.
@@ -139,7 +195,7 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         internal void FinishSentryTransaction()
         {
-            _isDisposed = true;
+            MarkDisposed();
             try
             {
                 var tx = Interlocked.Exchange(ref _transaction, null);
@@ -162,7 +218,7 @@ namespace Tiro.Health.FormFiller.WebView2
                     // Snapshot the transaction once — another thread may null it between
                     // the null-check and StartChild otherwise (double-finish race).
                     var tx = _transaction;
-                    if (!_isDisposed && tx != null)
+                    if (State != TiroFormViewerState.Disposed && tx != null)
                     {
                         var messageType = JsonProbe.ExtractStringField(jsonMessage, "messageType");
                         var spanName = !string.IsNullOrEmpty(messageType) ? messageType : "outbound";
@@ -195,7 +251,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void OnBrowserMessageReceived(object sender, string inboundJson)
         {
-            if (_isDisposed) return;
+            if (State == TiroFormViewerState.Disposed) return;
             if (string.IsNullOrEmpty(inboundJson)) return;
 
             var messageType = JsonProbe.ExtractStringField(inboundJson, "messageType");
@@ -208,7 +264,7 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 var responseJson = _smartWebMessageHandler?.HandleMessage(inboundJson);
 
-                if (!string.IsNullOrEmpty(responseJson) && !_isDisposed)
+                if (!string.IsNullOrEmpty(responseJson) && State != TiroFormViewerState.Disposed)
                 {
                     var responseSpan = _transaction?.StartChild("sdc.response", spanName + ".response");
                     responseSpan?.SetExtra("message", responseJson);
@@ -228,6 +284,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void OnHandshakeReceived(object sender, EventArgs e)
         {
+            TryTransition(TiroFormViewerState.Initializing, TiroFormViewerState.Ready);
             _handshakeReceivedSource.TrySetResult(true);
         }
 
@@ -238,6 +295,10 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void OnFormSubmitted(object sender, FormSubmittedEventArgs<TQR, TOO> e)
         {
+            // Advance to Submitted from any non-terminal state. Preserves Disposed if the
+            // handler races with Dispose (terminal invariant).
+            AdvanceUnlessDisposed(TiroFormViewerState.Submitted);
+
             // Consume the transaction atomically — if Dispose or an async catch already
             // claimed it, tx is null here and the span is already finished.
             var tx = Interlocked.Exchange(ref _transaction, null);
@@ -270,6 +331,8 @@ namespace Tiro.Health.FormFiller.WebView2
             TQR intitialResponse = default,
             CancellationToken cancellationToken = default)
         {
+            GuardCanSetContext();
+
             using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
             {
                 linkedCts.CancelAfter(HandshakeTimeoutMs);
@@ -288,6 +351,10 @@ namespace Tiro.Health.FormFiller.WebView2
                         encounter: encounter,
                         author: author,
                         cancellationToken: linkedCts.Token);
+
+                    // Ready → ContextSet on successful send. If Dispose / Submit raced in,
+                    // the CAS fails silently — we leave the terminal state in place.
+                    TryTransition(TiroFormViewerState.Ready, TiroFormViewerState.ContextSet);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
                 {
@@ -307,6 +374,8 @@ namespace Tiro.Health.FormFiller.WebView2
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
         {
+            GuardCanSendFormRequest();
+
             using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
             {
                 linkedCts.CancelAfter(HandshakeTimeoutMs);

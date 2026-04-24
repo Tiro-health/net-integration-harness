@@ -11,10 +11,10 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 if (disposing)
                 {
-                    // 1. Mark disposed and cancel lifetime token FIRST so any in-flight async
+                    // 1. Transition to Disposed and cancel lifetime token FIRST so any in-flight async
                     //    operations observing the token fail fast with OperationCanceledException
                     //    before we tear down the browser/handler they depend on.
-                    _isDisposed = true;
+                    MarkDisposed();
                     try { _lifetimeCts.Cancel(); } catch { /* best-effort */ }
 
                     // 2. Unhook browser event
