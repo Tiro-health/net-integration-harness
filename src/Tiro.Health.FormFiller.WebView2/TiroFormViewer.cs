@@ -233,7 +233,8 @@ namespace Tiro.Health.FormFiller.WebView2
             try
             {
                 FormSubmitted?.Invoke(this, e);
-                _transaction?.Finish(SpanStatus.Ok);
+                var status = IsOutcomeSuccessful(e.Outcome) ? SpanStatus.Ok : SpanStatus.InvalidArgument;
+                _transaction?.Finish(status);
             }
             catch (Exception ex)
             {
@@ -245,6 +246,14 @@ namespace Tiro.Health.FormFiller.WebView2
                 _transaction = null;
             }
         }
+
+        /// <summary>
+        /// Returns true if the submitted outcome indicates success (no error/fatal-severity issues).
+        /// Default: treat all outcomes as successful. Version-specific subclasses
+        /// (<c>TiroFormViewerR5</c>/<c>TiroFormViewerR4</c>) override this to call
+        /// <c>OperationOutcome.Success</c>.
+        /// </summary>
+        protected virtual bool IsOutcomeSuccessful(TOO outcome) => true;
 
         public async Task SetContextAsync(
             string questionnaireCanonicalUrl,

@@ -92,7 +92,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
     }
 
     [TestMethod]
-    public void TestParsingFaillure()
+    public void TestParsingFailure()
     {
       // Create an instance of SmartMessageHandler
       var messageHandler = new SmartMessageHandler();
@@ -118,7 +118,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
     }
 
     [TestMethod]
-    public void TestParsingFaillureNoMessageId()
+    public void TestParsingFailureNoMessageId()
     {
       // Create an instance of SmartMessageHandler
       var messageHandler = new SmartMessageHandler();

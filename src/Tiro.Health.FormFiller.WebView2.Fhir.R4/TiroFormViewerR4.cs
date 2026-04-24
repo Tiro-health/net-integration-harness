@@ -20,5 +20,8 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R4
 
         protected override SmartMessageHandlerBase<Resource, QuestionnaireResponse, OperationOutcome> CreateMessageHandler()
             => new SmartWebMessaging.Fhir.R4.SmartMessageHandler();
+
+        protected override bool IsOutcomeSuccessful(OperationOutcome outcome)
+            => outcome == null || outcome.Success;
     }
 }
