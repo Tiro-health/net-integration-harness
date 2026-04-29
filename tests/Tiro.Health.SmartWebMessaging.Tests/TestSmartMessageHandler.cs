@@ -1105,40 +1105,6 @@ namespace Tiro.Health.SmartWebMessaging.Tests
           "Cancellation must drop the response listener.");
     }
 
-    /// <summary>Test subclass with a fast eviction timeout — exposes the orphan path
-    /// without making the test sleep for the production 30s default.</summary>
-    private sealed class FastEvictionHandler : SmartMessageHandler
-    {
-      protected override TimeSpan ResponseListenerTimeout => TimeSpan.FromMilliseconds(150);
-    }
-
-    [TestMethod]
-    public async System.Threading.Tasks.Task TestSendRequestAsync_DefaultToken_ListenerEvictedOnTimeout()
-    {
-      // Default CancellationToken can't be cancelled, so without an internal eviction
-      // the listener would leak forever when the response never arrives. The bounded
-      // ResponseListenerTimeout drives the cleanup.
-      var messageHandler = new FastEvictionHandler();
-      messageHandler.SendMessage = _ => System.Threading.Tasks.Task.FromResult("");
-
-      var request = new SmartMessageRequest("rq-orphan", "smart-web-messaging", "test.msg", new RequestPayload());
-      await messageHandler.SendRequestAsync(
-          request,
-          responseHandler: _ => System.Threading.Tasks.Task.CompletedTask,
-          cancellationToken: default);
-
-      Assert.IsTrue(messageHandler.HasPendingResponseListener("rq-orphan"));
-
-      var deadline = DateTime.UtcNow.AddSeconds(2);
-      while (messageHandler.HasPendingResponseListener("rq-orphan") && DateTime.UtcNow < deadline)
-      {
-        await System.Threading.Tasks.Task.Delay(25);
-      }
-
-      Assert.IsFalse(messageHandler.HasPendingResponseListener("rq-orphan"),
-          "Listener with default CT must be evicted by the internal timeout.");
-    }
-
     [TestMethod]
     public void TestHandleMessage_ResponseWithNullResponseToMessageId_DoesNotThrow()
     {
@@ -1153,45 +1119,6 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       // Should return null (response messages don't generate replies) without throwing.
       var result = messageHandler.HandleMessage(jsonString);
       Assert.IsNull(result);
-    }
-
-    [TestMethod]
-    public async System.Threading.Tasks.Task TestSendRequestAsync_ResponseArrives_DisposesInternalTimer()
-    {
-      // Success path must dispose the linked CTS so we don't keep a Timer alive for
-      // the full 30s after every response. Indirect check: the listener should be
-      // gone after response handling, and a follow-up cancel of the (now-unrelated)
-      // user CT must not throw or affect the dictionary.
-      var messageHandler = new SmartMessageHandler();
-      messageHandler.SendMessage = _ => System.Threading.Tasks.Task.FromResult("");
-      using var cts = new CancellationTokenSource();
-
-      var request = new SmartMessageRequest("rq-success", "smart-web-messaging", "test.msg", new RequestPayload());
-      await messageHandler.SendRequestAsync(
-          request,
-          responseHandler: _ => System.Threading.Tasks.Task.CompletedTask,
-          cancellationToken: cts.Token);
-
-      Assert.IsTrue(messageHandler.HasPendingResponseListener("rq-success"));
-
-      var responseJson = JsonSerializer.Serialize(
-          new SmartMessageResponse("resp-success", "rq-success", false, new ResponsePayload()),
-          messageHandler.SerializeOptions);
-      messageHandler.HandleMessage(responseJson);
-
-      // Listener processed and removed.
-      var deadline = DateTime.UtcNow.AddSeconds(2);
-      while (messageHandler.HasPendingResponseListener("rq-success") && DateTime.UtcNow < deadline)
-      {
-        await System.Threading.Tasks.Task.Yield();
-      }
-      Assert.IsFalse(messageHandler.HasPendingResponseListener("rq-success"));
-
-      // Cancelling the user token after the success should be a no-op — the wrapped
-      // CTS was disposed on response, so its Register callback won't fire.
-      cts.Cancel();
-      await System.Threading.Tasks.Task.Yield();
-      Assert.IsFalse(messageHandler.HasPendingResponseListener("rq-success"));
     }
 
   }

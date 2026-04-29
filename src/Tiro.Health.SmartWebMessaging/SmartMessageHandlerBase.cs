@@ -286,14 +286,6 @@ namespace Tiro.Health.SmartWebMessaging
         // ---------------------------------------------------------------------------
         // Send helpers
         // ---------------------------------------------------------------------------
-        /// <summary>
-        /// Upper bound on how long a registered response listener can live before it's
-        /// evicted as orphaned. Mirrors the JS bridge's own request timeout — sends that
-        /// get neither a response nor a caller cancellation must not leak listeners.
-        /// Override in tests via subclass to shorten.
-        /// </summary>
-        protected virtual TimeSpan ResponseListenerTimeout => TimeSpan.FromSeconds(30);
-
         public Task SendRequestAsync(
             SmartMessageRequest request,
             Func<SmartMessageResponse, Task> responseHandler = null,
@@ -306,37 +298,14 @@ namespace Tiro.Health.SmartWebMessaging
 
             if (responseHandler != null)
             {
-                // Cleanup: a single linked CTS handles all three eviction paths — caller
-                // cancellation, internal timeout (default-CT case), and successful response.
-                // The wrapped handler disposes the CTS on success so the timer is released
-                // immediately rather than lingering for the timeout window. Disposing
-                // before invoking the user handler also unregisters the eviction callback,
-                // so a late cancel can't double-remove a listener that already fired.
-                //
-                // Order matters: assign → register → CancelAfter. If the user token is
-                // already cancelled at CreateLinkedTokenSource time (microsecond window
-                // past ThrowIfCancellationRequested), Register would fire its callback
-                // synchronously — and we want it to find the listener already in the dict
-                // so the eviction is a no-op cleanup rather than an orphan-creating race.
-                var listenerCts = cancellationToken.CanBeCanceled
-                    ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                    : new CancellationTokenSource();
-
-                var messageId = request.MessageId;
-                var userHandler = responseHandler;
-                _responseListeners[messageId] = async response =>
-                {
-                    try { listenerCts.Dispose(); } catch { /* best-effort */ }
-                    await userHandler(response);
-                };
-
-                listenerCts.Token.Register(() =>
-                {
-                    _responseListeners.TryRemove(messageId, out _);
-                    listenerCts.Dispose();
-                });
-
-                listenerCts.CancelAfter(ResponseListenerTimeout);
+                _responseListeners[request.MessageId] = responseHandler;
+                // If the caller later cancels, drop the listener so the response (if it ever arrives)
+                // is ignored. Cleanup on successful response still happens in HandleResponseMessage;
+                // double-remove is harmless.
+                if (cancellationToken.CanBeCanceled)
+                    cancellationToken.Register(
+                        state => _responseListeners.TryRemove((string)state, out _),
+                        request.MessageId);
             }
 
             ApplyMeta(request);
