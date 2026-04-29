@@ -18,6 +18,11 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # net48 + WinForms src projects don't reliably build under `dotnet pack`
+      # (NU5026: net48 DLL not produced). MSBuild handles them correctly.
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
       # Strip the leading 'v' from the tag (e.g., v1.0.37 -> 1.0.37)
       - name: Parse version
         id: version
@@ -28,20 +33,21 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Releasing version $VERSION"
 
-      # Pack each src/*.csproj. SDK-style projects propagate -p:Version into
-      # PackageVersion / AssemblyVersion / FileVersion / InformationalVersion
-      # automatically, so no AssemblyInfo patching is required.
+      - name: Restore
+        run: msbuild net-integration-harness.sln -t:Restore -p:Configuration=Release
+
+      # Pack each src/*.csproj with the parsed version. SDK-style projects
+      # propagate -p:Version into PackageVersion / AssemblyVersion /
+      # FileVersion / InformationalVersion automatically.
       - name: Pack src libraries
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
+          $output = Join-Path $PWD "artifacts/packages"
           Get-ChildItem -Path src -Filter "*.csproj" -Recurse | ForEach-Object {
             Write-Host "::group::Pack $($_.Name) @ $env:VERSION"
-            dotnet pack $_.FullName `
-              --configuration Release `
-              -p:Version=$env:VERSION `
-              --output artifacts/packages
+            msbuild $_.FullName -t:Pack -p:Configuration=Release -p:Version=$env:VERSION -p:PackageOutputPath=$output
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Write-Host "::endgroup::"
           }
