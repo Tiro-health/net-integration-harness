@@ -68,12 +68,19 @@ jobs:
           name: nupkgs
           path: artifacts/packages/*.nupkg
 
+      # dotnet nuget push doesn't reliably glob on Windows pwsh; enumerate
+      # the nupkgs explicitly and push each.
       - name: Push to NuGet
         shell: pwsh
-        run: |
-          dotnet nuget push "artifacts/packages/*.nupkg" `
-            --api-key $env:NUGET_API_KEY `
-            --source https://api.nuget.org/v3/index.json `
-            --skip-duplicate
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          Get-ChildItem -Path artifacts/packages -Filter "*.nupkg" | ForEach-Object {
+            Write-Host "::group::Push $($_.Name)"
+            dotnet nuget push $_.FullName `
+              --api-key $env:NUGET_API_KEY `
+              --source https://api.nuget.org/v3/index.json `
+              --skip-duplicate
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+          }
