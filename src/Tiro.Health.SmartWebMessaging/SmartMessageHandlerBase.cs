@@ -93,7 +93,7 @@ namespace Tiro.Health.SmartWebMessaging
             try
             {
                 SmartMessageBase message;
-                if (jsonMessage.Contains("\"responseToMessageId\""))
+                if (JsonProbe.ExtractStringField(jsonMessage, "responseToMessageId") != null)
                 {
                     _logger.LogDebug("Message identified as SmartMessageResponse.");
                     message = JsonSerializer.Deserialize<SmartMessageResponse>(jsonMessage, SerializeOptions);
