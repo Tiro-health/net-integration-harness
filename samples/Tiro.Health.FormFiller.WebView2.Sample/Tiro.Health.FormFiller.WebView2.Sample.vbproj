@@ -39,12 +39,26 @@
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Tiro.Health.FormFiller.WebView2" Version="1.0.0" />
-    <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R4" Version="1.0.0" />
-    <PackageReference Include="Tiro.Health.SmartWebMessaging" Version="1.0.0" />
-    <PackageReference Include="Tiro.Health.SmartWebMessaging.Fhir.R4" Version="1.0.0" />
     <PackageReference Include="Hl7.Fhir.Base" Version="5.13.2" />
     <PackageReference Include="Hl7.Fhir.R4" Version="5.13.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj">
+      <Project>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</Project>
+      <Name>Tiro.Health.FormFiller.WebView2</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2.Fhir.R4\Tiro.Health.FormFiller.WebView2.Fhir.R4.csproj">
+      <Project>{A1B2C3D4-E5F6-7890-ABCD-EF1234567892}</Project>
+      <Name>Tiro.Health.FormFiller.WebView2.Fhir.R4</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj">
+      <Project>{C1A2B3C4-D5E6-F789-ABCD-000000000001}</Project>
+      <Name>Tiro.Health.SmartWebMessaging</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Tiro.Health.SmartWebMessaging.Fhir.R4\Tiro.Health.SmartWebMessaging.Fhir.R4.csproj">
+      <Project>{C1A2B3C4-D5E6-F789-ABCD-000000000003}</Project>
+      <Name>Tiro.Health.SmartWebMessaging.Fhir.R4</Name>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />
