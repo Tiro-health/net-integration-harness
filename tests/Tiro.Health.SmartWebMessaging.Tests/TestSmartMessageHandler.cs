@@ -170,8 +170,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
     {
       var messageHandler = new SmartMessageHandler();
       var mockSender = new Mock<SmartMessageHandler.MessageSender>();
-      SmartMessageResponse capturedResponse = null!;
-      bool listenerCalled = false;
+      var listenerInvoked = new TaskCompletionSource<SmartMessageResponse>();
 
       // Set up the mock sender to return a response
       mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
@@ -187,11 +186,11 @@ namespace Tiro.Health.SmartWebMessaging.Tests
           new RequestPayload()
       );
 
-      // Set up response listener
+      // Set up response listener — signal via TCS so the test waits deterministically
+      // for the fire-and-forget HandleResponseMessageAsync to dispatch the response.
       var responseListener = new Func<SmartMessageResponse, System.Threading.Tasks.Task>(response =>
       {
-        capturedResponse = response;
-        listenerCalled = true;
+        listenerInvoked.TrySetResult(response);
         return System.Threading.Tasks.Task.CompletedTask;
       });
 
@@ -212,11 +211,10 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       // Handle the response message - should trigger the listener
       var handlerResult = messageHandler.HandleMessage(responseJson);
 
-      // Small delay to allow async listener to execute
-      await System.Threading.Tasks.Task.Delay(10);
+      // Wait deterministically for the listener to fire (5s upper bound to fail fast).
+      var capturedResponse = await listenerInvoked.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-      // Verify the listener was called
-      Assert.IsTrue(listenerCalled);
+      // Verify the listener received the right response
       Assert.IsNotNull(capturedResponse);
       Assert.AreEqual("test-123", capturedResponse.ResponseToMessageId!);
       Assert.AreEqual("response-456", capturedResponse.MessageId!);
@@ -253,21 +251,24 @@ namespace Tiro.Health.SmartWebMessaging.Tests
     {
       var messageHandler = new SmartMessageHandler();
       var responses = new List<SmartMessageResponse>();
-      bool listenerStillRegistered = false;
+      var firstResponseReceived = new TaskCompletionSource<bool>();
+      var secondResponseReceived = new TaskCompletionSource<bool>();
+      bool listenerStillRegisteredAtFirstFire = false;
 
-      // Create a test request
-      var request = new SmartMessageRequest(
-          "multi-test-123",
-          "smart-web-messaging",
-          "status.handshake",
-          new RequestPayload()
-      );
-
-      // Set up response listener
+      // Set up response listener — signals each invocation via its own TCS so the test
+      // waits deterministically rather than racing on Task.Delay.
       var responseListener = new Func<SmartMessageResponse, System.Threading.Tasks.Task>(response =>
       {
         responses.Add(response);
-        listenerStillRegistered = messageHandler.HasPendingResponseListener("multi-test-123");
+        if (responses.Count == 1)
+        {
+          listenerStillRegisteredAtFirstFire = messageHandler.HasPendingResponseListener("multi-test-123");
+          firstResponseReceived.TrySetResult(true);
+        }
+        else
+        {
+          secondResponseReceived.TrySetResult(true);
+        }
         return System.Threading.Tasks.Task.CompletedTask;
       });
 
@@ -279,11 +280,11 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       string response1Json = JsonSerializer.Serialize(response1, messageHandler.SerializeOptions);
       messageHandler.HandleMessage(response1Json);
 
-      await System.Threading.Tasks.Task.Delay(10);
+      await firstResponseReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
       // Verify first response was processed and listener still registered
       Assert.AreEqual(1, responses.Count);
-      Assert.IsTrue(listenerStillRegistered);
+      Assert.IsTrue(listenerStillRegisteredAtFirstFire);
       Assert.IsTrue(messageHandler.HasPendingResponseListener("multi-test-123"));
 
       // Simulate second response with no additional responses expected
@@ -291,7 +292,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       string response2Json = JsonSerializer.Serialize(response2, messageHandler.SerializeOptions);
       messageHandler.HandleMessage(response2Json);
 
-      await System.Threading.Tasks.Task.Delay(10);
+      await secondResponseReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
       // Verify both responses were processed and listener was removed
       Assert.AreEqual(2, responses.Count);
@@ -950,6 +951,169 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       StringAssert.Contains(result, "\"$type\":\"error\"");
       StringAssert.Contains(result, "\"errorType\":\"ValidationException\"");
       StringAssert.Contains(result, "Outcome");
+    }
+
+    // -----------------------------------------------------------------------------
+    // _meta envelope wiring (MetaProvider + JsonIgnore.WhenWritingNull)
+    // -----------------------------------------------------------------------------
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestMetaProvider_Set_AddsMetaToOutboundJson()
+    {
+      var messageHandler = new SmartMessageHandler();
+      string sentJson = null!;
+      messageHandler.SendMessage = json => { sentJson = json; return System.Threading.Tasks.Task.FromResult(""); };
+      messageHandler.MetaProvider = _ => new MessageMeta
+      {
+        Sentry = new SentryTraceMeta { Trace = "abcd1234-deadbeef-1", Baggage = "k=v" }
+      };
+
+      await messageHandler.SendMessageAsync("test.message", new RequestPayload());
+
+      Assert.IsNotNull(sentJson);
+      StringAssert.Contains(sentJson, "\"_meta\":");
+      StringAssert.Contains(sentJson, "\"sentry\":");
+      StringAssert.Contains(sentJson, "\"trace\":\"abcd1234-deadbeef-1\"");
+      StringAssert.Contains(sentJson, "\"baggage\":\"k=v\"");
+    }
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestMetaProvider_NotSet_OmitsMetaField()
+    {
+      var messageHandler = new SmartMessageHandler();
+      string sentJson = null!;
+      messageHandler.SendMessage = json => { sentJson = json; return System.Threading.Tasks.Task.FromResult(""); };
+
+      await messageHandler.SendMessageAsync("test.message", new RequestPayload());
+
+      Assert.IsNotNull(sentJson);
+      Assert.IsFalse(sentJson.Contains("\"_meta\""), "Outbound JSON must not include _meta when MetaProvider is unset.");
+    }
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestMetaProvider_ReturnsNull_OmitsMetaField()
+    {
+      var messageHandler = new SmartMessageHandler();
+      string sentJson = null!;
+      messageHandler.SendMessage = json => { sentJson = json; return System.Threading.Tasks.Task.FromResult(""); };
+      messageHandler.MetaProvider = _ => null;
+
+      await messageHandler.SendMessageAsync("test.message", new RequestPayload());
+
+      Assert.IsNotNull(sentJson);
+      Assert.IsFalse(sentJson.Contains("\"_meta\""), "Outbound JSON must not include _meta when MetaProvider returns null.");
+    }
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestMetaProvider_ThrowingProvider_DoesNotBreakSend()
+    {
+      // Defence against telemetry plumbing accidentally crashing a message send.
+      var messageHandler = new SmartMessageHandler();
+      string sentJson = null!;
+      messageHandler.SendMessage = json => { sentJson = json; return System.Threading.Tasks.Task.FromResult(""); };
+      messageHandler.MetaProvider = _ => throw new InvalidOperationException("provider exploded");
+
+      await messageHandler.SendMessageAsync("test.message", new RequestPayload());
+
+      Assert.IsNotNull(sentJson);
+      Assert.IsFalse(sentJson.Contains("\"_meta\""));
+    }
+
+    [TestMethod]
+    public void TestMetaProvider_AppliedToErrorResponses()
+    {
+      var messageHandler = new SmartMessageHandler();
+      messageHandler.MetaProvider = _ => new MessageMeta
+      {
+        Sentry = new SentryTraceMeta { Trace = "trace-on-error" }
+      };
+
+      // Trigger the "Unknown messageType" error path — that response is also enriched.
+      string jsonString = """
+                {
+                 "messageId": "err-1",
+                 "messagingHandle": "smart-web-messaging",
+                 "messageType": "??",
+                 "payload": {}
+                }
+             """;
+
+      var result = messageHandler.HandleMessage(jsonString);
+      StringAssert.Contains(result, "\"_meta\":");
+      StringAssert.Contains(result, "\"trace\":\"trace-on-error\"");
+    }
+
+    [TestMethod]
+    public void TestInbound_MetaField_DeserializesWithoutError()
+    {
+      // Regression: inbound messages from the embedded JS carry _meta.sentry.* — the
+      // .NET handler must tolerate it (and currently silently ignores it; the field is
+      // optional on SmartMessageBase). Trigger via a status.handshake with _meta.
+      var messageHandler = new SmartMessageHandler();
+      bool handshakeFired = false;
+      messageHandler.HandshakeReceived += (_, _) => handshakeFired = true;
+
+      string jsonString = """
+                {
+                 "messageId": "hs-1",
+                 "messagingHandle": "smart-web-messaging",
+                 "messageType": "status.handshake",
+                 "_meta": { "sentry": { "trace": "abc-def-1", "baggage": "k=v" } },
+                 "payload": {}
+                }
+             """;
+
+      var result = messageHandler.HandleMessage(jsonString);
+      Assert.IsTrue(handshakeFired);
+      StringAssert.Contains(result, "\"responseToMessageId\":\"hs-1\"");
+    }
+
+    // -----------------------------------------------------------------------------
+    // CancellationToken plumbing in SendRequestAsync
+    // -----------------------------------------------------------------------------
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestSendRequestAsync_PreCancelledToken_Throws()
+    {
+      var messageHandler = new SmartMessageHandler();
+      messageHandler.SendMessage = _ => System.Threading.Tasks.Task.FromResult("");
+      using var cts = new CancellationTokenSource();
+      cts.Cancel();
+
+      var request = new SmartMessageRequest("rq-1", "smart-web-messaging", "test.msg", new RequestPayload());
+
+      await Assert.ThrowsExceptionAsync<OperationCanceledException>(async () =>
+          await messageHandler.SendRequestAsync(request, cancellationToken: cts.Token));
+
+      Assert.IsFalse(messageHandler.HasPendingResponseListener("rq-1"),
+          "Pre-cancelled send must not register a response listener.");
+    }
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestSendRequestAsync_CancelAfterRegister_RemovesListener()
+    {
+      // cfe2b68 contract: if the caller cancels after the listener is registered but
+      // before the response arrives, the listener is dropped via the cancellationToken
+      // registration in SendRequestAsync.
+      var messageHandler = new SmartMessageHandler();
+      messageHandler.SendMessage = _ => System.Threading.Tasks.Task.FromResult("");
+      using var cts = new CancellationTokenSource();
+
+      var request = new SmartMessageRequest("rq-2", "smart-web-messaging", "test.msg", new RequestPayload());
+      await messageHandler.SendRequestAsync(
+          request,
+          responseHandler: _ => System.Threading.Tasks.Task.CompletedTask,
+          cancellationToken: cts.Token);
+
+      Assert.IsTrue(messageHandler.HasPendingResponseListener("rq-2"));
+
+      cts.Cancel();
+      // CancellationToken.Register callbacks run synchronously on Cancel(); a Yield
+      // is paranoia but cheap.
+      await System.Threading.Tasks.Task.Yield();
+
+      Assert.IsFalse(messageHandler.HasPendingResponseListener("rq-2"),
+          "Cancellation must drop the response listener.");
     }
 
   }
