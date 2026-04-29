@@ -31,8 +31,8 @@ namespace Tiro.Health.FormFiller.WebView2
                         _smartWebMessageHandler.CloseApplication -= OnCloseApplication;
                     }
 
-                    // 4. Cleanup the Sentry transaction
-                    FinishSentryTransaction();
+                    // 4. Close the telemetry session (final breadcrumb + flush pending events)
+                    EndTelemetrySession();
 
                     // 5. Dispose browser adapter (non-Control state); the Control
                     //    itself is disposed via the Controls-collection ownership chain.
@@ -41,7 +41,14 @@ namespace Tiro.Health.FormFiller.WebView2
                         try { _browser.Dispose(); } catch { /* best-effort */ }
                     }
 
-                    // 6. Dispose child components
+                    // 6. Dispose telemetry sink only if we created it (DI-supplied sinks
+                    //    are owned by the caller).
+                    if (_ownsTelemetrySink && _telemetry != null)
+                    {
+                        try { _telemetry.Dispose(); } catch { /* best-effort */ }
+                    }
+
+                    // 7. Dispose child components
                     if (components != null)
                         components.Dispose();
 

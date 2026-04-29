@@ -6,10 +6,10 @@ using Task = System.Threading.Tasks.Task;
 using Hl7.Fhir.Model;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Tiro.Health.FormFiller.WebView2.Telemetry;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
 using Tiro.Health.SmartWebMessaging.Message;
-using Sentry;
 
 namespace Tiro.Health.FormFiller.WebView2
 {
@@ -36,6 +36,8 @@ namespace Tiro.Health.FormFiller.WebView2
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandlerBase<TResource, TQR, TOO> _smartWebMessageHandler;
         private IEmbeddedBrowser _browser;
+        private ITelemetrySink _telemetry;
+        private bool _ownsTelemetrySink;
 
         /// <summary>
         /// The underlying SMART Web Messaging handler. Cast to the version-specific handler type
@@ -52,8 +54,15 @@ namespace Tiro.Health.FormFiller.WebView2
         private readonly TaskCompletionSource<bool> _handshakeReceivedSource =
             new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Single transaction for entire form lifecycle
-        private ITransactionTracer _transaction;
+        // Telemetry session — one per viewer lifetime. All transactions started via
+        // _session share the same trace id, so Sentry's trace view groups them.
+        private ITelemetrySession _session;
+
+        // Set inside OnBrowserMessageReceived for inbound notification messages so
+        // OnFormSubmitted can mark outcome-aware status on the active receive transaction.
+        // Read/written only on the WinForms UI thread (WebView2 dispatches inbound messages
+        // serially), so no Interlocked is needed.
+        private ITelemetrySpan _currentReceiveTransaction;
 
         // Explicit lifecycle state. Backed by int so Interlocked CAS/Exchange can transition
         // it atomically. Reads go through Volatile.Read for visibility across threads.
@@ -131,25 +140,43 @@ namespace Tiro.Health.FormFiller.WebView2
         {
             InitializeComponent();
             // Skip all runtime initialization at design time.
-            // IMPORTANT: all FHIR/Sentry references must stay in InitializeRuntime(), NOT here.
+            // IMPORTANT: all FHIR/telemetry references must stay in InitializeRuntime(), NOT here.
             // The JIT resolves every type referenced in this method body before executing any code,
             // so even an early return cannot guard against types referenced further down in this method.
             if (System.ComponentModel.LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
                 return;
             _browser = CreateBrowser();
             _smartWebMessageHandler = CreateMessageHandler();
+            _telemetry = CreateTelemetrySink();
+            _ownsTelemetrySink = true;
             InitializeRuntime();
         }
 
         /// <summary>
         /// DI ctor for tests and advanced consumers. Bypasses the factory methods —
-        /// both dependencies are injected directly. Not used by the designer.
+        /// dependencies are injected directly. Not used by the designer. The injected
+        /// <paramref name="telemetry"/> sink (if any) is NOT disposed by this control;
+        /// that ownership stays with the caller. Pass <c>null</c> to fall back to
+        /// <see cref="CreateTelemetrySink"/>.
         /// </summary>
-        protected TiroFormViewer(IEmbeddedBrowser browser, SmartMessageHandlerBase<TResource, TQR, TOO> handler)
+        protected TiroFormViewer(
+            IEmbeddedBrowser browser,
+            SmartMessageHandlerBase<TResource, TQR, TOO> handler,
+            ITelemetrySink telemetry = null)
         {
             InitializeComponent();
             _browser = browser ?? throw new ArgumentNullException(nameof(browser));
             _smartWebMessageHandler = handler ?? throw new ArgumentNullException(nameof(handler));
+            if (telemetry != null)
+            {
+                _telemetry = telemetry;
+                _ownsTelemetrySink = false;
+            }
+            else
+            {
+                _telemetry = CreateTelemetrySink();
+                _ownsTelemetrySink = true;
+            }
             InitializeRuntime();
         }
 
@@ -165,19 +192,18 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         protected virtual IEmbeddedBrowser CreateBrowser() => new WebView2EmbeddedBrowser();
 
+        /// <summary>
+        /// Constructs the telemetry sink. Default returns <see cref="NullTelemetrySink.Instance"/> —
+        /// the core library is telemetry-free unless overridden. The R5/R4 closed bindings
+        /// override this to plug in <c>SentryTelemetrySink</c> from the
+        /// <c>Tiro.Health.FormFiller.WebView2.Sentry</c> package.
+        /// </summary>
+        protected virtual ITelemetrySink CreateTelemetrySink() => NullTelemetrySink.Instance;
+
         private void InitializeRuntime()
         {
-            if (!SentrySdk.IsEnabled)
-            {
-                SentrySdk.Init(o =>
-                {
-                    o.Dsn = "https://e2152463656fef5d6cf67ac91af87050@o4507651309043712.ingest.de.sentry.io/4510703529820240";
-                    o.IsGlobalModeEnabled = true;
-                    o.TracesSampleRate = 1.0;
-                });
-            }
-
-            _transaction = SentrySdk.StartTransaction("SDC Form", "sdc.form");
+            _session = _telemetry.BeginSession(Guid.NewGuid().ToString());
+            _session.AddBreadcrumb("lifecycle", "TiroFormViewer constructed");
 
             _smartWebMessageHandler.HandshakeReceived += OnHandshakeReceived;
             _smartWebMessageHandler.FormSubmitted += OnFormSubmitted;
@@ -191,23 +217,19 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
-        /// Called from Dispose to clean up the Sentry transaction.
+        /// Called from Dispose to close the telemetry session and flush pending events.
         /// </summary>
-        internal void FinishSentryTransaction()
+        internal void EndTelemetrySession()
         {
             MarkDisposed();
-            try
-            {
-                var tx = Interlocked.Exchange(ref _transaction, null);
-                tx?.Finish(SpanStatus.InternalError);
-            }
-            catch { }
-            SentrySdk.Flush(TimeSpan.FromSeconds(1.0));
+            try { _session?.AddBreadcrumb("lifecycle", "TiroFormViewer disposed"); } catch { /* best-effort */ }
+            try { _session?.Dispose(); } catch { /* best-effort */ }
+            try { _telemetry?.Flush(TimeSpan.FromSeconds(1.0)); } catch { /* best-effort */ }
         }
 
         private async Task InitializeBrowserAsync()
         {
-            var initSpan = _transaction?.StartChild("sdc.initialize", "Initialize WebView");
+            var initSpan = _session?.StartTransaction("Initialize WebView", "swm.lifecycle.init");
 
             try
             {
@@ -215,20 +237,8 @@ namespace Tiro.Health.FormFiller.WebView2
 
                 _smartWebMessageHandler.SendMessage = (string jsonMessage) =>
                 {
-                    // Snapshot the transaction once — another thread may null it between
-                    // the null-check and StartChild otherwise (double-finish race).
-                    var tx = _transaction;
-                    if (State != TiroFormViewerState.Disposed && tx != null)
-                    {
-                        var messageType = JsonProbe.ExtractStringField(jsonMessage, "messageType");
-                        var spanName = !string.IsNullOrEmpty(messageType) ? messageType : "outbound";
-
-                        var span = tx.StartChild("sdc.send", spanName);
-                        span.SetExtra("message", jsonMessage);
-                        span.Finish(SpanStatus.Ok);
-
+                    if (State != TiroFormViewerState.Disposed)
                         _browser.PostMessage(jsonMessage);
-                    }
                     return Task.FromResult("");
                 };
 
@@ -239,12 +249,12 @@ namespace Tiro.Health.FormFiller.WebView2
                 _browser.MapVirtualHost(VirtualHostName, contentFolder);
                 _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
 
-                initSpan?.Finish(SpanStatus.Ok);
+                initSpan?.Finish(TelemetrySpanStatus.Ok);
             }
             catch (Exception ex)
             {
                 initSpan?.Finish(ex);
-                SentrySdk.CaptureException(ex);
+                _telemetry.CaptureException(ex);
                 throw;
             }
         }
@@ -254,11 +264,26 @@ namespace Tiro.Health.FormFiller.WebView2
             if (State == TiroFormViewerState.Disposed) return;
             if (string.IsNullOrEmpty(inboundJson)) return;
 
-            var messageType = JsonProbe.ExtractStringField(inboundJson, "messageType");
-            var spanName = !string.IsNullOrEmpty(messageType) ? messageType : "inbound";
+            // Responses to our outbound sends carry responseToMessageId; the original send's
+            // wrapped response handler (registered by Send*Async below) will finish that send's
+            // transaction. We don't start a new transaction for responses — they'd just clutter
+            // the trace.
+            var responseToMessageId = JsonProbe.ExtractStringField(inboundJson, "responseToMessageId");
+            if (!string.IsNullOrEmpty(responseToMessageId))
+            {
+                try { _smartWebMessageHandler?.HandleMessage(inboundJson); }
+                catch (Exception ex) { _telemetry.CaptureException(ex); }
+                return;
+            }
 
-            var span = _transaction?.StartChild("sdc.receive", spanName);
-            span?.SetExtra("message", inboundJson);
+            // Inbound notification (status.handshake, form.submitted, ui.done, ...) — start a
+            // dedicated swm.receive transaction and stash it so OnFormSubmitted can set an
+            // outcome-aware status on it before the receive completes.
+            var messageType = JsonProbe.ExtractStringField(inboundJson, "messageType") ?? "unknown";
+            var transaction = _session?.StartTransaction(messageType, "swm.receive");
+            transaction?.SetTag("messageType", messageType);
+            transaction?.SetExtra("message", inboundJson);
+            _currentReceiveTransaction = transaction;
 
             try
             {
@@ -266,19 +291,25 @@ namespace Tiro.Health.FormFiller.WebView2
 
                 if (!string.IsNullOrEmpty(responseJson) && State != TiroFormViewerState.Disposed)
                 {
-                    var responseSpan = _transaction?.StartChild("sdc.response", spanName + ".response");
+                    var responseSpan = transaction?.StartChild("swm.send", "response");
                     responseSpan?.SetExtra("message", responseJson);
-                    responseSpan?.Finish(SpanStatus.Ok);
-
+                    responseSpan?.Finish(TelemetrySpanStatus.Ok);
                     _browser.PostMessage(responseJson);
                 }
 
-                span?.Finish(SpanStatus.Ok);
+                // OnFormSubmitted may have already finished the transaction with an outcome-aware
+                // status; ITelemetrySpan.Finish is required to be idempotent (subsequent calls
+                // are no-ops), so this is safe.
+                transaction?.Finish(TelemetrySpanStatus.Ok);
             }
             catch (Exception ex)
             {
-                span?.Finish(ex);
-                SentrySdk.CaptureException(ex);
+                transaction?.Finish(ex);
+                _telemetry.CaptureException(ex);
+            }
+            finally
+            {
+                _currentReceiveTransaction = null;
             }
         }
 
@@ -286,6 +317,7 @@ namespace Tiro.Health.FormFiller.WebView2
         {
             TryTransition(TiroFormViewerState.Initializing, TiroFormViewerState.Ready);
             _handshakeReceivedSource.TrySetResult(true);
+            _session?.AddBreadcrumb("lifecycle", "Handshake received");
         }
 
         private void OnCloseApplication(object sender, CloseApplicationEventArgs e)
@@ -299,19 +331,21 @@ namespace Tiro.Health.FormFiller.WebView2
             // handler races with Dispose (terminal invariant).
             AdvanceUnlessDisposed(TiroFormViewerState.Submitted);
 
-            // Consume the transaction atomically — if Dispose or an async catch already
-            // claimed it, tx is null here and the span is already finished.
-            var tx = Interlocked.Exchange(ref _transaction, null);
+            var success = IsOutcomeSuccessful(e.Outcome);
+            _session?.AddBreadcrumb("lifecycle", success ? "Form submitted (success)" : "Form submitted (validation errors)");
+
+            // We're inside HandleMessage which is inside OnBrowserMessageReceived — the active
+            // receive transaction is _currentReceiveTransaction. Mark it with the outcome-aware
+            // status now; OnBrowserMessageReceived's final Finish(Ok) will be a no-op.
             try
             {
                 FormSubmitted?.Invoke(this, e);
-                var status = IsOutcomeSuccessful(e.Outcome) ? SpanStatus.Ok : SpanStatus.InvalidArgument;
-                tx?.Finish(status);
+                _currentReceiveTransaction?.Finish(success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument);
             }
             catch (Exception ex)
             {
-                tx?.Finish(ex);
-                SentrySdk.CaptureException(ex);
+                _currentReceiveTransaction?.Finish(ex);
+                _telemetry.CaptureException(ex);
             }
         }
 
@@ -333,16 +367,20 @@ namespace Tiro.Health.FormFiller.WebView2
         {
             GuardCanSetContext();
 
+            var span = _session?.StartTransaction("sdc.displayQuestionnaire", "swm.send");
+            span?.SetTag("messageType", "sdc.displayQuestionnaire");
+            span?.SetTag("questionnaire_url", questionnaireCanonicalUrl);
+
             using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
             {
                 linkedCts.CancelAfter(HandshakeTimeoutMs);
                 try
                 {
-                    _transaction?.SetTag("questionnaire_url", questionnaireCanonicalUrl);
-
                     await _initializationTask.WaitAsync(linkedCts.Token);
-                    await WaitForHandshakeAsync(linkedCts.Token, cancellationToken,
+                    await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
                         timeoutMessage: $"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
+
+                    var wrappedHandler = WrapForRoundTrip(span, cancellationToken, originalHandler: null);
 
                     await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
                         questionnaireCanonicalUrl: questionnaireCanonicalUrl,
@@ -350,6 +388,7 @@ namespace Tiro.Health.FormFiller.WebView2
                         patient: patient,
                         encounter: encounter,
                         author: author,
+                        responseHandler: wrappedHandler,
                         cancellationToken: linkedCts.Token);
 
                     // Ready → ContextSet on successful send. If Dispose / Submit raced in,
@@ -358,13 +397,13 @@ namespace Tiro.Health.FormFiller.WebView2
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
                 {
-                    Interlocked.Exchange(ref _transaction, null)?.Finish(SpanStatus.Cancelled);
+                    span?.Finish(TelemetrySpanStatus.Cancelled);
                     throw;
                 }
                 catch (Exception ex)
                 {
-                    Interlocked.Exchange(ref _transaction, null)?.Finish(ex);
-                    SentrySdk.CaptureException(ex);
+                    span?.Finish(ex);
+                    _telemetry.CaptureException(ex);
                     throw;
                 }
             }
@@ -376,37 +415,93 @@ namespace Tiro.Health.FormFiller.WebView2
         {
             GuardCanSendFormRequest();
 
+            var span = _session?.StartTransaction("ui.form.requestSubmit", "swm.send");
+            span?.SetTag("messageType", "ui.form.requestSubmit");
+
             using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
             {
                 linkedCts.CancelAfter(HandshakeTimeoutMs);
                 try
                 {
                     await _initializationTask.WaitAsync(linkedCts.Token);
-                    await WaitForHandshakeAsync(linkedCts.Token, cancellationToken,
+                    await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
                         timeoutMessage: "Handshake timeout during Form Request Submit.");
 
-                    await _smartWebMessageHandler.SendFormRequestSubmitAsync(responseHandler, linkedCts.Token);
+                    var wrappedHandler = WrapForRoundTrip(span, cancellationToken, originalHandler: responseHandler);
+
+                    await _smartWebMessageHandler.SendFormRequestSubmitAsync(wrappedHandler, linkedCts.Token);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
                 {
-                    Interlocked.Exchange(ref _transaction, null)?.Finish(SpanStatus.Cancelled);
+                    span?.Finish(TelemetrySpanStatus.Cancelled);
                     throw;
                 }
                 catch (Exception ex)
                 {
-                    Interlocked.Exchange(ref _transaction, null)?.Finish(ex);
-                    SentrySdk.CaptureException(ex);
+                    span?.Finish(ex);
+                    _telemetry.CaptureException(ex);
                     throw;
                 }
             }
         }
 
         /// <summary>
+        /// Wraps a caller-supplied (or null) response handler so the supplied <paramref name="span"/>
+        /// is finished when the response arrives, when caller cancellation fires, or when the
+        /// viewer's lifetime ends. Multi-finish is safe per the <see cref="ITelemetrySpan"/> contract.
+        /// Cancellation registrations live on <see cref="CancellationToken"/>s that outlive
+        /// the <c>using</c> block of <c>SetContextAsync</c>/<c>SendFormRequestSubmitAsync</c>
+        /// (the user's token and <c>_lifetimeCts.Token</c>), so a late response can still finish
+        /// the span correctly.
+        /// </summary>
+        private Func<SmartMessageResponse, Task> WrapForRoundTrip(
+            ITelemetrySpan span,
+            CancellationToken userToken,
+            Func<SmartMessageResponse, Task> originalHandler)
+        {
+            if (span == null) return originalHandler;
+
+            var lifetimeReg = _lifetimeCts.Token.Register(() =>
+            {
+                try { span.Finish(TelemetrySpanStatus.Cancelled); } catch { /* best-effort */ }
+            });
+
+            CancellationTokenRegistration userReg = default;
+            if (userToken.CanBeCanceled)
+            {
+                userReg = userToken.Register(() =>
+                {
+                    try { span.Finish(TelemetrySpanStatus.Cancelled); } catch { /* best-effort */ }
+                });
+            }
+
+            return async response =>
+            {
+                try { lifetimeReg.Dispose(); } catch { /* ignore */ }
+                try { userReg.Dispose(); } catch { /* ignore */ }
+
+                try
+                {
+                    if (originalHandler != null)
+                        await originalHandler(response);
+                    span.Finish(TelemetrySpanStatus.Ok);
+                }
+                catch (Exception ex)
+                {
+                    try { span.Finish(ex); } catch { /* best-effort */ }
+                    throw;
+                }
+            };
+        }
+
+        /// <summary>
         /// Awaits the handshake task, observing the linked cancellation source (user token + lifetime + 30s timeout).
         /// Distinguishes the three cancellation sources so cancellation rethrows, lifetime disposal rethrows,
         /// and the bare timeout is translated to a <see cref="TimeoutException"/> with the supplied message.
+        /// On a bare timeout, finishes the supplied <paramref name="sendSpan"/> with DeadlineExceeded so the
+        /// outbound transaction is closed before the exception bubbles.
         /// </summary>
-        private async Task WaitForHandshakeAsync(CancellationToken linkedToken, CancellationToken userToken, string timeoutMessage)
+        private async Task WaitForHandshakeAsync(ITelemetrySpan sendSpan, CancellationToken linkedToken, CancellationToken userToken, string timeoutMessage)
         {
             try
             {
@@ -419,8 +514,8 @@ namespace Tiro.Health.FormFiller.WebView2
             catch (OperationCanceledException)
             {
                 var timeoutEx = new TimeoutException(timeoutMessage);
-                SentrySdk.CaptureException(timeoutEx);
-                Interlocked.Exchange(ref _transaction, null)?.Finish(SpanStatus.DeadlineExceeded);
+                _telemetry.CaptureException(timeoutEx);
+                sendSpan?.Finish(TelemetrySpanStatus.DeadlineExceeded);
                 throw timeoutEx;
             }
         }

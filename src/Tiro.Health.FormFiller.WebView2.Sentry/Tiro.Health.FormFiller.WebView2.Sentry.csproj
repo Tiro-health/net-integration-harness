@@ -3,9 +3,8 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <OutputType>Library</OutputType>
-    <RootNamespace>Tiro.Health.FormFiller.WebView2.Fhir.R5</RootNamespace>
-    <AssemblyName>Tiro.Health.FormFiller.WebView2.Fhir.R5</AssemblyName>
-    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Tiro.Health.FormFiller.WebView2.Sentry</RootNamespace>
+    <AssemblyName>Tiro.Health.FormFiller.WebView2.Sentry</AssemblyName>
     <RuntimeIdentifiers>win</RuntimeIdentifiers>
     <Deterministic>true</Deterministic>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -14,20 +13,17 @@
     <Version>1.0.0</Version>
     <Authors>Thibault Mahieu</Authors>
     <Company>Tiro.health</Company>
-    <Description>SMART Web Messaging — WinForms WebView2 form filler control (FHIR R5 binding).</Description>
+    <Description>Sentry-backed ITelemetrySink adapter for Tiro.Health.FormFiller.WebView2.</Description>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Hl7.Fhir.R5" Version="5.13.2" />
+    <PackageReference Include="Sentry" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj" />
-    <ProjectReference Include="..\Tiro.Health.FormFiller.WebView2.Sentry\Tiro.Health.FormFiller.WebView2.Sentry.csproj" />
-    <ProjectReference Include="..\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj" />
-    <ProjectReference Include="..\Tiro.Health.SmartWebMessaging.Fhir.R5\Tiro.Health.SmartWebMessaging.Fhir.R5.csproj" />
   </ItemGroup>
 
 </Project>

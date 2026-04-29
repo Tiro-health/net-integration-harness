@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj" />
+    <ProjectReference Include="..\Tiro.Health.FormFiller.WebView2.Sentry\Tiro.Health.FormFiller.WebView2.Sentry.csproj" />
     <ProjectReference Include="..\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj" />
     <ProjectReference Include="..\Tiro.Health.SmartWebMessaging.Fhir.R4\Tiro.Health.SmartWebMessaging.Fhir.R4.csproj" />
   </ItemGroup>

@@ -22,7 +22,6 @@
   <ItemGroup>
     <PackageReference Include="Hl7.Fhir.Base" Version="5.13.2" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3650.58" />
-    <PackageReference Include="Sentry" Version="6.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
   </ItemGroup>
 
