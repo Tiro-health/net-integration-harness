@@ -156,7 +156,7 @@ The C# / netstandard2.0 path, for hosts that aren't WebView2-based:
 using Tiro.Health.SmartWebMessaging.Fhir.R5;
 
 var handler = new SmartMessageHandler();
-handler.SendMessage = json => YourTransport.PostAsync(json);  // your transport returns Task<string>
+handler.SendMessage = json => YourTransport.PostAsync(json);  // fire-and-forget; returns Task
 
 handler.HandshakeReceived += async (_, _) =>
 {
@@ -223,6 +223,25 @@ A full solution build via VS MSBuild restores both, builds C# libs first, then t
 ### Local NuGet cache caveat
 
 Since the libraries publish at version `1.0.0` and the samples consume them via `PackageReference`, the local cache at `~/.nuget/packages/tiro.health.formfiller.webview2*` can serve stale bytes after API changes. Either bump versions, or purge the affected entries plus the sample's `obj/` and rebuild.
+
+### Consuming from .NET Framework 4.8
+
+The `net48` libraries pull modern System.* packages (System.Text.Json 9.x, System.Memory, etc.) whose assembly versions don't match what ships in the .NET Framework 4.8 GAC. Consumer apps need binding redirects so the .NET runtime resolves to the package-supplied assemblies at load time. Two ways to handle this:
+
+**Recommended — let MSBuild generate them.** Add to your consuming project's `.csproj` / `.vbproj` (works for both SDK-style and old-style projects):
+
+```xml
+<PropertyGroup>
+  <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+</PropertyGroup>
+```
+
+MSBuild walks the transitive package graph at build time and emits the redirects into the output `<YourApp>.exe.config`. No hand-maintenance. Both `samples/*` projects in this repo do exactly this.
+
+**Manual alternative** — paste the redirect block from `samples/Tiro.Health.FormFiller.WebView2.Sample/App.config` into your consumer's `App.config`. Brittle: every package upgrade can shift the assembly versions and you'll have to update the redirects.
+
+> A library DLL's own `app.config` is ignored at runtime by the .NET Framework binding loader — only the EXE's `.exe.config` is honored. So the package itself can't ship redirects on your behalf; they must come from your consuming project.
 
 ## Architecture notes
 

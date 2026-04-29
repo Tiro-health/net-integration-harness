@@ -29,6 +29,11 @@
         pendingRequests: new Map(),
         listeners: {},
         context: null,
+        // Origin allowed to talk to this bridge in iframe mode. Read from
+        // window.__tiroParentOrigin at init time. Iframe transport is disabled
+        // when this is unset — wildcard postMessage would leak protocol
+        // payloads (and FHIR resources) to any embedding origin.
+        parentOrigin: null,
 
         generateMessageId() { return crypto.randomUUID(); },
         isWebView2() { return !!(window.chrome && window.chrome.webview); },
@@ -53,9 +58,17 @@
                     }
                 } catch (e) { /* ignore */ }
 
-                if (this.isWebView2()) window.chrome.webview.postMessage(message);
-                else if (this.isIframe()) window.parent.postMessage(message, "*");
-                else console.warn("[SWM] No host available");
+                if (this.isWebView2()) {
+                    window.chrome.webview.postMessage(message);
+                } else if (this.isIframe()) {
+                    if (!this.parentOrigin) {
+                        console.warn("[SWM] iframe transport disabled: window.__tiroParentOrigin not set; refusing to postMessage with wildcard origin");
+                        return;
+                    }
+                    window.parent.postMessage(message, this.parentOrigin);
+                } else {
+                    console.warn("[SWM] No host available");
+                }
             };
             if (typeof Sentry !== "undefined" && typeof Sentry.startSpan === "function") {
                 Sentry.startSpan({ op: "swm.send", name: message.messageType || "response" }, span => {
@@ -209,8 +222,20 @@
                 return true;
             }
             if (this.isIframe()) {
+                this.parentOrigin = typeof window.__tiroParentOrigin === "string"
+                    ? window.__tiroParentOrigin
+                    : null;
+                if (!this.parentOrigin) {
+                    console.warn("[SWM] iframe transport disabled: set window.__tiroParentOrigin before bridge bootstrap to enable");
+                    return false;
+                }
                 window.addEventListener("message", e => {
-                    if (e.source === window.parent) this.handleMessage(e.data);
+                    // Pin both window identity AND origin — same-origin attackers in another
+                    // frame can spoof e.source by reusing the parent's window handle, but
+                    // they cannot forge e.origin (browser-set, immutable).
+                    if (e.source !== window.parent) return;
+                    if (e.origin !== this.parentOrigin) return;
+                    this.handleMessage(e.data);
                 });
                 return true;
             }

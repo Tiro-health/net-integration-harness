@@ -61,7 +61,10 @@ namespace Tiro.Health.FormFiller.WebView2
         // Set inside OnBrowserMessageReceived for inbound notification messages so
         // OnFormSubmitted can mark outcome-aware status on the active receive transaction.
         // Read/written only on the WinForms UI thread (WebView2 dispatches inbound messages
-        // serially), so no Interlocked is needed.
+        // serially). A nested inbound (caused by a FormSubmitted subscriber pumping the
+        // message loop, e.g. MessageBox.Show) will overwrite then null the field — that's
+        // safe because OnFormSubmitted captures the field into a local before invoking
+        // the user handler, so its post-pump Finish call still sees the right span.
         private ITelemetrySpan _currentReceiveTransaction;
 
         // Explicit lifecycle state. Backed by int so Interlocked CAS/Exchange can transition
@@ -225,6 +228,16 @@ namespace Tiro.Health.FormFiller.WebView2
             this.Controls.Add(_browser.Control);
 
             _initializationTask = InitializeBrowserAsync();
+            // Observe faults so a viewer that's constructed and disposed without ever
+            // being awaited (e.g. WebView2 runtime missing → init throws → form closes
+            // before SetContextAsync is called) doesn't trip TaskScheduler.UnobservedTaskException.
+            // Touching .Exception marks it observed; SetContextAsync still surfaces the
+            // fault when it awaits the task.
+            _initializationTask.ContinueWith(
+                t => { _ = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
 
         /// <summary>
@@ -269,7 +282,7 @@ namespace Tiro.Health.FormFiller.WebView2
                 {
                     if (State != TiroFormViewerState.Disposed)
                         _browser.PostMessage(jsonMessage);
-                    return Task.FromResult("");
+                    return Task.CompletedTask;
                 };
 
                 var contentFolder = !string.IsNullOrEmpty(WebContentFolder)
@@ -364,18 +377,27 @@ namespace Tiro.Health.FormFiller.WebView2
             var success = IsOutcomeSuccessful(e.Outcome);
             _session?.AddBreadcrumb("lifecycle", success ? "Form submitted (success)" : "Form submitted (validation errors)");
 
-            // We're inside HandleMessage which is inside OnBrowserMessageReceived — the active
-            // receive transaction is _currentReceiveTransaction. Mark it with the outcome-aware
-            // status now; OnBrowserMessageReceived's final Finish(Ok) will be a no-op.
+            // We're inside HandleMessage which is inside OnBrowserMessageReceived — the
+            // active receive transaction is _currentReceiveTransaction. Capture into a
+            // local before invoking the user handler: if the handler pumps the message
+            // loop (e.g. MessageBox.Show), a nested inbound will overwrite then null the
+            // field, but our local still points at the right span. OnBrowserMessageReceived's
+            // final Finish(Ok) will be a no-op since Finish is idempotent.
+            var ourReceiveTransaction = _currentReceiveTransaction;
             try
             {
                 FormSubmitted?.Invoke(this, e);
-                _currentReceiveTransaction?.Finish(success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument);
+                ourReceiveTransaction?.Finish(success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument);
             }
             catch (Exception ex)
             {
-                _currentReceiveTransaction?.Finish(ex);
+                ourReceiveTransaction?.Finish(ex);
                 _telemetry.CaptureException(ex);
+                // Rethrow so SmartMessageHandlerBase.HandleRequestMessage's catch turns this
+                // into an error response back to the JS bridge. Without the rethrow, the
+                // handler returned a base-success ack while the host-side subscriber failed,
+                // and the page fired tiro-submitted as if persistence had succeeded.
+                throw;
             }
         }
 
@@ -479,10 +501,9 @@ namespace Tiro.Health.FormFiller.WebView2
         /// Wraps a caller-supplied (or null) response handler so the supplied <paramref name="span"/>
         /// is finished when the response arrives, when caller cancellation fires, or when the
         /// viewer's lifetime ends. Multi-finish is safe per the <see cref="ITelemetrySpan"/> contract.
-        /// Cancellation registrations live on <see cref="CancellationToken"/>s that outlive
-        /// the <c>using</c> block of <c>SetContextAsync</c>/<c>SendFormRequestSubmitAsync</c>
-        /// (the user's token and <c>_lifetimeCts.Token</c>), so a late response can still finish
-        /// the span correctly.
+        /// Uses a single linked CTS so a long-lived user token doesn't accumulate dead
+        /// callbacks across many sends — every exit path disposes the CTS, which releases
+        /// its registrations on both source tokens at once.
         /// </summary>
         private Func<SmartMessageResponse, Task> WrapForRoundTrip(
             ITelemetrySpan span,
@@ -491,24 +512,20 @@ namespace Tiro.Health.FormFiller.WebView2
         {
             if (span == null) return originalHandler;
 
-            var lifetimeReg = _lifetimeCts.Token.Register(() =>
+            var sentinel = CancellationTokenSource.CreateLinkedTokenSource(userToken, _lifetimeCts.Token);
+            sentinel.Token.Register(() =>
             {
                 try { span.Finish(TelemetrySpanStatus.Cancelled); } catch { /* best-effort */ }
+                // Dispose-from-callback is allowed; the CTS handles re-entrancy and this
+                // releases the registrations on both source tokens.
+                try { sentinel.Dispose(); } catch { /* best-effort */ }
             });
-
-            CancellationTokenRegistration userReg = default;
-            if (userToken.CanBeCanceled)
-            {
-                userReg = userToken.Register(() =>
-                {
-                    try { span.Finish(TelemetrySpanStatus.Cancelled); } catch { /* best-effort */ }
-                });
-            }
 
             return async response =>
             {
-                try { lifetimeReg.Dispose(); } catch { /* ignore */ }
-                try { userReg.Dispose(); } catch { /* ignore */ }
+                // Success path: dispose unregisters the cancel callback so it never fires
+                // — span will be finished below based on the user handler's outcome.
+                try { sentinel.Dispose(); } catch { /* best-effort */ }
 
                 try
                 {

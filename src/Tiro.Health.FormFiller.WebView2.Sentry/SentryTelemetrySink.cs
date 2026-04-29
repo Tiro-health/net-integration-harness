@@ -6,17 +6,16 @@ using Tiro.Health.FormFiller.WebView2.Telemetry;
 namespace Tiro.Health.FormFiller.WebView2.Sentry
 {
     /// <summary>
-    /// Sentry-backed <see cref="ITelemetrySink"/>. Initializes the global Sentry SDK on first
-    /// construction (the SDK itself is process-global by design); subsequent instances are
-    /// no-ops with respect to init.
+    /// Sentry-backed <see cref="ITelemetrySink"/>. The Sentry .NET SDK is process-global —
+    /// the first <c>SentrySdk.Init</c> wins, so the host DSN/environment/release supplied
+    /// to a second sink in the same process are not re-applied. The embedded-page DSN,
+    /// in contrast, lives on the sink instance and is honored per-viewer.
     /// </summary>
     public sealed class SentryTelemetrySink : ITelemetrySink
     {
-        // Captured at init time. _dsn is the DSN this host process reports to (the .NET
-        // project, e.g. tirohealth/dotnet-winforms). _embeddedDsn is the DSN that gets
-        // injected into the embedded browser's window.__tiroSentryConfig so its JS Sentry
-        // SDK reports to the JS project (e.g. tirohealth/javascript). The host owns both
-        // — same product, two SDKs, two projects, one trace.
+        // _dsn is captured for symmetry but only takes effect if this sink is the first
+        // to call SentrySdk.Init. _embeddedDsn is per-sink and always honored — it's
+        // injected into each viewer's WebView2 page bootstrap.
         private readonly string _dsn;
         private readonly string _embeddedDsn;
         private readonly string _environment;
@@ -65,8 +64,9 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
 
         /// <summary>
         /// Initialize Sentry with explicit host DSN, embedded-browser DSN, environment, and
-        /// release. Idempotent if the SDK is already enabled (subsequent calls are silently
-        /// ignored).
+        /// release. The host-side init is skipped if the SDK is already enabled in this
+        /// process (the Sentry .NET SDK is global — first init wins). The embedded-browser
+        /// DSN is always honored per-sink.
         /// </summary>
         public SentryTelemetrySink(string dsn, string embeddedDsn, string environment, string release)
         {
@@ -89,9 +89,7 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
 
         /// <summary>
         /// Initialize Sentry with caller-supplied options. The embedded-browser DSN defaults
-        /// to <see cref="DefaultEmbeddedDsn"/>; pass it through <see cref="SentryOptions"/>
-        /// is not supported (Sentry options describe one SDK; the embedded DSN is for the
-        /// other). Use the (dsn, embeddedDsn, environment, release) ctor for full control.
+        /// to <see cref="DefaultEmbeddedDsn"/>. Skipped if the SDK is already enabled.
         /// </summary>
         public SentryTelemetrySink(SentryOptions options)
         {
@@ -100,10 +98,7 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
             _embeddedDsn = DefaultEmbeddedDsn;
             _environment = options.Environment;
             _release = options.Release;
-            if (!SentrySdk.IsEnabled)
-            {
-                SentrySdk.Init(options);
-            }
+            if (!SentrySdk.IsEnabled) SentrySdk.Init(options);
         }
 
         private static string ComputeDefaultRelease()
