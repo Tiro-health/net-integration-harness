@@ -64,6 +64,15 @@ namespace Tiro.Health.FormFiller.WebView2
             _webView2.Source = url;
         }
 
+        public async Task AddInitializationScriptAsync(string script)
+        {
+            ThrowIfDisposed();
+            if (string.IsNullOrEmpty(script)) return;
+            if (_webView2.CoreWebView2 == null)
+                throw new InvalidOperationException("InitializeAsync must complete before AddInitializationScriptAsync.");
+            await _webView2.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(script);
+        }
+
         private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             if (_disposed) return;

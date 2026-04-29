@@ -37,5 +37,13 @@ namespace Tiro.Health.FormFiller.WebView2
 
         /// <summary>Navigate the browser to the given URL.</summary>
         void Navigate(Uri url);
+
+        /// <summary>
+        /// Register a JavaScript snippet to run before any page script on every navigation
+        /// in this browser. Used by the host to inject telemetry config (DSN, trace context)
+        /// so the embedded page can bootstrap its own SDK consistently and inherit the
+        /// host's trace.
+        /// </summary>
+        Task AddInitializationScriptAsync(string script);
     }
 }

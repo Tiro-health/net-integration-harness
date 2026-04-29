@@ -205,6 +205,17 @@ namespace Tiro.Health.FormFiller.WebView2
             _session = _telemetry.BeginSession(Guid.NewGuid().ToString());
             _session.AddBreadcrumb("lifecycle", "TiroFormViewer constructed");
 
+            // Propagate the session's Sentry trace header into every outbound SMART
+            // Web Messaging envelope as _meta.sentry.trace, so the JS Sentry SDK in the
+            // embedded page can continue the trace and its spans land alongside the .NET
+            // spans in the same trace.
+            _smartWebMessageHandler.MetaProvider = _ =>
+            {
+                var trace = _session?.GetSentryTraceHeader();
+                if (string.IsNullOrEmpty(trace)) return null;
+                return new MessageMeta { Sentry = new SentryTraceMeta { Trace = trace } };
+            };
+
             _smartWebMessageHandler.HandshakeReceived += OnHandshakeReceived;
             _smartWebMessageHandler.FormSubmitted += OnFormSubmitted;
             _smartWebMessageHandler.CloseApplication += OnCloseApplication;
@@ -234,6 +245,19 @@ namespace Tiro.Health.FormFiller.WebView2
             try
             {
                 await _browser.InitializeAsync();
+
+                // Inject host telemetry config as window.__tiroSentryConfig before the page
+                // runs any of its own scripts. The embedded index.html consumes this to
+                // bootstrap its Sentry SDK with the host's DSN/env/release and to set the
+                // sentry-trace meta tag so the pageload transaction inherits the .NET trace
+                // from the very first span (rather than after the handshake response).
+                var bootstrap = _session?.GetEmbeddedBootstrapConfig();
+                if (bootstrap != null && bootstrap.Count > 0)
+                {
+                    var configJson = System.Text.Json.JsonSerializer.Serialize(bootstrap);
+                    var bootstrapScript = "window.__tiroSentryConfig=" + configJson + ";";
+                    await _browser.AddInitializationScriptAsync(bootstrapScript);
+                }
 
                 _smartWebMessageHandler.SendMessage = (string jsonMessage) =>
                 {

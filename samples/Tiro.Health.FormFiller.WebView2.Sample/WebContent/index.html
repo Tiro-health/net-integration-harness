@@ -46,6 +46,22 @@
 
             sendMessage(message) {
                 const doSend = () => {
+                    // Attach the current Sentry trace context to the outbound envelope as
+                    // _meta.sentry.{trace,baggage}. The .NET host's SmartMessageHandlerBase
+                    // inspects this on inbound messages so spans on both sides land in the
+                    // same trace. Best-effort — don't let telemetry plumbing break a send.
+                    try {
+                        if (typeof Sentry !== "undefined" && typeof Sentry.getTraceData === "function") {
+                            const td = Sentry.getTraceData();
+                            const trace = td && td["sentry-trace"];
+                            if (trace) {
+                                message._meta = message._meta || {};
+                                message._meta.sentry = { trace };
+                                if (td["baggage"]) message._meta.sentry.baggage = td["baggage"];
+                            }
+                        }
+                    } catch (e) { /* ignore */ }
+
                     if (this.isWebView2()) window.chrome.webview.postMessage(message);
                     else if (this.isIframe()) window.parent.postMessage(message, "*");
                     else console.warn("[SWM] No host available");
@@ -132,15 +148,27 @@
                     }
                     if (message.messageType) this.handleHostMessage(message);
                 };
-                if (typeof Sentry !== "undefined" && typeof Sentry.startSpan === "function") {
-                    Sentry.startSpan({ op: "swm.receive", name: message.messageType || "response" }, (span) => {
-                        span.setAttribute("swm.messageId", message.messageId || message.responseToMessageId);
-                        span.setAttribute("swm.messageType", message.messageType || null);
-                        span.setAttribute("swm.isResponse", !!message.responseToMessageId);
+                const withReceiveSpan = () => {
+                    if (typeof Sentry !== "undefined" && typeof Sentry.startSpan === "function") {
+                        Sentry.startSpan({ op: "swm.receive", name: message.messageType || "response" }, (span) => {
+                            span.setAttribute("swm.messageId", message.messageId || message.responseToMessageId);
+                            span.setAttribute("swm.messageType", message.messageType || null);
+                            span.setAttribute("swm.isResponse", !!message.responseToMessageId);
+                            doHandle();
+                        });
+                    } else {
                         doHandle();
-                    });
+                    }
+                };
+                // If the inbound envelope carries Sentry trace context (from the .NET host),
+                // continue that trace so the receive span — and any spans created during
+                // doHandle — share the same traceId as the host's send transaction.
+                const incomingTrace = message && message._meta && message._meta.sentry && message._meta.sentry.trace;
+                const incomingBaggage = message && message._meta && message._meta.sentry && message._meta.sentry.baggage;
+                if (incomingTrace && typeof Sentry !== "undefined" && typeof Sentry.continueTrace === "function") {
+                    Sentry.continueTrace({ sentryTrace: incomingTrace, baggage: incomingBaggage }, withReceiveSpan);
                 } else {
-                    doHandle();
+                    withReceiveSpan();
                 }
             },
 
@@ -244,12 +272,35 @@
         }
 
         document.addEventListener("DOMContentLoaded", () => {
-            if (typeof Sentry !== "undefined" && typeof Sentry.init === "function") {
+            // Telemetry is host-driven: the .NET TiroFormViewer injects DSN, environment,
+            // release, and the current sentry-trace via window.__tiroSentryConfig before
+            // any page script runs. If no config is present (standalone mode, or host
+            // without telemetry), Sentry stays uninitialized and the page is silent.
+            const tiroSentryCfg = window.__tiroSentryConfig;
+            if (tiroSentryCfg && tiroSentryCfg.dsn && typeof Sentry !== "undefined" && typeof Sentry.init === "function") {
+                // Set sentry-trace + baggage meta tags BEFORE Sentry.init so
+                // browserTracingIntegration picks them up for the pageload transaction.
+                // Without this, the pageload trace is stranded in its own traceId — the
+                // handshake JS sends as the first message would not be linked to the
+                // .NET-side transaction graph.
+                if (tiroSentryCfg.sentryTrace) {
+                    const m = document.createElement("meta");
+                    m.name = "sentry-trace";
+                    m.content = tiroSentryCfg.sentryTrace;
+                    document.head.appendChild(m);
+                }
+                if (tiroSentryCfg.baggage) {
+                    const b = document.createElement("meta");
+                    b.name = "baggage";
+                    b.content = tiroSentryCfg.baggage;
+                    document.head.appendChild(b);
+                }
                 Sentry.init({
-                    dsn: "https://5b3c2798d1b788d50ee2f655ad3ca731@o4509350631292928.ingest.de.sentry.io/4510703453405264",
+                    dsn: tiroSentryCfg.dsn,
+                    environment: tiroSentryCfg.environment || undefined,
+                    release: tiroSentryCfg.release || undefined,
                     tracesSampleRate: 1.0,
                     integrations: [Sentry.browserTracingIntegration()],
-                    release: "tiro-formfiller-sample",
                 });
             }
 

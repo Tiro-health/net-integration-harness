@@ -12,13 +12,30 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
     /// </summary>
     public sealed class SentryTelemetrySink : ITelemetrySink
     {
+        // Captured at init time. _dsn is the DSN this host process reports to (the .NET
+        // project, e.g. tirohealth/dotnet-winforms). _embeddedDsn is the DSN that gets
+        // injected into the embedded browser's window.__tiroSentryConfig so its JS Sentry
+        // SDK reports to the JS project (e.g. tirohealth/javascript). The host owns both
+        // — same product, two SDKs, two projects, one trace.
+        private readonly string _dsn;
+        private readonly string _embeddedDsn;
+        private readonly string _environment;
+        private readonly string _release;
+
         /// <summary>
-        /// Default DSN used by Tiro-shipped binaries when no DSN is provided. Consumers should
-        /// use the DSN-overload ctor (or the <see cref="SentryOptions"/> overload) to send
-        /// telemetry to their own Sentry project.
+        /// Default DSN for the host process — the <c>tirohealth/dotnet-winforms</c> project.
+        /// Override via the DSN-taking ctors to redirect host telemetry to a different project.
         /// </summary>
         public const string DefaultDsn =
             "https://e2152463656fef5d6cf67ac91af87050@o4507651309043712.ingest.de.sentry.io/4510703529820240";
+
+        /// <summary>
+        /// Default DSN injected into the embedded browser page — the <c>tirohealth/javascript</c>
+        /// project. Same Sentry org as the host so trace propagation gives a unified trace
+        /// view across both projects.
+        /// </summary>
+        public const string DefaultEmbeddedDsn =
+            "https://5b3c2798d1b788d50ee2f655ad3ca731@o4507651309043712.ingest.de.sentry.io/4510703453405264";
 
         /// <summary>
         /// Default environment tag. Override via the (dsn, environment, release) ctor for
@@ -33,18 +50,30 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         /// </summary>
         public static string DefaultRelease => ComputeDefaultRelease();
 
-        /// <summary>Initialize Sentry with <see cref="DefaultDsn"/>, <see cref="DefaultEnvironment"/>, and <see cref="DefaultRelease"/>.</summary>
-        public SentryTelemetrySink() : this(DefaultDsn, DefaultEnvironment, DefaultRelease) { }
+        /// <summary>Initialize Sentry with all defaults (host DSN, embedded DSN, environment, release).</summary>
+        public SentryTelemetrySink() : this(DefaultDsn, DefaultEmbeddedDsn, DefaultEnvironment, DefaultRelease) { }
 
-        /// <summary>Initialize Sentry with the supplied DSN; environment and release default.</summary>
-        public SentryTelemetrySink(string dsn) : this(dsn, DefaultEnvironment, DefaultRelease) { }
+        /// <summary>Initialize Sentry with the supplied host DSN; embedded DSN, environment, and release default.</summary>
+        public SentryTelemetrySink(string dsn) : this(dsn, DefaultEmbeddedDsn, DefaultEnvironment, DefaultRelease) { }
 
         /// <summary>
-        /// Initialize Sentry with explicit DSN, environment, and release. Idempotent if the
-        /// SDK is already enabled (subsequent calls are silently ignored).
+        /// Initialize Sentry with explicit host DSN, environment, and release. The embedded
+        /// browser's DSN defaults to <see cref="DefaultEmbeddedDsn"/>.
         /// </summary>
         public SentryTelemetrySink(string dsn, string environment, string release)
+            : this(dsn, DefaultEmbeddedDsn, environment, release) { }
+
+        /// <summary>
+        /// Initialize Sentry with explicit host DSN, embedded-browser DSN, environment, and
+        /// release. Idempotent if the SDK is already enabled (subsequent calls are silently
+        /// ignored).
+        /// </summary>
+        public SentryTelemetrySink(string dsn, string embeddedDsn, string environment, string release)
         {
+            _dsn = dsn;
+            _embeddedDsn = embeddedDsn;
+            _environment = environment;
+            _release = release;
             if (!SentrySdk.IsEnabled)
             {
                 SentrySdk.Init(o =>
@@ -59,12 +88,18 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         }
 
         /// <summary>
-        /// Initialize Sentry with caller-supplied options. Use this to control sample rates,
-        /// release/environment tags, transports, etc.
+        /// Initialize Sentry with caller-supplied options. The embedded-browser DSN defaults
+        /// to <see cref="DefaultEmbeddedDsn"/>; pass it through <see cref="SentryOptions"/>
+        /// is not supported (Sentry options describe one SDK; the embedded DSN is for the
+        /// other). Use the (dsn, embeddedDsn, environment, release) ctor for full control.
         /// </summary>
         public SentryTelemetrySink(SentryOptions options)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
+            _dsn = options.Dsn;
+            _embeddedDsn = DefaultEmbeddedDsn;
+            _environment = options.Environment;
+            _release = options.Release;
             if (!SentrySdk.IsEnabled)
             {
                 SentrySdk.Init(options);
@@ -81,7 +116,7 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         }
 
         public ITelemetrySession BeginSession(string sessionId)
-            => new SentryTelemetrySession(sessionId);
+            => new SentryTelemetrySession(sessionId, _embeddedDsn, _environment, _release);
 
         public void CaptureException(Exception ex) => SentrySdk.CaptureException(ex);
 

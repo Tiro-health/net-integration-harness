@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
@@ -23,6 +24,8 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             public void SetTag(string key, string value) { }
             public void AddBreadcrumb(string category, string message) { }
             public ITelemetrySpan StartTransaction(string name, string operation) => NullSpan.Instance;
+            public string GetSentryTraceHeader() => null;
+            public IReadOnlyDictionary<string, string> GetEmbeddedBootstrapConfig() => null;
             public void Dispose() { }
         }
 

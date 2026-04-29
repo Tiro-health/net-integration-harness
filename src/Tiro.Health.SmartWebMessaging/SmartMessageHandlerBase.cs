@@ -40,6 +40,20 @@ namespace Tiro.Health.SmartWebMessaging
         public delegate Task<string> MessageSender(string jsonMessage);
         public MessageSender SendMessage { get; set; }
 
+        /// <summary>
+        /// Optional hook called immediately before any outbound <see cref="SmartMessageBase"/>
+        /// is serialized. Used to attach <c>_meta</c> (e.g. Sentry trace propagation).
+        /// Exceptions from the provider are swallowed — telemetry must never break a send.
+        /// </summary>
+        public Func<SmartMessageBase, MessageMeta> MetaProvider { get; set; }
+
+        private void ApplyMeta(SmartMessageBase message)
+        {
+            if (message == null || MetaProvider == null) return;
+            try { message.Meta = MetaProvider(message); }
+            catch { /* never let enrichment break a send */ }
+        }
+
         // ---------------------------------------------------------------------------
         // Constructor — concrete subclasses pass their FHIR-version-specific options
         // ---------------------------------------------------------------------------
@@ -103,6 +117,7 @@ namespace Tiro.Health.SmartWebMessaging
                 _logger.LogError(e, "Failed to deserialize message. JSON: {jsonMessage}", jsonMessage);
                 string messageId = GetMessageIdFromJson(jsonMessage);
                 var response = SmartMessageResponse.CreateErrorResponse(messageId, new ErrorResponse(e));
+                ApplyMeta(response);
                 return JsonSerializer.Serialize(response, SerializeOptions);
             }
             catch (Exception e)
@@ -112,11 +127,13 @@ namespace Tiro.Health.SmartWebMessaging
                 {
                     string messageId = GetMessageIdFromJson(jsonMessage);
                     var response = SmartMessageResponse.CreateErrorResponse(messageId, new ErrorResponse(e));
+                    ApplyMeta(response);
                     return JsonSerializer.Serialize(response, SerializeOptions);
                 }
                 catch
                 {
                     var response = SmartMessageResponse.CreateErrorResponse(null, new ErrorResponse(e));
+                    ApplyMeta(response);
                     return JsonSerializer.Serialize(response, SerializeOptions);
                 }
             }
@@ -181,6 +198,7 @@ namespace Tiro.Health.SmartWebMessaging
                 response = SmartMessageResponse.CreateErrorResponse(message.MessageId, new ErrorResponse(e));
             }
 
+            ApplyMeta(response);
             var responseMessage = JsonSerializer.Serialize(response, SerializeOptions);
             _logger.LogInformation("Created response: {responseMessage}", responseMessage);
             return responseMessage;
@@ -275,6 +293,7 @@ namespace Tiro.Health.SmartWebMessaging
                         request.MessageId);
             }
 
+            ApplyMeta(request);
             string requestJson = JsonSerializer.Serialize(request, SerializeOptions);
             return await SendMessage(requestJson);
         }

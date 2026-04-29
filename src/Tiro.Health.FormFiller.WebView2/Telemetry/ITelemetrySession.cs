@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
@@ -21,5 +22,22 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
 
         /// <summary>Start a new transaction in this session's trace.</summary>
         ITelemetrySpan StartTransaction(string name, string operation);
+
+        /// <summary>
+        /// Returns a <c>sentry-trace</c> header value (<c>"&lt;traceId&gt;-&lt;spanId&gt;-&lt;sampled&gt;"</c>)
+        /// for the current session, or <c>null</c> when telemetry is disabled / the session
+        /// is no-op. Used by <see cref="TiroFormViewer{TResource,TQR,TOO}"/> to propagate the
+        /// trace into outbound SMART Web Messaging envelopes via <c>_meta.sentry.trace</c>.
+        /// </summary>
+        string GetSentryTraceHeader();
+
+        /// <summary>
+        /// Returns a JSON-serializable key/value config for an embedded browser to bootstrap
+        /// its own telemetry SDK (DSN, environment, release) and inherit the current trace
+        /// (sentryTrace, baggage). The host injects this as <c>window.__tiroSentryConfig</c>
+        /// before page scripts run, so the embedded <c>index.html</c> doesn't have to know
+        /// any DSN or trace context. Returns null when telemetry is disabled.
+        /// </summary>
+        IReadOnlyDictionary<string, string> GetEmbeddedBootstrapConfig();
     }
 }
