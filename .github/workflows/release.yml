@@ -1,0 +1,64 @@
+name: Build and Publish NuGet
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Strip the leading 'v' from the tag (e.g., v1.0.37 -> 1.0.37)
+      - name: Parse version
+        id: version
+        shell: bash
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG_NAME#v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version $VERSION"
+
+      # Pack each src/*.csproj. SDK-style projects propagate -p:Version into
+      # PackageVersion / AssemblyVersion / FileVersion / InformationalVersion
+      # automatically, so no AssemblyInfo patching is required.
+      - name: Pack src libraries
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/packages | Out-Null
+          Get-ChildItem -Path src -Filter "*.csproj" -Recurse | ForEach-Object {
+            Write-Host "::group::Pack $($_.Name) @ $env:VERSION"
+            dotnet pack $_.FullName `
+              --configuration Release `
+              -p:Version=$env:VERSION `
+              --output artifacts/packages
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+          }
+
+      - name: Upload NuGet artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkgs
+          path: artifacts/packages/*.nupkg
+
+      - name: Push to NuGet
+        shell: pwsh
+        run: |
+          dotnet nuget push "artifacts/packages/*.nupkg" `
+            --api-key $env:NUGET_API_KEY `
+            --source https://api.nuget.org/v3/index.json `
+            --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}

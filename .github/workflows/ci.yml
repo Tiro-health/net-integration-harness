@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # The full solution can't be built on a fresh checkout because the VB
+      # sample projects PackageReference the libraries by version. We build
+      # the src libraries (which transitively cover all packable projects)
+      # and the test project explicitly.
+      - name: Build src libraries
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path src -Filter "*.csproj" -Recurse | ForEach-Object {
+            Write-Host "::group::Build $($_.Name)"
+            dotnet build $_.FullName --configuration Release
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+          }
+
+      - name: Run unit tests
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path tests -Filter "*.csproj" -Recurse | ForEach-Object {
+            Write-Host "::group::Test $($_.Name)"
+            dotnet test $_.FullName --configuration Release --logger "trx;LogFileName=$($_.BaseName).trx"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+          }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'
