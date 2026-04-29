@@ -7,6 +7,20 @@ on:
     branches: [master]
 
 jobs:
+  # Samples are consumer-facing examples and must consume the published
+  # NuGet packages via PackageReference. ProjectReference into src/ is
+  # fine for local dev iteration but must never be checked in.
+  lint-samples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Forbid ProjectReference to src/ in samples
+        run: |
+          if grep -rEn 'ProjectReference[^>]*Include="[^"]*src[\\/]' samples/; then
+            echo "::error::Samples must consume libraries via PackageReference, not ProjectReference into src/. See lines above."
+            exit 1
+          fi
+
   build-and-test:
     runs-on: windows-latest
 
