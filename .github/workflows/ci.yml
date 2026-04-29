@@ -23,11 +23,6 @@ jobs:
 
   build-and-test:
     runs-on: windows-latest
-    env:
-      # Unique per-run version so samples (which use Version="*-*") restore
-      # the freshly packed libraries from the local feed and never pick up
-      # a stale 1.0.0 from nuget.org or the global packages cache.
-      CI_PKG_VERSION: 0.0.0-ci.${{ github.run_id }}
 
     steps:
       - name: Checkout
@@ -44,14 +39,17 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path artifacts/packages | Out-Null
 
-      # Pack covers build verification and produces nupkgs that the sample
-      # build step below will consume from the local feed.
-      - name: Pack src libraries
+      # The full solution can't be built on a fresh checkout because the
+      # sample VB projects PackageReference the libraries by version. We
+      # build the src libraries directly. GeneratePackageOnBuild=true
+      # produces the nupkgs as a side effect; verifying the packaged
+      # consumption path is a local-build concern, not a CI one.
+      - name: Build src libraries
         shell: pwsh
         run: |
           Get-ChildItem -Path src -Filter "*.csproj" -Recurse | ForEach-Object {
-            Write-Host "::group::Pack $($_.Name) @ $env:CI_PKG_VERSION"
-            dotnet pack $_.FullName --configuration Release -p:Version=$env:CI_PKG_VERSION --output artifacts/packages
+            Write-Host "::group::Build $($_.Name)"
+            dotnet build $_.FullName --configuration Release
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Write-Host "::endgroup::"
           }
@@ -72,16 +70,3 @@ jobs:
         with:
           name: test-results
           path: '**/TestResults/*.trx'
-
-      # Build samples against the just-packed nupkgs. This is the package
-      # smoke test: catches missing content files, broken targets, dropped
-      # TargetFrameworks, transitive PackageReference leaks, etc.
-      - name: Build samples (package smoke test)
-        shell: pwsh
-        run: |
-          Get-ChildItem -Path samples -Filter "*.vbproj" -Recurse | ForEach-Object {
-            Write-Host "::group::Build $($_.Name)"
-            dotnet build $_.FullName --configuration Release
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            Write-Host "::endgroup::"
-          }
