@@ -19,11 +19,18 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # The samples are old-style (non-SDK) VB projects. Mixed sln files
+      # (SDK-style src/, tests/ + non-SDK samples/) restore and build
+      # cleanly under MSBuild but not under `dotnet build` alone — old-style
+      # PackageReference restore there only partially populates references.
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
       - name: Restore
-        run: dotnet restore net-integration-harness.sln
+        run: msbuild net-integration-harness.sln -t:Restore -p:Configuration=Release
 
       - name: Build
-        run: dotnet build net-integration-harness.sln --configuration Release --no-restore
+        run: msbuild net-integration-harness.sln -p:Configuration=Release
 
       - name: Test
         run: dotnet test net-integration-harness.sln --configuration Release --no-build --logger "trx"
