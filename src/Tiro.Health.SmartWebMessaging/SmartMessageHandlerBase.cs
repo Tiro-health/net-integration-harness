@@ -93,9 +93,7 @@ namespace Tiro.Health.SmartWebMessaging
             try
             {
                 SmartMessageBase message;
-                // Top-level scan — a literal "responseToMessageId" inside a payload value
-                // (e.g. a free-text answer in form.submitted) must not flip routing.
-                if (JsonProbe.HasTopLevelField(jsonMessage, "responseToMessageId"))
+                if (jsonMessage.Contains("\"responseToMessageId\""))
                 {
                     _logger.LogDebug("Message identified as SmartMessageResponse.");
                     message = JsonSerializer.Deserialize<SmartMessageResponse>(jsonMessage, SerializeOptions);
@@ -314,24 +312,31 @@ namespace Tiro.Health.SmartWebMessaging
                 // immediately rather than lingering for the timeout window. Disposing
                 // before invoking the user handler also unregisters the eviction callback,
                 // so a late cancel can't double-remove a listener that already fired.
+                //
+                // Order matters: assign → register → CancelAfter. If the user token is
+                // already cancelled at CreateLinkedTokenSource time (microsecond window
+                // past ThrowIfCancellationRequested), Register would fire its callback
+                // synchronously — and we want it to find the listener already in the dict
+                // so the eviction is a no-op cleanup rather than an orphan-creating race.
                 var listenerCts = cancellationToken.CanBeCanceled
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                     : new CancellationTokenSource();
-                listenerCts.CancelAfter(ResponseListenerTimeout);
 
                 var messageId = request.MessageId;
-                listenerCts.Token.Register(() =>
-                {
-                    _responseListeners.TryRemove(messageId, out _);
-                    listenerCts.Dispose();
-                });
-
                 var userHandler = responseHandler;
                 _responseListeners[messageId] = async response =>
                 {
                     try { listenerCts.Dispose(); } catch { /* best-effort */ }
                     await userHandler(response);
                 };
+
+                listenerCts.Token.Register(() =>
+                {
+                    _responseListeners.TryRemove(messageId, out _);
+                    listenerCts.Dispose();
+                });
+
+                listenerCts.CancelAfter(ResponseListenerTimeout);
             }
 
             ApplyMeta(request);

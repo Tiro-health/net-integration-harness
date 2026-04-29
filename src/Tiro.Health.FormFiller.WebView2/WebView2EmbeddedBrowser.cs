@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -70,7 +71,15 @@ namespace Tiro.Health.FormFiller.WebView2
                     }));
                 }
                 catch (ObjectDisposedException) { /* lost the race with Dispose */ }
-                catch (InvalidOperationException) { /* handle not created; should not happen post-Initialize */ }
+                catch (InvalidOperationException ex)
+                {
+                    // Handle not created — this means PostMessage was called before
+                    // InitializeAsync completed, which violates the IEmbeddedBrowser
+                    // contract. Surface loudly in DEBUG so the precondition violation
+                    // is caught in tests; silently swallow in RELEASE so production
+                    // doesn't crash on a transient WinForms hiccup.
+                    Debug.Fail("PostMessage before WebView2 handle creation: " + ex.Message);
+                }
             }
             else
             {
