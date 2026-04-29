@@ -33,6 +33,9 @@
     <EmbeddedResource Include="WebAssets\index.html">
       <LogicalName>$(RootNamespace).WebAssets.index.html</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="WebAssets\tiro-swm-bridge.js">
+      <LogicalName>$(RootNamespace).WebAssets.tiro-swm-bridge.js</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>

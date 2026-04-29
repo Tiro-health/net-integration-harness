@@ -247,10 +247,10 @@ namespace Tiro.Health.FormFiller.WebView2
                 await _browser.InitializeAsync();
 
                 // Inject host telemetry config as window.__tiroSentryConfig before the page
-                // runs any of its own scripts. The embedded index.html consumes this to
-                // bootstrap its Sentry SDK with the host's DSN/env/release and to set the
-                // sentry-trace meta tag so the pageload transaction inherits the .NET trace
-                // from the very first span (rather than after the handshake response).
+                // runs any of its own scripts. The bridge below consumes this to bootstrap
+                // its Sentry SDK with the host's DSN/env/release and to set the sentry-trace
+                // meta tag so the pageload transaction inherits the .NET trace from the
+                // very first span (rather than after the handshake response).
                 var bootstrap = _session?.GetEmbeddedBootstrapConfig();
                 if (bootstrap != null && bootstrap.Count > 0)
                 {
@@ -258,6 +258,12 @@ namespace Tiro.Health.FormFiller.WebView2
                     var bootstrapScript = "window.__tiroSentryConfig=" + configJson + ";";
                     await _browser.AddInitializationScriptAsync(bootstrapScript);
                 }
+
+                // Inject the SMART Web Messaging bridge — owns protocol, transport,
+                // telemetry instrumentation, and <tiro-form-filler> auto-wiring on the
+                // page side. Page is UI-only; it interacts via window.tiro, the
+                // <tiro-form-filler> element's events, and document tiro-* CustomEvents.
+                await _browser.AddInitializationScriptAsync(BridgeJs.SwmBridge);
 
                 _smartWebMessageHandler.SendMessage = (string jsonMessage) =>
                 {

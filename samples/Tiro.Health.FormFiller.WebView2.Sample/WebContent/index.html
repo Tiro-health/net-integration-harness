@@ -3,10 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tiro Form Filler — Sample</title>
-    <link rel="preload" as="script" href="https://browser.sentry-cdn.com/10.33.0/bundle.tracing.min.js" crossorigin="anonymous">
+    <title>Tiro Form Filler — Launcher Sample</title>
     <link rel="preload" as="script" href="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js">
-    <script src="https://browser.sentry-cdn.com/10.33.0/bundle.tracing.min.js" defer crossorigin="anonymous"></script>
     <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer></script>
     <style>
         :root { color-scheme: light; }
@@ -35,289 +33,28 @@
     </footer>
 
     <script>
-        const SmartWebMessaging = {
-            messagingHandle: "smart-web-messaging",
-            pendingRequests: new Map(),
-            context: null,
-
-            generateMessageId() { return crypto.randomUUID(); },
-            isWebView2() { return !!(window.chrome && window.chrome.webview); },
-            isIframe() { return window.parent !== window; },
-
-            sendMessage(message) {
-                const doSend = () => {
-                    // Attach the current Sentry trace context to the outbound envelope as
-                    // _meta.sentry.{trace,baggage}. The .NET host's SmartMessageHandlerBase
-                    // inspects this on inbound messages so spans on both sides land in the
-                    // same trace. Best-effort — don't let telemetry plumbing break a send.
-                    try {
-                        if (typeof Sentry !== "undefined" && typeof Sentry.getTraceData === "function") {
-                            const td = Sentry.getTraceData();
-                            const trace = td && td["sentry-trace"];
-                            if (trace) {
-                                message._meta = message._meta || {};
-                                message._meta.sentry = { trace };
-                                if (td["baggage"]) message._meta.sentry.baggage = td["baggage"];
-                            }
-                        }
-                    } catch (e) { /* ignore */ }
-
-                    if (this.isWebView2()) window.chrome.webview.postMessage(message);
-                    else if (this.isIframe()) window.parent.postMessage(message, "*");
-                    else console.warn("[SWM] No host available");
-                };
-                if (typeof Sentry !== "undefined" && typeof Sentry.startSpan === "function") {
-                    Sentry.startSpan({ op: "swm.send", name: message.messageType || "response" }, (span) => {
-                        span.setAttribute("swm.messageId", message.messageId);
-                        span.setAttribute("swm.messageType", message.messageType || null);
-                        span.setAttribute("swm.isResponse", !!message.responseToMessageId);
-                        doSend();
-                    });
-                } else {
-                    doSend();
-                }
-            },
-
-            sendRequest(messageType, payload = {}) {
-                return new Promise((resolve, reject) => {
-                    const messageId = this.generateMessageId();
-                    this.pendingRequests.set(messageId, { resolve, reject });
-                    this.sendMessage({ messageId, messagingHandle: this.messagingHandle, messageType, payload });
-                    setTimeout(() => {
-                        if (this.pendingRequests.has(messageId)) {
-                            this.pendingRequests.delete(messageId);
-                            reject(new Error(`Request timeout: ${messageType}`));
-                        }
-                    }, 30000);
-                });
-            },
-
-            sendEvent(messageType, payload = {}) {
-                this.sendMessage({ messageId: this.generateMessageId(), messagingHandle: this.messagingHandle, messageType, payload });
-            },
-
-            sendResponse(responseToMessageId, payload) {
-                this.sendMessage({ messageId: this.generateMessageId(), responseToMessageId, additionalResponsesExpected: false, payload });
-            },
-
-            retryHandshake(retryIntervalMs = 1000, timeoutMs = 30000) {
-                return new Promise((resolve, reject) => {
-                    const start = Date.now();
-                    const attemptIds = [];
-                    let resolved = false;
-
-                    const onSuccess = (payload) => {
-                        if (resolved) return;
-                        resolved = true;
-                        attemptIds.forEach(id => this.pendingRequests.delete(id));
-                        resolve(payload);
-                    };
-
-                    const attempt = () => {
-                        if (resolved) return;
-                        const messageId = this.generateMessageId();
-                        attemptIds.push(messageId);
-                        this.pendingRequests.set(messageId, { resolve: onSuccess, reject: () => {} });
-                        this.sendMessage({ messageId, messagingHandle: this.messagingHandle, messageType: "status.handshake", payload: {} });
-                        setTimeout(() => {
-                            if (!resolved && (Date.now() - start) < timeoutMs) attempt();
-                        }, retryIntervalMs);
-                    };
-
-                    setTimeout(() => {
-                        if (!resolved) {
-                            attemptIds.forEach(id => this.pendingRequests.delete(id));
-                            reject(new Error("Handshake timeout"));
-                        }
-                    }, timeoutMs);
-
-                    attempt();
-                });
-            },
-
-            handleMessage(message) {
-                const doHandle = () => {
-                    if (message.responseToMessageId) {
-                        const pending = this.pendingRequests.get(message.responseToMessageId);
-                        if (pending) {
-                            if (message.payload && message.payload.$type === "error") pending.reject(new Error(message.payload.errorMessage));
-                            else pending.resolve(message.payload);
-                            if (!message.additionalResponsesExpected) this.pendingRequests.delete(message.responseToMessageId);
-                        }
-                        return;
-                    }
-                    if (message.messageType) this.handleHostMessage(message);
-                };
-                const withReceiveSpan = () => {
-                    if (typeof Sentry !== "undefined" && typeof Sentry.startSpan === "function") {
-                        Sentry.startSpan({ op: "swm.receive", name: message.messageType || "response" }, (span) => {
-                            span.setAttribute("swm.messageId", message.messageId || message.responseToMessageId);
-                            span.setAttribute("swm.messageType", message.messageType || null);
-                            span.setAttribute("swm.isResponse", !!message.responseToMessageId);
-                            doHandle();
-                        });
-                    } else {
-                        doHandle();
-                    }
-                };
-                // If the inbound envelope carries Sentry trace context (from the .NET host),
-                // continue that trace so the receive span — and any spans created during
-                // doHandle — share the same traceId as the host's send transaction.
-                const incomingTrace = message && message._meta && message._meta.sentry && message._meta.sentry.trace;
-                const incomingBaggage = message && message._meta && message._meta.sentry && message._meta.sentry.baggage;
-                if (incomingTrace && typeof Sentry !== "undefined" && typeof Sentry.continueTrace === "function") {
-                    Sentry.continueTrace({ sentryTrace: incomingTrace, baggage: incomingBaggage }, withReceiveSpan);
-                } else {
-                    withReceiveSpan();
-                }
-            },
-
-            handleHostMessage(message) {
-                const handlers = {
-                    "sdc.configure":            () => { /* no-op in sample */ },
-                    "sdc.configureContext":     () => { this.context = { ...this.context, ...message.payload }; },
-                    "sdc.displayQuestionnaire": () => displayQuestionnaire(message.payload),
-                    "ui.form.requestSubmit":    () => submitForm(),
-                    "ui.form.persist":          () => { /* no-op in sample */ },
-                };
-                const handler = handlers[message.messageType];
-                if (handler) {
-                    handler();
-                    this.sendResponse(message.messageId, { $type: "base" });
-                } else {
-                    this.sendResponse(message.messageId, { $type: "error", errorMessage: `Unknown message type: ${message.messageType}`, errorType: "UnknownMessageTypeException" });
-                }
-            },
-
-            init() {
-                if (this.isWebView2()) {
-                    window.chrome.webview.addEventListener("message", (e) => this.handleMessage(e.data));
-                } else if (this.isIframe()) {
-                    window.addEventListener("message", (e) => { if (e.source === window.parent) this.handleMessage(e.data); });
-                } else {
-                    setStatus("Standalone mode — embed in WebView2 or iframe.");
-                    return;
-                }
-                this.retryHandshake().then(
-                    () => setStatus("Connected — waiting for questionnaire…"),
-                    (err) => setStatus("Handshake failed: " + err.message)
-                );
-            },
-        };
-
         const formFiller = document.getElementById("form-filler");
         const submitBtn = document.getElementById("submit-btn");
         const cancelBtn = document.getElementById("cancel-btn");
         const statusEl = document.getElementById("status");
 
-        function setStatus(text) { statusEl.textContent = text; }
-
-        function displayQuestionnaire(payload) {
-            const { questionnaire, questionnaireResponse, context } = payload || {};
-            if (context) SmartWebMessaging.context = { ...SmartWebMessaging.context, ...context };
-            if (!questionnaire) { setStatus("No questionnaire in payload"); return; }
-
-            if (SmartWebMessaging.context && Array.isArray(SmartWebMessaging.context.launchContext)) {
-                const launchContext = {};
-                SmartWebMessaging.context.launchContext.forEach(item => {
-                    if (item.name && item.contentResource) launchContext[item.name] = item.contentResource;
-                });
-                if (Object.keys(launchContext).length > 0)
-                    formFiller.setAttribute("launch-context", JSON.stringify(launchContext));
-            }
-
-            if (questionnaireResponse)
-                formFiller.setAttribute("initial-response", JSON.stringify(questionnaireResponse));
-
-            formFiller.setAttribute("questionnaire",
-                typeof questionnaire === "string" ? questionnaire : JSON.stringify(questionnaire));
-        }
-
-        function submitForm() {
-            if (!formFiller.questionnaire) { setStatus("No form loaded"); return; }
-            formFiller.submit();
-        }
-
-        function sanitize(value) {
-            if (value === null) return undefined;
-            if (typeof value !== "object") return value;
-            if (Array.isArray(value)) return value.map(sanitize).filter(v => v !== undefined);
-            const out = {};
-            for (const [k, v] of Object.entries(value)) {
-                const s = sanitize(v);
-                if (s !== undefined) out[k] = s;
-            }
-            return out;
-        }
-
-        async function sendFormSubmission(response) {
-            response.status = "completed";
-            response = sanitize(response);
-            try {
-                const narrative = await formFiller.sdcClient.generateNarrative(response);
-                response.text = narrative;
-            } catch (err) {
-                console.warn("[Sample] Narrative generation failed:", err);
-            }
-            const outcome = {
-                resourceType: "OperationOutcome",
-                issue: [{ severity: "information", code: "informational", diagnostics: "Form submitted successfully" }],
-            };
-            try {
-                await SmartWebMessaging.sendRequest("form.submitted", { response, outcome });
-                setStatus("Submitted.");
-            } catch (err) {
-                setStatus("Submission failed: " + err.message);
-            }
-        }
+        const setStatus = (text) => { statusEl.textContent = text; };
 
         document.addEventListener("DOMContentLoaded", () => {
-            // Telemetry is host-driven: the .NET TiroFormViewer injects DSN, environment,
-            // release, and the current sentry-trace via window.__tiroSentryConfig before
-            // any page script runs. If no config is present (standalone mode, or host
-            // without telemetry), Sentry stays uninitialized and the page is silent.
-            const tiroSentryCfg = window.__tiroSentryConfig;
-            if (tiroSentryCfg && tiroSentryCfg.dsn && typeof Sentry !== "undefined" && typeof Sentry.init === "function") {
-                // Set sentry-trace + baggage meta tags BEFORE Sentry.init so
-                // browserTracingIntegration picks them up for the pageload transaction.
-                // Without this, the pageload trace is stranded in its own traceId — the
-                // handshake JS sends as the first message would not be linked to the
-                // .NET-side transaction graph.
-                if (tiroSentryCfg.sentryTrace) {
-                    const m = document.createElement("meta");
-                    m.name = "sentry-trace";
-                    m.content = tiroSentryCfg.sentryTrace;
-                    document.head.appendChild(m);
-                }
-                if (tiroSentryCfg.baggage) {
-                    const b = document.createElement("meta");
-                    b.name = "baggage";
-                    b.content = tiroSentryCfg.baggage;
-                    document.head.appendChild(b);
-                }
-                Sentry.init({
-                    dsn: tiroSentryCfg.dsn,
-                    environment: tiroSentryCfg.environment || undefined,
-                    release: tiroSentryCfg.release || undefined,
-                    tracesSampleRate: 1.0,
-                    integrations: [Sentry.browserTracingIntegration()],
-                });
-            }
-
-            formFiller.addEventListener("tiro-ready", () => {
-                submitBtn.disabled = false;
-                setStatus("Questionnaire loaded.");
-            });
-            formFiller.addEventListener("tiro-submit", (e) => sendFormSubmission(e.detail.response));
+            // Form-filler UI events
+            formFiller.addEventListener("tiro-ready", () => { submitBtn.disabled = false; setStatus("Questionnaire loaded."); });
             formFiller.addEventListener("tiro-error", (e) => setStatus("Error: " + (e.detail.error?.message ?? e.detail.type)));
 
-            submitBtn.addEventListener("click", submitForm);
-            cancelBtn.addEventListener("click", () => {
-                SmartWebMessaging.sendEvent("ui.done", {});
-                setStatus("Cancelled.");
-            });
+            // Bridge lifecycle events (host-driven)
+            document.addEventListener("tiro-connected",     () => setStatus("Connected — waiting for questionnaire…"));
+            document.addEventListener("tiro-disconnected",  (e) => setStatus("Connection failed: " + e.detail.error.message));
+            document.addEventListener("tiro-submitted",     () => setStatus("Submitted."));
+            document.addEventListener("tiro-submit-error",  (e) => setStatus("Submission failed: " + e.detail.error.message));
+            document.addEventListener("tiro-cancelled",     () => setStatus("Cancelled."));
 
-            SmartWebMessaging.init();
+            // User actions
+            submitBtn.addEventListener("click", () => formFiller.submit());
+            cancelBtn.addEventListener("click", () => window.tiro.cancel());
         });
     </script>
 </body>

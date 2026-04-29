@@ -1,15 +1,123 @@
-<!-- Placeholder for shipped site, redirect to hosted content for now. Don't forget to set every file to embedded (see properties)'-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Redirecting...</title>
-    <meta http-equiv="refresh" content="0; url=https://tiro-health.github.io/web-sdk-tutorial/html+js-smartwebmessaging/">
+    <title>Tiro Form Filler — Launcher Sample</title>
+    <link rel="preload" as="script" href="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js">
+    <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer></script>
+    <style>
+        :root {
+            color-scheme: light;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+            background: #f7f8fa;
+            color: #222;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            padding: 8px 16px;
+            background: #fff;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 0.85rem;
+            color: #6b7280;
+        }
+
+        main {
+            flex: 1;
+            overflow: auto;
+            padding: 16px;
+        }
+
+        footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 12px 16px;
+            background: #fff;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        button {
+            font: inherit;
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: 1px solid transparent;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: #fff;
+        }
+
+            .btn-primary:hover {
+                background: #1d4ed8;
+            }
+
+            .btn-primary:disabled {
+                background: #93c5fd;
+                cursor: not-allowed;
+            }
+
+        .btn-secondary {
+            background: #fff;
+            color: #111;
+            border-color: #d1d5db;
+        }
+
+            .btn-secondary:hover {
+                background: #f3f4f6;
+            }
+
+        tiro-form-filler {
+            display: block;
+            height: 100%;
+        }
+    </style>
 </head>
 <body>
-    <p>If you are not redirected automatically, please click this link:</p>
-    <p><a href="https://tiro-health.github.io/web-sdk-tutorial/html+js-smartwebmessaging/">Tiro Health Web SDK Tutorial - React</a></p>
+    <header id="status">Connecting&hellip;</header>
+    <main>
+        <tiro-form-filler id="form-filler" sdc-endpoint-address="https://sdc.tiro.health/fhir/r5"></tiro-form-filler>
+    </main>
+    <footer>
+        <button id="cancel-btn" class="btn-secondary" type="button">Cancel</button>
+        <button id="submit-btn" class="btn-primary" type="button" disabled>Submit</button>
+    </footer>
+
+    <script>const formFiller = document.getElementById("form-filler");
+        const submitBtn = document.getElementById("submit-btn");
+        const cancelBtn = document.getElementById("cancel-btn");
+        const statusEl = document.getElementById("status");
+
+        const setStatus = (text) => { statusEl.textContent = text; };
+
+        document.addEventListener("DOMContentLoaded", () => {
+            // Form-filler UI events
+            formFiller.addEventListener("tiro-ready", () => { submitBtn.disabled = false; setStatus("Questionnaire loaded."); });
+            formFiller.addEventListener("tiro-error", (e) => setStatus("Error: " + (e.detail.error?.message ?? e.detail.type)));
+
+            // Bridge lifecycle events (host-driven)
+            document.addEventListener("tiro-connected",     () => setStatus("Connected — waiting for questionnaire…"));
+            document.addEventListener("tiro-disconnected",  (e) => setStatus("Connection failed: " + e.detail.error.message));
+            document.addEventListener("tiro-submitted",     () => setStatus("Submitted."));
+            document.addEventListener("tiro-submit-error",  (e) => setStatus("Submission failed: " + e.detail.error.message));
+            document.addEventListener("tiro-cancelled",     () => setStatus("Cancelled."));
+
+            // User actions
+            submitBtn.addEventListener("click", () => formFiller.submit());
+            cancelBtn.addEventListener("click", () => window.tiro.cancel());
+        });</script>
 </body>
 </html>
