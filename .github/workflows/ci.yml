@@ -19,6 +19,12 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # nuget.config declares artifacts/packages as a local source; NuGet
+      # errors out (NU1301) if the directory is missing on a fresh checkout.
+      - name: Ensure local NuGet source exists
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path artifacts/packages | Out-Null
+
       # The full solution can't be built on a fresh checkout because the VB
       # sample projects PackageReference the libraries by version. We build
       # the src libraries (which transitively cover all packable projects)

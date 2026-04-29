@@ -28,6 +28,12 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Releasing version $VERSION"
 
+      # nuget.config declares artifacts/packages as a local source; NuGet
+      # errors out (NU1301) if the directory is missing on a fresh checkout.
+      - name: Ensure local NuGet source exists
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path artifacts/packages | Out-Null
+
       # Pack each src/*.csproj. SDK-style projects propagate -p:Version into
       # PackageVersion / AssemblyVersion / FileVersion / InformationalVersion
       # automatically, so no AssemblyInfo patching is required.
@@ -36,7 +42,6 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts/packages | Out-Null
           Get-ChildItem -Path src -Filter "*.csproj" -Recurse | ForEach-Object {
             Write-Host "::group::Pack $($_.Name) @ $env:VERSION"
             dotnet pack $_.FullName `
