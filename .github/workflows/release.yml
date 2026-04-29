@@ -36,9 +36,19 @@ jobs:
       - name: Restore
         run: msbuild net-integration-harness.sln -t:Restore -p:Configuration=Release
 
+      # Build the full sln first so every src/*.dll exists on disk. msbuild
+      # -t:Pack on its own skips the Build target dependency for reasons
+      # specific to the dotnet 10 SDK Pack targets and trips NU5026.
+      - name: Build
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: msbuild net-integration-harness.sln -p:Configuration=Release -p:Version=$env:VERSION
+
       # Pack each src/*.csproj with the parsed version. SDK-style projects
       # propagate -p:Version into PackageVersion / AssemblyVersion /
-      # FileVersion / InformationalVersion automatically.
+      # FileVersion / InformationalVersion automatically. NoBuild=true
+      # tells Pack to reuse the artifacts produced by the Build step.
       - name: Pack src libraries
         shell: pwsh
         env:
@@ -47,7 +57,7 @@ jobs:
           $output = Join-Path $PWD "artifacts/packages"
           Get-ChildItem -Path src -Filter "*.csproj" -Recurse | ForEach-Object {
             Write-Host "::group::Pack $($_.Name) @ $env:VERSION"
-            msbuild $_.FullName -t:Pack -p:Configuration=Release -p:Version=$env:VERSION -p:PackageOutputPath=$output
+            msbuild $_.FullName -t:Pack -p:Configuration=Release -p:Version=$env:VERSION -p:PackageOutputPath=$output -p:NoBuild=true
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Write-Host "::endgroup::"
           }
