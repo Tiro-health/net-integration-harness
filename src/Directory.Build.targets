@@ -1,0 +1,19 @@
+<Project>
+
+  <!--
+    For local Debug builds (Visual Studio default), append a unique
+    timestamp suffix to <Version> so every build produces a freshly
+    versioned nupkg. Combined with floating PackageReference versions
+    in samples/, this gives a "build library, run sample" loop that
+    always picks up the latest local code without NuGet cache stalls.
+
+    CI (GITHUB_ACTIONS=true) and Release builds are not modified here:
+      - CI smoke tests pass an explicit -p:Version=0.0.0-ci.<run_id>
+      - Release publishing passes -p:Version=<tag>
+    Both override anything set in this file.
+  -->
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' != 'true' AND '$(Configuration)' == 'Debug'">
+    <Version>$(Version)-local.$([System.DateTime]::UtcNow.ToString(yyyyMMddHHmmss))</Version>
+  </PropertyGroup>
+
+</Project>

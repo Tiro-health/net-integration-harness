@@ -7,8 +7,27 @@ on:
     branches: [master]
 
 jobs:
+  # Samples are consumer-facing examples and must consume the published
+  # NuGet packages via PackageReference. ProjectReference into src/ is
+  # fine for local dev iteration but must never be checked in.
+  lint-samples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Forbid ProjectReference to src/ in samples
+        run: |
+          if grep -rEn 'ProjectReference[^>]*Include="[^"]*src[\\/]' samples/; then
+            echo "::error::Samples must consume libraries via PackageReference, not ProjectReference into src/."
+            exit 1
+          fi
+
   build-and-test:
     runs-on: windows-latest
+    env:
+      # Unique per-run version so samples (which use Version="*-*") restore
+      # the freshly packed libraries from the local feed and never pick up
+      # a stale 1.0.0 from nuget.org or the global packages cache.
+      CI_PKG_VERSION: 0.0.0-ci.${{ github.run_id }}
 
     steps:
       - name: Checkout
@@ -25,16 +44,14 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path artifacts/packages | Out-Null
 
-      # The full solution can't be built on a fresh checkout because the VB
-      # sample projects PackageReference the libraries by version. We build
-      # the src libraries (which transitively cover all packable projects)
-      # and the test project explicitly.
-      - name: Build src libraries
+      # Pack covers build verification and produces nupkgs that the sample
+      # build step below will consume from the local feed.
+      - name: Pack src libraries
         shell: pwsh
         run: |
           Get-ChildItem -Path src -Filter "*.csproj" -Recurse | ForEach-Object {
-            Write-Host "::group::Build $($_.Name)"
-            dotnet build $_.FullName --configuration Release
+            Write-Host "::group::Pack $($_.Name) @ $env:CI_PKG_VERSION"
+            dotnet pack $_.FullName --configuration Release -p:Version=$env:CI_PKG_VERSION --output artifacts/packages
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Write-Host "::endgroup::"
           }
@@ -55,3 +72,16 @@ jobs:
         with:
           name: test-results
           path: '**/TestResults/*.trx'
+
+      # Build samples against the just-packed nupkgs. This is the package
+      # smoke test: catches missing content files, broken targets, dropped
+      # TargetFrameworks, transitive PackageReference leaks, etc.
+      - name: Build samples (package smoke test)
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path samples -Filter "*.vbproj" -Recurse | ForEach-Object {
+            Write-Host "::group::Build $($_.Name)"
+            dotnet build $_.FullName --configuration Release
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+          }
