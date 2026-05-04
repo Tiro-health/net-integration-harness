@@ -7,8 +7,6 @@ Public Class Form1
 
     Public Sub New()
         InitializeComponent()
-        TiroFormViewer.WebContentFolder = System.IO.Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory, "WebContent")
     End Sub
 
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load

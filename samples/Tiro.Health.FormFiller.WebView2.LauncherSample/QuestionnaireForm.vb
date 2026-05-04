@@ -16,8 +16,6 @@ Public Class QuestionnaireForm
         InitializeComponent()
         _questionnaireUrl = questionnaireUrl
         _patient = patient
-        TiroFormViewer.WebContentFolder = System.IO.Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory, "WebContent")
     End Sub
 
     Private Async Sub QuestionnaireForm_Load(sender As Object, e As EventArgs) Handles MyBase.Load

@@ -32,7 +32,6 @@
 
         generateMessageId() { return crypto.randomUUID(); },
         isWebView2() { return !!(window.chrome && window.chrome.webview); },
-        isIframe() { return window.parent !== window; },
 
         on(messageType, handler) { this.listeners[messageType] = handler; },
 
@@ -53,9 +52,11 @@
                     }
                 } catch (e) { /* ignore */ }
 
-                if (this.isWebView2()) window.chrome.webview.postMessage(message);
-                else if (this.isIframe()) window.parent.postMessage(message, "*");
-                else console.warn("[SWM] No host available");
+                if (this.isWebView2()) {
+                    window.chrome.webview.postMessage(message);
+                } else {
+                    console.warn("[SWM] No host available");
+                }
             };
             if (typeof Sentry !== "undefined" && typeof Sentry.startSpan === "function") {
                 Sentry.startSpan({ op: "swm.send", name: message.messageType || "response" }, span => {
@@ -206,12 +207,6 @@
         init() {
             if (this.isWebView2()) {
                 window.chrome.webview.addEventListener("message", e => this.handleMessage(e.data));
-                return true;
-            }
-            if (this.isIframe()) {
-                window.addEventListener("message", e => {
-                    if (e.source === window.parent) this.handleMessage(e.data);
-                });
                 return true;
             }
             return false;

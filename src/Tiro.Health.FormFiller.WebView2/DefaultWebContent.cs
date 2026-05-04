@@ -49,18 +49,22 @@ namespace Tiro.Health.FormFiller.WebView2
             Directory.CreateDirectory(folder);
 
             // Unique temp name per writer → temp files never collide across processes/threads.
-            // Atomic rename publishes the final file; if another writer wins the race,
-            // Move throws and we drop our temp (their bytes are identical by version pinning).
+            // Publish atomically: File.Replace is atomic on NTFS and POSIX, so concurrent
+            // navigations to `target` never observe a missing file. Falls back to File.Move
+            // on the first publish (when target doesn't yet exist).
             var temp = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".tmp");
             File.WriteAllBytes(temp, content);
             try
             {
                 if (File.Exists(target))
-                    File.Delete(target);
-                File.Move(temp, target);
+                    File.Replace(temp, target, destinationBackupFileName: null);
+                else
+                    File.Move(temp, target);
             }
             catch (IOException)
             {
+                // Lost a race to another writer — their bytes are identical by version
+                // pinning, so the existing target is correct. Drop our temp.
                 try { File.Delete(temp); } catch { /* best-effort */ }
             }
 
