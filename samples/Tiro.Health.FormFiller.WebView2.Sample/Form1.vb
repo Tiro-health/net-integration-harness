@@ -39,7 +39,7 @@ Public Class Form1
 
     ' ----------------------------------------------------
     ' EVENT HANDLER FOR FORM SUBMISSION
-    ' ----------------------------, it ------------------------
+    ' ----------------------------------------------------
     Private Sub HandleFormSubmitted(ByVal sender As Object, ByVal e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
 
         ' Check if there are validation errors
