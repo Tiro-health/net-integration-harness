@@ -18,7 +18,8 @@
       "Bash(xargs -I{} powershell -Command \"[Reflection.AssemblyName]::GetAssemblyName\\(''{}''\\).Version\")",
       "Bash(do echo:*)",
       "mcp__claude_ai_Sentry__find_projects",
-      "mcp__claude_ai_Sentry__search_events"
+      "mcp__claude_ai_Sentry__search_events",
+      "PowerShell(Test-Path *)"
     ]
   }
 }

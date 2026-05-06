@@ -39,6 +39,13 @@
   <ItemGroup>
     <PackageReference Include="Hl7.Fhir.Base" Version="5.13.2" />
     <PackageReference Include="Hl7.Fhir.R5" Version="5.13.2" />
+    <!-- Pinned to package 4.4.1 because that's the last version whose embedded
+         assembly is 4.2.0.0 — the exact version Hl7.Fhir.Base.dll's manifest
+         demands. The transitive 5.0.0 carries assembly 4.2.1.0, which the
+         WinForms Designer can't resolve since it doesn't read App.config's
+         binding redirects. Packages 4.5.0+ also moved to assembly 4.2.1.0,
+         so they wouldn't help. See SO 57910513. -->
+    <PackageReference Include="System.ComponentModel.Annotations" Version="4.4.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj">
@@ -48,6 +55,10 @@
     <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2.Fhir.R5\Tiro.Health.FormFiller.WebView2.Fhir.R5.csproj">
       <Project>{A1B2C3D4-E5F6-7890-ABCD-EF1234567891}</Project>
       <Name>Tiro.Health.FormFiller.WebView2.Fhir.R5</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2.Sentry\Tiro.Health.FormFiller.WebView2.Sentry.csproj">
+      <Project>{A1B2C3D4-E5F6-7890-ABCD-EF1234567893}</Project>
+      <Name>Tiro.Health.FormFiller.WebView2.Sentry</Name>
     </ProjectReference>
     <ProjectReference Include="..\..\src\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj">
       <Project>{C1A2B3C4-D5E6-F789-ABCD-000000000001}</Project>
