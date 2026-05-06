@@ -37,7 +37,14 @@ namespace Tiro.Health.SmartWebMessaging
         private readonly ConcurrentDictionary<string, Func<SmartMessageResponse, Task>> _responseListeners
             = new ConcurrentDictionary<string, Func<SmartMessageResponse, Task>>();
 
-        public delegate Task<string> MessageSender(string jsonMessage);
+        /// <summary>
+        /// Transport delegate called for every outbound envelope. Fire-and-forget — the
+        /// returned <see cref="Task"/> represents the local enqueue / post operation only,
+        /// not the protocol response. Responses arrive asynchronously via inbound messages
+        /// and are dispatched through the per-request listener registered with
+        /// <see cref="SendRequestAsync(SmartMessageRequest, Func{SmartMessageResponse, Task}, CancellationToken)"/>.
+        /// </summary>
+        public delegate Task MessageSender(string jsonMessage);
         public MessageSender SendMessage { get; set; }
 
         /// <summary>
@@ -86,7 +93,7 @@ namespace Tiro.Health.SmartWebMessaging
             try
             {
                 SmartMessageBase message;
-                if (jsonMessage.Contains("\"responseToMessageId\""))
+                if (JsonProbe.ExtractStringField(jsonMessage, "responseToMessageId") != null)
                 {
                     _logger.LogDebug("Message identified as SmartMessageResponse.");
                     message = JsonSerializer.Deserialize<SmartMessageResponse>(jsonMessage, SerializeOptions);
@@ -240,6 +247,14 @@ namespace Tiro.Health.SmartWebMessaging
             try
             {
                 if (responseMessage == null) return;
+                if (string.IsNullOrEmpty(responseMessage.ResponseToMessageId))
+                {
+                    // Malformed inbound (the routing scan saw a top-level
+                    // "responseToMessageId" key with null/empty value). ConcurrentDictionary
+                    // would throw ArgumentNullException on the lookup; bail cleanly instead.
+                    _logger.LogWarning("Inbound response missing ResponseToMessageId; dropping.");
+                    return;
+                }
                 _logger.LogInformation("Handling response for ResponseToMessageId: {Id}", responseMessage.ResponseToMessageId);
                 if (_responseListeners.TryGetValue(responseMessage.ResponseToMessageId, out var listener))
                 {
@@ -271,7 +286,7 @@ namespace Tiro.Health.SmartWebMessaging
         // ---------------------------------------------------------------------------
         // Send helpers
         // ---------------------------------------------------------------------------
-        public async Task<string> SendRequestAsync(
+        public Task SendRequestAsync(
             SmartMessageRequest request,
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
@@ -295,10 +310,10 @@ namespace Tiro.Health.SmartWebMessaging
 
             ApplyMeta(request);
             string requestJson = JsonSerializer.Serialize(request, SerializeOptions);
-            return await SendMessage(requestJson);
+            return SendMessage(requestJson);
         }
 
-        public Task<string> SendRequestAsync(
+        public Task SendRequestAsync(
             string messageType,
             RequestPayload payload,
             Func<SmartMessageResponse, Task> responseHandler = null,
@@ -308,7 +323,7 @@ namespace Tiro.Health.SmartWebMessaging
             return SendRequestAsync(message, responseHandler, cancellationToken);
         }
 
-        public Task<string> SendMessageAsync(
+        public Task SendMessageAsync(
             string messageType,
             RequestPayload payload = null,
             Func<SmartMessageResponse, Task> responseHandler = null,
@@ -319,21 +334,21 @@ namespace Tiro.Health.SmartWebMessaging
             return SendRequestAsync(message, responseHandler, cancellationToken);
         }
 
-        public Task<string> SendFormRequestSubmitAsync(
+        public Task SendFormRequestSubmitAsync(
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
         {
             return SendMessageAsync("ui.form.requestSubmit", new RequestPayload(), responseHandler, cancellationToken);
         }
 
-        public Task<string> SendFormPersistAsync(
+        public Task SendFormPersistAsync(
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
         {
             return SendMessageAsync("ui.form.persist", new RequestPayload(), responseHandler, cancellationToken);
         }
 
-        public Task<string> SendSdcConfigureAsync(
+        public Task SendSdcConfigureAsync(
             string terminologyServer = null,
             string dataServer = null,
             object configuration = null,
@@ -344,7 +359,7 @@ namespace Tiro.Health.SmartWebMessaging
             return SendMessageAsync("sdc.configure", payload, responseHandler, cancellationToken);
         }
 
-        public Task<string> SendSdcConfigureContextAsync(
+        public Task SendSdcConfigureContextAsync(
             ResourceReference subject = null,
             ResourceReference author = null,
             ResourceReference encounter = null,
@@ -360,7 +375,7 @@ namespace Tiro.Health.SmartWebMessaging
         /// Sends <c>sdc.configureContext</c>, wrapping the supplied FHIR resources in a launch context
         /// (names: "patient", "encounter", "user"). Each resource parameter is optional.
         /// </summary>
-        public Task<string> SendSdcConfigureContextAsync(
+        public Task SendSdcConfigureContextAsync(
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
@@ -373,7 +388,7 @@ namespace Tiro.Health.SmartWebMessaging
                 cancellationToken: cancellationToken);
         }
 
-        public Task<string> SendSdcDisplayQuestionnaireAsync(
+        public Task SendSdcDisplayQuestionnaireAsync(
             object questionnaire,
             TQuestionnaireResponse questionnaireResponse = default,
             ResourceReference subject = null,
@@ -392,7 +407,7 @@ namespace Tiro.Health.SmartWebMessaging
         /// Sends <c>sdc.displayQuestionnaire</c> with a <typeparamref name="TResource"/> questionnaire
         /// and FHIR-resource launch context (patient/encounter/user).
         /// </summary>
-        public Task<string> SendSdcDisplayQuestionnaireAsync(
+        public Task SendSdcDisplayQuestionnaireAsync(
             TResource questionnaire,
             TQuestionnaireResponse questionnaireResponse = default,
             TResource patient = default,
@@ -413,7 +428,7 @@ namespace Tiro.Health.SmartWebMessaging
         /// Sends <c>sdc.displayQuestionnaire</c> with a canonical URL reference to the questionnaire
         /// and FHIR-resource launch context (patient/encounter/user).
         /// </summary>
-        public Task<string> SendSdcDisplayQuestionnaireAsync(
+        public Task SendSdcDisplayQuestionnaireAsync(
             string questionnaireCanonicalUrl,
             TQuestionnaireResponse questionnaireResponse = default,
             TResource patient = default,

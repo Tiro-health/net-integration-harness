@@ -18,7 +18,11 @@
       "Bash(xargs -I{} powershell -Command \"[Reflection.AssemblyName]::GetAssemblyName\\(''{}''\\).Version\")",
       "Bash(do echo:*)",
       "mcp__claude_ai_Sentry__find_projects",
-      "mcp__claude_ai_Sentry__search_events"
+      "mcp__claude_ai_Sentry__search_events",
+      "PowerShell(Test-Path *)",
+      "PowerShell(& 'C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\amd64\\\\MSBuild.exe' 'C:\\\\Users\\\\ThibaultMahieu\\\\source\\\\repos\\\\FormsSDKVBNet48\\\\FormsSDKVBNet48.sln' /nologo /verbosity:minimal /t:Restore,Build 2>&1 | Select-Object -Last 30)",
+      "PowerShell(& 'C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\amd64\\\\MSBuild.exe' 'C:\\\\Users\\\\ThibaultMahieu\\\\source\\\\repos\\\\FormsSDKVBNet48\\\\FormsSDKVBNet48.sln' /nologo /verbosity:minimal /t:Restore,Build 2>&1 | Select-Object -Last 15)",
+      "PowerShell(& 'C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\amd64\\\\MSBuild.exe' 'C:\\\\Users\\\\ThibaultMahieu\\\\source\\\\repos\\\\FormsSDKVBNet48\\\\FormsSDKVBNet48.sln' /nologo /verbosity:minimal /t:Restore,Build 2>&1 | Select-Object -Last 10)"
     ]
   }
 }

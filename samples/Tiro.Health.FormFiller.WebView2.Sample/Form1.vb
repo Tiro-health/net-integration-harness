@@ -7,8 +7,6 @@ Public Class Form1
 
     Public Sub New()
         InitializeComponent()
-        TiroFormViewer.WebContentFolder = System.IO.Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory, "WebContent")
     End Sub
 
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
@@ -41,7 +39,7 @@ Public Class Form1
 
     ' ----------------------------------------------------
     ' EVENT HANDLER FOR FORM SUBMISSION
-    ' ----------------------------, it ------------------------
+    ' ----------------------------------------------------
     Private Sub HandleFormSubmitted(ByVal sender As Object, ByVal e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
 
         ' Check if there are validation errors

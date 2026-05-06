@@ -174,7 +174,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
       // Set up the mock sender to return a response
       mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
-               .ReturnsAsync("mock response");
+               .Returns(System.Threading.Tasks.Task.CompletedTask);
 
       messageHandler.SendMessage = mockSender.Object;
 
@@ -195,11 +195,10 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       });
 
       // Send request with listener
-      var result = await messageHandler.SendRequestAsync(request, responseListener);
+      await messageHandler.SendRequestAsync(request, responseListener);
 
       // Verify the request was sent
       mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-      Assert.AreEqual("mock response", result);
 
       // Verify listener was registered
       Assert.IsTrue(messageHandler.HasPendingResponseListener("test-123"));
@@ -234,16 +233,15 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
       // Set up the mock sender
       mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
-               .ReturnsAsync("mock response");
+               .Returns(System.Threading.Tasks.Task.CompletedTask);
 
       messageHandler.SendMessage = mockSender.Object;
 
       // Send request without listener
-      var result = await messageHandler.SendRequestAsync("status.handshake", new RequestPayload());
+      await messageHandler.SendRequestAsync("status.handshake", new RequestPayload());
 
       // Verify the request was sent
       mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-      Assert.AreEqual("mock response", result);
     }
 
     [TestMethod]
@@ -368,16 +366,15 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       // Set up the mock sender to capture the sent message
       mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                .Callback<string>(msg => sentMessage = msg)
-               .ReturnsAsync("mock response");
+               .Returns(System.Threading.Tasks.Task.CompletedTask);
 
       messageHandler.SendMessage = mockSender.Object;
 
       // Send a generic message
-      var result = await messageHandler.SendMessageAsync("test.message", new RequestPayload());
+      await messageHandler.SendMessageAsync("test.message", new RequestPayload());
 
       // Verify the request was sent
       mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-      Assert.AreEqual("mock response", result);
 
       // Verify the message structure
       Assert.IsNotNull(sentMessage);
@@ -396,12 +393,12 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       // Set up the mock sender
       mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                .Callback<string>(msg => sentMessage = msg)
-               .ReturnsAsync("submit response");
+               .Returns(System.Threading.Tasks.Task.CompletedTask);
 
       messageHandler.SendMessage = mockSender.Object;
 
       // Send form request submit with response handler
-      var result = await messageHandler.SendFormRequestSubmitAsync(response =>
+      await messageHandler.SendFormRequestSubmitAsync(response =>
       {
         // Response handler callback
         return System.Threading.Tasks.Task.CompletedTask;
@@ -409,7 +406,6 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
       // Verify the request was sent
       mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-      Assert.AreEqual("submit response", result);
 
       // Verify the message structure
       Assert.IsNotNull(sentMessage);
@@ -430,16 +426,15 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       // Set up the mock sender
       mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                .Callback<string>(msg => sentMessage = msg)
-               .ReturnsAsync("persist response");
+               .Returns(System.Threading.Tasks.Task.CompletedTask);
 
       messageHandler.SendMessage = mockSender.Object;
 
       // Send form persist without response handler
-      var result = await messageHandler.SendFormPersistAsync();
+      await messageHandler.SendFormPersistAsync();
 
       // Verify the request was sent
       mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-      Assert.AreEqual("persist response", result);
 
       // Verify the message structure
       Assert.IsNotNull(sentMessage);
@@ -457,7 +452,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         // Set up the mock sender
         mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                  .Callback<string>(msg => sentMessage = msg)
-                 .ReturnsAsync("configure response");
+                 .Returns(System.Threading.Tasks.Task.CompletedTask);
 
         messageHandler.SendMessage = mockSender.Object;
 
@@ -465,7 +460,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         var configObject = new { timeout = 5000, maxRetries = 3 };
 
         // ACT
-        var result = await messageHandler.SendSdcConfigureAsync(
+        await messageHandler.SendSdcConfigureAsync(
             terminologyServer: "http://term.example.com/fhir",
             dataServer: "http://data.example.com/fhir",
             configuration: configObject
@@ -473,7 +468,6 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
         // ASSERT
         mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-        Assert.AreEqual("configure response", result);
 
         // Verify the message structure
         Assert.IsNotNull(sentMessage);
@@ -495,7 +489,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         // Set up the mock sender
         mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                  .Callback<string>(msg => sentMessage = msg)
-                 .ReturnsAsync("configureContext response");
+                 .Returns(System.Threading.Tasks.Task.CompletedTask);
 
         messageHandler.SendMessage = mockSender.Object;
 
@@ -505,7 +499,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         var author = new Practitioner { Id = "PR789" };
 
         // ACT
-        var result = await messageHandler.SendSdcConfigureContextAsync(
+        await messageHandler.SendSdcConfigureContextAsync(
             patient: patient,
             encounter: encounter,
             author: author
@@ -513,7 +507,6 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
         // ASSERT
         mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-        Assert.AreEqual("configureContext response", result);
 
         // Verify the message structure
         Assert.IsNotNull(sentMessage);
@@ -541,7 +534,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         // Set up the mock sender
         mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                  .Callback<string>(msg => sentMessage = msg)
-                 .ReturnsAsync("configureContext response");
+                 .Returns(System.Threading.Tasks.Task.CompletedTask);
 
         messageHandler.SendMessage = mockSender.Object;
 
@@ -554,14 +547,13 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         };
 
         // ACT
-        var result = await messageHandler.SendSdcConfigureContextAsync(
+        await messageHandler.SendSdcConfigureContextAsync(
             subject: subjectRef,
             launchContext: customContext
         );
 
         // ASSERT
         mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-        Assert.AreEqual("configureContext response", result);
 
         // Verify the message structure
         Assert.IsNotNull(sentMessage);
@@ -585,7 +577,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         // Set up the mock sender
         mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                  .Callback<string>(msg => sentMessage = msg)
-                 .ReturnsAsync("displayQuestionnaire response");
+                 .Returns(System.Threading.Tasks.Task.CompletedTask);
 
         messageHandler.SendMessage = mockSender.Object;
 
@@ -595,7 +587,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         var author = new Practitioner { Id = "PR1" };
 
         // ACT
-        var result = await messageHandler.SendSdcDisplayQuestionnaireAsync(
+        await messageHandler.SendSdcDisplayQuestionnaireAsync(
             questionnaire: q,
             questionnaireResponse: qr,
             author: author
@@ -603,7 +595,6 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
         // ASSERT
         mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-        Assert.AreEqual("displayQuestionnaire response", result);
 
         // Verify the message structure
         Assert.IsNotNull(sentMessage);
@@ -638,17 +629,16 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       // Set up the mock sender
       mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                .Callback<string>(msg => sentMessage = msg)
-               .ReturnsAsync("response");
+               .Returns(System.Threading.Tasks.Task.CompletedTask);
 
       messageHandler.SendMessage = mockSender.Object;
 
       // Send message with custom payload
       var customPayload = new RequestPayload();
-      var result = await messageHandler.SendMessageAsync("custom.type", customPayload);
+      await messageHandler.SendMessageAsync("custom.type", customPayload);
 
       // Verify the request was sent
       mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-      Assert.AreEqual("response", result);
 
       // Verify the message structure
       Assert.IsNotNull(sentMessage);
@@ -850,7 +840,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         // Set up the mock sender
         mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
                  .Callback<string>(msg => sentMessage = msg)
-                 .ReturnsAsync("displayQuestionnaire response");
+                 .Returns(System.Threading.Tasks.Task.CompletedTask);
 
         messageHandler.SendMessage = mockSender.Object;
 
@@ -865,7 +855,7 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         };
 
         // ACT - Send with canonical URL and FHIR resources
-        var result = await messageHandler.SendSdcDisplayQuestionnaireAsync(
+        await messageHandler.SendSdcDisplayQuestionnaireAsync(
             questionnaireCanonicalUrl: "http://hl7.org/fhir/Questionnaire/patient-intake",
             questionnaireResponse: questionnaireResponse,
             patient: patient,
@@ -875,7 +865,6 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
         // ASSERT
         mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
-        Assert.AreEqual("displayQuestionnaire response", result);
 
         // Verify the message structure
         Assert.IsNotNull(sentMessage);
@@ -1114,6 +1103,22 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
       Assert.IsFalse(messageHandler.HasPendingResponseListener("rq-2"),
           "Cancellation must drop the response listener.");
+    }
+
+    [TestMethod]
+    public void TestHandleMessage_ResponseWithNullResponseToMessageId_DoesNotThrow()
+    {
+      // ConcurrentDictionary.TryGetValue(null, ...) throws ArgumentNullException; the
+      // handler's outer fire-and-forget catch swallows it, but it pollutes the log on
+      // every malformed inbound. Verify the null-guard short-circuits cleanly.
+      var messageHandler = new SmartMessageHandler();
+
+      // JSON with explicit null responseToMessageId — routing classifies as response.
+      string jsonString = "{\"messageId\":\"x\",\"responseToMessageId\":null,\"payload\":{}}";
+
+      // Should return null (response messages don't generate replies) without throwing.
+      var result = messageHandler.HandleMessage(jsonString);
+      Assert.IsNull(result);
     }
 
   }

@@ -81,11 +81,77 @@ WinForms demos.
 - **Framework**: MSTest + Moq
 - **Coverage**: 25 tests covering protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), and event firing
 
-## Usage
+## Consuming the harness
 
-### 1. Drop the form viewer onto a WinForms form
+These libraries ship as NuGet packages and are typically consumed from a WinForms app on .NET Framework 4.8. End-to-end setup:
 
-In the Visual Studio designer, place a `TiroFormViewerR5` (or `TiroFormViewerR4`) on your form. From code, set context once the form is shown:
+### 1. Add the NuGet source
+
+The packages live on the harness's feed (or, for local development, in `artifacts/packages/` after `dotnet pack`). Add a `nuget.config` next to your `.sln`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="net-integration-harness" value="<path-or-url>" />
+  </packageSources>
+</configuration>
+```
+
+### 2. Reference the packages
+
+For an R5 consumer (swap `.Fhir.R5` → `.Fhir.R4` and `Hl7.Fhir.R5` → `Hl7.Fhir.R4` for R4):
+
+```xml
+<ItemGroup>
+  <PackageReference Include="Hl7.Fhir.Base" Version="5.13.2" />
+  <PackageReference Include="Hl7.Fhir.R5" Version="5.13.2" />
+  <PackageReference Include="Tiro.Health.SmartWebMessaging" Version="1.0.0" />
+  <PackageReference Include="Tiro.Health.SmartWebMessaging.Fhir.R5" Version="1.0.0" />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2" Version="1.0.0" />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="1.0.0" />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
+</ItemGroup>
+```
+
+To opt out of Sentry telemetry, drop the `.Sentry` package and override `CreateTelemetrySink()` in your own `TiroFormViewer<,,>` subclass — see [Telemetry](#telemetry).
+
+Old-style `.vbproj` quirks worth knowing:
+
+- Set `<RestoreProjectStyle>PackageReference</RestoreProjectStyle>` in the `PropertyGroup`.
+- Set `<RuntimeIdentifiers>win</RuntimeIdentifiers>` because WebView2 and Sentry ship native binaries.
+
+### 3. Enable auto-generated binding redirects
+
+The `net48` packages pull modern `System.*` assemblies (`System.Text.Json` 9.x, `System.Memory`, `System.ComponentModel.Annotations`, etc.) whose versions don't match what's in the GAC, so binding redirects are mandatory. Don't hand-maintain them — let MSBuild emit them:
+
+```xml
+<PropertyGroup>
+  <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+</PropertyGroup>
+```
+
+`App.config` can then be a stub:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <startup>
+    <supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" />
+  </startup>
+</configuration>
+```
+
+MSBuild walks the closure each build and writes redirects into `<YourApp>.exe.config`. No manual upkeep, no drift on package upgrades.
+
+> Library DLLs' own `app.config` files are ignored by the .NET Framework binding loader — only the executable's `.exe.config` is honored. The redirects have to come from the consuming project.
+
+### 4. Add the FormViewer to a form
+
+**Programmatic instantiation (recommended).** Bypasses the WinForms Designer entirely — robust for any project size and lets you skip the Designer's design-time binding-redirect quirk.
 
 ```vb
 Imports Hl7.Fhir.Model
@@ -93,7 +159,14 @@ Imports Tiro.Health.SmartWebMessaging.Events
 
 Public Class QuestionnaireForm
 
+    Private ReadOnly TiroFormViewer As New Tiro.Health.FormFiller.WebView2.Fhir.R5.TiroFormViewerR5() With {
+        .Dock = DockStyle.Fill
+    }
+
+    Private _isFormSubmitted As Boolean
+
     Private Async Sub QuestionnaireForm_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+        Me.Controls.Add(TiroFormViewer)
         AddHandler TiroFormViewer.FormSubmitted, AddressOf OnFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf OnCloseApplication
 
@@ -110,32 +183,42 @@ Public Class QuestionnaireForm
     End Sub
 
     Private Sub OnFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
-        ' e.Response is the completed QuestionnaireResponse; e.Outcome carries any validation issues.
+        ' e.Response: completed QuestionnaireResponse. e.Outcome: validation issues, if any.
+        _isFormSubmitted = True
         Me.Close()
     End Sub
 
     Private Sub OnCloseApplication(sender As Object, e As CloseApplicationEventArgs)
-        ' User cancelled / hit "ui.done"
+        ' User hit "ui.done" — page is asking to be torn down.
+        _isFormSubmitted = True
         Me.Close()
+    End Sub
+
+    Private Async Sub QuestionnaireForm_FormClosing(sender As Object, e As FormClosingEventArgs) Handles MyBase.FormClosing
+        If Not _isFormSubmitted Then
+            e.Cancel = True
+            Await TiroFormViewer.SendFormRequestSubmitAsync()
+        End If
     End Sub
 
 End Class
 ```
 
-`SetContextAsync` blocks (asynchronously) until the embedded page completes its handshake and acknowledges the `sdc.displayQuestionnaire` message. Pass a `CancellationToken` if the caller might abandon the operation; the viewer also cancels in-flight async work on `Dispose`.
+`SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
-If the form-filling user closes the host window without submitting, you can ask the page to attempt a final submission:
+Disposal is handled by the form's `Controls` ownership chain — no extra cleanup needed in your form.
 
-```vb
-Private Async Sub QuestionnaireForm_FormClosing(sender As Object, e As FormClosingEventArgs) Handles MyBase.FormClosing
-    If Not _isFormSubmitted Then
-        e.Cancel = True
-        Await TiroFormViewer.SendFormRequestSubmitAsync()
-    End If
-End Sub
+**Designer placement (small apps only).** Drag-drop works, but `Hl7.Fhir.Base.dll`'s manifest strong-name-references `System.ComponentModel.Annotations` 4.2.0.0 while modern NuGet pulls 4.2.1.0. Runtime is fine (the auto-generated redirect handles it); the WinForms Designer in Visual Studio doesn't apply binding redirects, so it can't load `TiroFormViewerR5/R4`. Pin the older Annotations package in your consuming project:
+
+```xml
+<PackageReference Include="System.ComponentModel.Annotations" Version="4.4.1" />
 ```
 
-### 2. The embedded page
+This is the last package whose embedded assembly is still 4.2.0.0, satisfying `Hl7.Fhir.Base` directly without a redirect. NuGet emits an `NU1605` downgrade warning — expected; ignore.
+
+In larger applications skip the pin: it downgrades Annotations graph-wide and can collide with other libraries that strong-name reference 4.2.1.0+. Use programmatic instantiation instead.
+
+## The embedded page
 
 The host injects a JS bridge into every page before any page script runs. Your `index.html` therefore stays UI-only — no Sentry CDN tag, no SMART Web Messaging module, no WebView2 transport setup. A working sample lives in `samples/Tiro.Health.FormFiller.WebView2.Sample/WebContent/index.html` (~60 lines, mostly CSS).
 
@@ -148,7 +231,7 @@ The bridge dispatches `CustomEvent`s on `document` for status hooks: `tiro-conne
 
 For advanced flows that don't fit the auto-wired form-filler model, the lower-level API is still exposed at `window.SmartWebMessaging.{sendRequest, sendEvent, on}`.
 
-### 3. Use the handler directly (without the WinForms control)
+## Using the handler without the WinForms control
 
 The C# / netstandard2.0 path, for hosts that aren't WebView2-based:
 
@@ -156,7 +239,7 @@ The C# / netstandard2.0 path, for hosts that aren't WebView2-based:
 using Tiro.Health.SmartWebMessaging.Fhir.R5;
 
 var handler = new SmartMessageHandler();
-handler.SendMessage = json => YourTransport.PostAsync(json);  // your transport returns Task<string>
+handler.SendMessage = json => YourTransport.PostAsync(json);  // fire-and-forget; returns Task
 
 handler.HandshakeReceived += async (_, _) =>
 {
