@@ -14,7 +14,12 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R4
     /// </summary>
     public sealed class TiroFormViewerR4 : TiroFormViewer<Resource, QuestionnaireResponse, OperationOutcome>
     {
-        /// <summary>The Tiro-hosted SDC server for FHIR R4. Used as the default for <see cref="TiroFormViewer{T,Q,O}.SdcEndpointAddress"/>.</summary>
+        /// <summary>
+        /// The Tiro-hosted SDC server for FHIR R4. Used as the default for
+        /// <see cref="TiroFormViewer{T,Q,O}.SdcEndpointAddress"/>. Best-effort shared instance —
+        /// no SLA, no uptime guarantees, not suitable for clinical workflows. Production
+        /// integrators should host their own SDC server and override <c>SdcEndpointAddress</c>.
+        /// </summary>
         public const string DefaultSdcEndpointAddress = "https://sdc.tiro.health/fhir/r4";
 
         public TiroFormViewerR4()

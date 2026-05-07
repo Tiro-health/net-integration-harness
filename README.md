@@ -194,6 +194,8 @@ formViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5";
 
 `SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box use works. `DataEndpointAddress` has no default — set it when the form needs to reach a data server. Either property must be set before `SetContextAsync` (the bridge reads them once, when the page is first wired).
 
+> **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
+
 ### Shipping your own index.html
 
 The default page is fine for demos but couples your UI to the library's release cadence — branding, the embedded SDK version, copy strings, and clipboard layout all live inside the package. For production, host your own page:
