@@ -74,51 +74,91 @@ MSBuild walks the closure each build and writes redirects into `<YourApp>.exe.co
 
 ### 4. Add the FormViewer to a form
 
-Instantiate the viewer programmatically and add it to your form's controls. This bypasses the WinForms Designer entirely and is robust for any project size.
+Drop a `TiroFormViewerR5` (or `TiroFormViewerR4`) onto your form in the Designer, hook the `FormSubmitted` and `CloseApplication` events, and call `SetContextAsync(questionnaireCanonicalUrl, patient)` once the form has loaded. The full sample lives at `samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb`:
 
 ```vb
 Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
 
-Public Class QuestionnaireForm
+Public Class Form1
+    ' Flag that keeps track if form has been submitted
+    Private isFormSubmitted As Boolean = False
 
-    Private ReadOnly TiroFormViewer As New Tiro.Health.FormFiller.WebView2.Fhir.R5.TiroFormViewerR5() With {
-        .Dock = DockStyle.Fill
-    }
+    Public Sub New()
+        InitializeComponent()
+    End Sub
 
-    Private _isFormSubmitted As Boolean
+    Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+        AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
+        AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
+        Await InitializeViewerAsync()
+    End Sub
 
-    Private Async Sub QuestionnaireForm_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-        Me.Controls.Add(TiroFormViewer)
-        AddHandler TiroFormViewer.FormSubmitted, AddressOf OnFormSubmitted
-        AddHandler TiroFormViewer.CloseApplication, AddressOf OnCloseApplication
-
-        Dim patient As New Patient() With {
-            .Id = "test-123",
-            .Name = New List(Of HumanName) From { New HumanName() With { .Family = "da Vinci", .Given = New List(Of String) From { "Leonardo" } } },
+    Private Async Function InitializeViewerAsync() As System.Threading.Tasks.Task
+        Dim patient As Patient = New Patient() With {
+            .Name = New List(Of HumanName) From {
+                New HumanName() With {
+                    .Family = "da Vinci",
+                    .Given = New List(Of String) From {"Leonardo"},
+                    .Text = "Leonardo da Vinci"
+                }
+            },
             .BirthDate = "1452-04-15",
-            .Gender = AdministrativeGender.Male
+            .Gender = AdministrativeGender.Male,
+            .Identifier = New List(Of Identifier) From {
+                New Identifier() With {
+                    .System = "http://test.org/test/patient-ids",
+                    .Value = "test-123"
+                }
+            }
         }
+        ' Hint: here it's possible to pass a previous QR as context
+        Await TiroFormViewer.SetContextAsync("http://templates.tiro.health/templates/2630b8675c214707b1f86d1fbd4deb87", patient)
+    End Function
 
-        Await TiroFormViewer.SetContextAsync(
-            questionnaireCanonicalUrl:="http://example.org/fhir/Questionnaire/my-form",
-            patient:=patient)
-    End Sub
+    ' ----------------------------------------------------
+    ' EVENT HANDLER FOR FORM SUBMISSION
+    ' ----------------------------------------------------
+    Private Sub HandleFormSubmitted(ByVal sender As Object, ByVal e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
 
-    Private Sub OnFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
-        ' e.Response: completed QuestionnaireResponse. e.Outcome: validation issues, if any.
-        _isFormSubmitted = True
+        ' Check if there are validation errors
+        If e.Outcome IsNot Nothing AndAlso e.Outcome.Success = False Then
+            Dim result As DialogResult = MessageBox.Show("There are validation errors. Do you want to close anyway?", "Validation Errors", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
+            If result = DialogResult.No Then
+                Return
+            End If
+        End If
+
+        ' The FormSubmittedEventArgs contains the submitted FHIR resource
+        Dim response As QuestionnaireResponse = TryCast(e.Response, QuestionnaireResponse)
+
+        If response IsNot Nothing Then
+            Dim narrativeHtml As String = response.Text?.Div
+            If Not String.IsNullOrEmpty(narrativeHtml) Then
+                MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            Else
+                MessageBox.Show("Submitted QuestionnaireResponse has no narrative text.", "Submission Received")
+            End If
+        Else
+            MessageBox.Show("Form submission received, but resource was not a QuestionnaireResponse.", "Error")
+        End If
+
+        ' Close the form after handling submission
+        isFormSubmitted = True
         Me.Close()
     End Sub
 
-    Private Sub OnCloseApplication(sender As Object, e As CloseApplicationEventArgs)
-        ' User hit "ui.done" — page is asking to be torn down.
-        _isFormSubmitted = True
+    ' ----------------------------------------------------
+    ' EVENT HANDLER FOR CLOSE APPLICATION (ui.done)
+    ' ----------------------------------------------------
+    Private Sub HandleCloseApplication(ByVal sender As Object, ByVal e As CloseApplicationEventArgs)
+        isFormSubmitted = True
+        MessageBox.Show("Closing.", "Closing")
         Me.Close()
     End Sub
 
-    Private Async Sub QuestionnaireForm_FormClosing(sender As Object, e As FormClosingEventArgs) Handles MyBase.FormClosing
-        If Not _isFormSubmitted Then
+    Private Async Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles MyBase.FormClosing
+        If Not isFormSubmitted Then
             e.Cancel = True
             Await TiroFormViewer.SendFormRequestSubmitAsync()
         End If
@@ -128,8 +168,6 @@ End Class
 ```
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
-
-Disposal is handled by the form's `Controls` ownership chain — no extra cleanup needed in your form.
 
 ## The embedded page
 
@@ -317,14 +355,45 @@ The JS that owns the page side of the protocol (`tiro-swm-bridge.js`) ships embe
 
 ### WinForms Designer can't load `TiroFormViewerR5/R4`
 
-If you drop the viewer onto a form via the Designer (instead of instantiating it programmatically as shown in [Getting started](#4-add-the-formviewer-to-a-form)), the Designer may fail to load it. `Hl7.Fhir.Base.dll`'s manifest strong-name-references `System.ComponentModel.Annotations` 4.2.0.0 while modern NuGet pulls 4.2.1.0. Runtime is fine (the auto-generated redirect handles it); the WinForms Designer in Visual Studio doesn't apply binding redirects.
+`Hl7.Fhir.Base.dll`'s manifest strong-name-references `System.ComponentModel.Annotations` 4.2.0.0 while modern NuGet pulls 4.2.1.0. Runtime is fine (the auto-generated redirect handles it); the WinForms Designer in Visual Studio doesn't apply binding redirects, so it can fail to load the viewer at design time.
 
-Pin the older Annotations package in your consuming project:
+**Option A — pin the older Annotations package** (small apps):
 
 ```xml
 <PackageReference Include="System.ComponentModel.Annotations" Version="4.4.1" />
 ```
 
-This is the last package whose embedded assembly is still 4.2.0.0, satisfying `Hl7.Fhir.Base` directly without a redirect. NuGet emits an `NU1605` downgrade warning — expected; ignore.
+This is the last package whose embedded assembly is still 4.2.0.0, satisfying `Hl7.Fhir.Base` directly without a redirect. NuGet emits an `NU1605` downgrade warning — expected; ignore. In larger applications skip the pin: it downgrades Annotations graph-wide and can collide with other libraries that strong-name reference 4.2.1.0+.
 
-In larger applications skip the pin: it downgrades Annotations graph-wide and can collide with other libraries that strong-name reference 4.2.1.0+. Use programmatic instantiation instead.
+**Option B — instantiate the viewer programmatically** (any project size):
+
+Skip the Designer entirely — declare and add the viewer in code:
+
+```vb
+Imports Hl7.Fhir.Model
+Imports Tiro.Health.SmartWebMessaging.Events
+
+Public Class Form1
+
+    Private ReadOnly TiroFormViewer As New Tiro.Health.FormFiller.WebView2.Fhir.R5.TiroFormViewerR5() With {
+        .Dock = DockStyle.Fill
+    }
+
+    Private isFormSubmitted As Boolean = False
+
+    Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+        Me.Controls.Add(TiroFormViewer)
+        AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
+        AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
+
+        ' ... build patient, then:
+        Await TiroFormViewer.SetContextAsync(
+            questionnaireCanonicalUrl:="http://example.org/fhir/Questionnaire/my-form",
+            patient:=patient)
+    End Sub
+
+    ' HandleFormSubmitted / HandleCloseApplication / Form1_FormClosing as in the sample
+End Class
+```
+
+Disposal is handled by the form's `Controls` ownership chain — no extra cleanup needed.
