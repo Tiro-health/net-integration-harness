@@ -85,9 +85,80 @@
             height: 100%;
         }
     </style>
+    <style data-sample-only>
+        /* Anything tagged data-sample-only is stripped by the "Copy starter
+           template" button so integrators get a clean baseline. Keep banner
+           styles here, page styles in the block above. */
+        .sample-banner {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 16px;
+            background: #fef3c7;
+            color: #92400e;
+            border-bottom: 1px solid #fcd34d;
+            font-size: 0.85rem;
+        }
+
+        .sample-banner-text {
+            flex: 1;
+        }
+
+        .sample-banner code {
+            background: rgba(146, 64, 14, 0.12);
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+
+        .sample-banner-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .sample-banner-actions button {
+            padding: 4px 10px;
+            font-size: 0.85em;
+            background: #fff;
+            color: #92400e;
+            border: 1px solid #fcd34d;
+            border-radius: 4px;
+        }
+
+            .sample-banner-actions button:hover {
+                background: #fffbeb;
+            }
+
+        .sample-banner-actions a {
+            color: #92400e;
+            text-decoration: underline;
+            font-size: 0.85em;
+        }
+
+        .sample-banner-dismiss {
+            background: transparent !important;
+            border: none !important;
+            font-size: 1.2em !important;
+            line-height: 1;
+            padding: 0 4px !important;
+            cursor: pointer;
+        }
+    </style>
 </head>
 <body>
     <header id="status">Connecting&hellip;</header>
+    <div id="sample-banner" class="sample-banner" data-sample-only role="status">
+        <span class="sample-banner-text">
+            <strong>Default sample page.</strong>
+            Production integrators should ship their own <code>index.html</code> and point <code>WebContentFolder</code> at it.
+        </span>
+        <span class="sample-banner-actions">
+            <button id="copy-template-btn" type="button">Copy starter template</button>
+            <a href="https://github.com/Tiro-health/net-integration-harness#shipping-your-own-indexhtml" target="_blank" rel="noopener">Docs</a>
+            <button id="dismiss-banner-btn" class="sample-banner-dismiss" type="button" aria-label="Dismiss">&times;</button>
+        </span>
+    </div>
     <main>
         <tiro-form-filler id="form-filler" sdc-endpoint-address="https://sdc.tiro.health/fhir/r5"></tiro-form-filler>
     </main>
@@ -119,5 +190,31 @@
             submitBtn.addEventListener("click", () => formFiller.submit());
             cancelBtn.addEventListener("click", () => window.tiro.cancel());
         });</script>
+    <script data-sample-only>
+        // Banner-only behaviour. Stripped from the copied starter template via
+        // the [data-sample-only] selector, so integrators don't inherit it.
+        document.addEventListener("DOMContentLoaded", () => {
+            const banner = document.getElementById("sample-banner");
+            const dismissBtn = document.getElementById("dismiss-banner-btn");
+            const copyBtn = document.getElementById("copy-template-btn");
+
+            dismissBtn.addEventListener("click", () => banner.remove());
+
+            copyBtn.addEventListener("click", async () => {
+                const cloned = document.documentElement.cloneNode(true);
+                cloned.querySelectorAll("[data-sample-only]").forEach((n) => n.remove());
+                const html = "<!DOCTYPE html>\n" + cloned.outerHTML;
+                const originalLabel = copyBtn.textContent;
+                try {
+                    await navigator.clipboard.writeText(html);
+                    copyBtn.textContent = "Copied ✓";
+                } catch (err) {
+                    console.error("Copy starter template failed:", err);
+                    copyBtn.textContent = "Copy failed — see console";
+                }
+                setTimeout(() => { copyBtn.textContent = originalLabel; }, 2000);
+            });
+        });
+    </script>
 </body>
 </html>
