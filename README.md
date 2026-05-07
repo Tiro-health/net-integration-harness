@@ -171,7 +171,7 @@ End Class
 
 ## The embedded page
 
-The host injects a JS bridge into every page before any page script runs. Your `index.html` therefore stays UI-only — no Sentry CDN tag, no SMART Web Messaging module, no WebView2 transport setup. A working sample lives in `samples/Tiro.Health.FormFiller.WebView2.Sample/WebContent/index.html` (~60 lines, mostly CSS).
+The host injects a JS bridge into every page before any page script runs. Your `index.html` therefore stays UI-only — no Sentry CDN tag, no SMART Web Messaging module, no WebView2 transport setup. The library ships a working default `index.html` so the samples run out-of-the-box; production integrators should ship their own (see [Shipping your own index.html](#shipping-your-own-indexhtml) below).
 
 Two seams the page interacts with:
 
@@ -181,6 +181,28 @@ Two seams the page interacts with:
 The bridge dispatches `CustomEvent`s on `document` for status hooks: `tiro-connected`, `tiro-disconnected`, `tiro-submitted`, `tiro-submit-error`, `tiro-cancelled`. Listen if you want a status bar; ignore if you don't.
 
 For advanced flows that don't fit the auto-wired form-filler model, the lower-level API is still exposed at `window.SmartWebMessaging.{sendRequest, sendEvent, on}`.
+
+### Shipping your own index.html
+
+The default page is fine for demos but couples your UI to the library's release cadence — branding, the embedded SDK version, copy strings, and clipboard layout all live inside the package. For production, host your own page:
+
+1. Run any of the samples; the default page renders with a yellow banner at the top.
+2. Click **Copy starter template** in that banner. The button copies a clean version of the page (banner stripped) to the clipboard.
+3. Paste it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, the SDC endpoint, status copy, etc.
+4. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
+   ```xml
+   <ItemGroup>
+     <Content Include="WebContent\**\*">
+       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+     </Content>
+   </ItemGroup>
+   ```
+5. Point `WebContentFolder` at the deployed folder before the viewer's handle is created (typically right after `InitializeComponent`):
+   ```csharp
+   formViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent");
+   ```
+
+The page contract stays the same: drop in a `<tiro-form-filler>` element (or call `window.SmartWebMessaging.{sendRequest, sendEvent, on}` directly for non-form-filler flows), and the auto-injected bridge handles the rest. The integrator owns the `tiro-web-sdk.iife.js` `<script>` tag.
 
 ## Using the handler without the WinForms control
 
@@ -303,7 +325,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Pluggable `IEmbeddedBrowser` seam for testability (default: `WebView2EmbeddedBrowser`)
   - Pluggable `ITelemetrySink` seam (default: `NullTelemetrySink`); see telemetry section below
   - Embeds `WebAssets/tiro-swm-bridge.js` and auto-injects it into every page via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` — page is UI-only
-  - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a redirect placeholder
+  - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
 Designer-friendly closed bindings of `TiroFormViewer<,,>`.
