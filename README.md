@@ -182,13 +182,27 @@ The bridge dispatches `CustomEvent`s on `document` for status hooks: `tiro-conne
 
 For advanced flows that don't fit the auto-wired form-filler model, the lower-level API is still exposed at `window.SmartWebMessaging.{sendRequest, sendEvent, on}`.
 
+### Configuring FHIR endpoints from the host
+
+`<tiro-form-filler>` takes two endpoint attributes — `sdc-endpoint-address` (SDC FHIR server) and `data-endpoint-address` (FHIR data server). Configure both from the .NET host so the EHR process and the embedded JS hit the same servers; the host injects them via `AddScriptToExecuteOnDocumentCreatedAsync`, and the bridge applies them to every `<tiro-form-filler>` on the page before `tiro-web-sdk` reads attributes — overwriting any value baked into `index.html`.
+
+```csharp
+formViewer.SdcEndpointAddress  = "https://sdc.hospital.example/fhir/r5";
+formViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5";
+// then await formViewer.SetContextAsync(...);
+```
+
+`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box use works. `DataEndpointAddress` has no default — set it when the form needs to reach a data server. Either property must be set before `SetContextAsync` (the bridge reads them once, when the page is first wired).
+
+> **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
+
 ### Shipping your own index.html
 
 The default page is fine for demos but couples your UI to the library's release cadence — branding, the embedded SDK version, copy strings, and clipboard layout all live inside the package. For production, host your own page:
 
 1. Run any of the samples; the default page renders with a yellow banner at the top.
 2. Click **Copy starter template** in that banner. The button copies a clean version of the page (banner stripped) to the clipboard.
-3. Paste it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, the SDC endpoint, status copy, etc.
+3. Paste it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) above) — don't hardcode them in the page.
 4. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
    ```xml
    <ItemGroup>
@@ -326,6 +340,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Pluggable `ITelemetrySink` seam (default: `NullTelemetrySink`); see telemetry section below
   - Embeds `WebAssets/tiro-swm-bridge.js` and auto-injects it into every page via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` — page is UI-only
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
+  - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
 Designer-friendly closed bindings of `TiroFormViewer<,,>`.

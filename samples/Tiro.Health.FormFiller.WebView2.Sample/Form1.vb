@@ -10,6 +10,10 @@ Public Class Form1
     End Sub
 
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+        ' SdcEndpointAddress defaults to TiroFormViewerR4.DefaultSdcEndpointAddress; override
+        ' before SetContextAsync if you point at a different SDC server. DataEndpointAddress
+        ' is unset by default — set it (same timing) when the form needs to reach a data
+        ' server too.
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
         Await InitializeViewerAsync()
