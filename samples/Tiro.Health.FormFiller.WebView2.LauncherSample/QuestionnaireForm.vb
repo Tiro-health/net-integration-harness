@@ -19,6 +19,8 @@ Public Class QuestionnaireForm
     End Sub
 
     Private Async Sub QuestionnaireForm_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+        ' SdcEndpointAddress defaults to TiroFormViewerR5.DefaultSdcEndpointAddress; override
+        ' before SetContextAsync if you point at a different SDC server.
         AddHandler TiroFormViewer.FormSubmitted, AddressOf OnFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf OnCloseApplication
 

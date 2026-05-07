@@ -33,6 +33,24 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         public string WebContentFolder { get; set; }
 
+        /// <summary>
+        /// The <c>sdc-endpoint-address</c> attribute applied to every <c>&lt;tiro-form-filler&gt;</c>
+        /// on the embedded page. The bridge sets this before <c>tiro-web-sdk</c> initializes the
+        /// element, overwriting any value baked into <c>index.html</c>. The closed bindings
+        /// (<c>TiroFormViewerR5</c>/<c>R4</c>) seed this with the Tiro-hosted SDC server in
+        /// their constructors so out-of-the-box use works; hosts override before
+        /// <see cref="SetContextAsync"/> to point at a different server.
+        /// </summary>
+        public string SdcEndpointAddress { get; set; }
+
+        /// <summary>
+        /// Optional override for the <c>data-endpoint-address</c> attribute on every
+        /// <c>&lt;tiro-form-filler&gt;</c> element. Unlike <see cref="SdcEndpointAddress"/>,
+        /// this has no default — set it when the form needs to reach a data server (e.g.
+        /// hospital-hosted FHIR data store). Set before <see cref="SetContextAsync"/>.
+        /// </summary>
+        public string DataEndpointAddress { get; set; }
+
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandlerBase<TResource, TQR, TOO> _smartWebMessageHandler;
         private IEmbeddedBrowser _browser;
@@ -270,6 +288,23 @@ namespace Tiro.Health.FormFiller.WebView2
                     var configJson = System.Text.Json.JsonSerializer.Serialize(bootstrap);
                     var bootstrapScript = "window.__tiroSentryConfig=" + configJson + ";";
                     await _browser.AddInitializationScriptAsync(bootstrapScript);
+                }
+
+                // Inject host-supplied <tiro-form-filler> endpoint config as
+                // window.__tiroFormFillerConfig. The bridge applies these values to every
+                // <tiro-form-filler> on the page before tiro-web-sdk wires it, overriding
+                // any attribute baked into index.html. Only emitted when the host actually
+                // sets at least one endpoint — otherwise the bridge is a no-op and any
+                // attributes on the element apply unchanged.
+                if (!string.IsNullOrEmpty(SdcEndpointAddress) || !string.IsNullOrEmpty(DataEndpointAddress))
+                {
+                    var formFillerConfig = new System.Collections.Generic.Dictionary<string, string>();
+                    if (!string.IsNullOrEmpty(SdcEndpointAddress))
+                        formFillerConfig["sdcEndpointAddress"] = SdcEndpointAddress;
+                    if (!string.IsNullOrEmpty(DataEndpointAddress))
+                        formFillerConfig["dataEndpointAddress"] = DataEndpointAddress;
+                    var formFillerJson = System.Text.Json.JsonSerializer.Serialize(formFillerConfig);
+                    await _browser.AddInitializationScriptAsync("window.__tiroFormFillerConfig=" + formFillerJson + ";");
                 }
 
                 // Inject the SMART Web Messaging bridge — owns protocol, transport,

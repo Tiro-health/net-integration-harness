@@ -32,16 +32,49 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         [TestMethod]
         public void IndexHtml_ContainsPlaceholderBannerMarkers()
         {
-            var asm = typeof(TiroFormViewerState).Assembly;
-            using var stream = asm.GetManifestResourceStream(
-                "Tiro.Health.FormFiller.WebView2.WebAssets.index.html");
-            Assert.IsNotNull(stream);
-            using var reader = new StreamReader(stream);
-            var html = reader.ReadToEnd();
+            var html = ReadEmbeddedString("Tiro.Health.FormFiller.WebView2.WebAssets.index.html");
 
             StringAssert.Contains(html, "id=\"sample-banner\"");
             StringAssert.Contains(html, "id=\"copy-template-btn\"");
             StringAssert.Contains(html, "data-sample-only");
+        }
+
+        // Issue #6: endpoints are configured from the .NET host via
+        // TiroFormViewer.SdcEndpointAddress / DataEndpointAddress, not hardcoded
+        // in the page. Pinning this keeps a future "small fix" from re-adding
+        // a baked-in URL that would silently override host configuration.
+        [TestMethod]
+        public void IndexHtml_DoesNotHardcodeEndpointAttributes()
+        {
+            var html = ReadEmbeddedString("Tiro.Health.FormFiller.WebView2.WebAssets.index.html");
+
+            Assert.IsFalse(html.Contains("sdc-endpoint-address="),
+                "index.html must not hardcode sdc-endpoint-address; let the .NET host configure it.");
+            Assert.IsFalse(html.Contains("data-endpoint-address="),
+                "index.html must not hardcode data-endpoint-address; let the .NET host configure it.");
+        }
+
+        // The bridge applies window.__tiroFormFillerConfig to every <tiro-form-filler>
+        // it wires. The .NET host's TiroFormViewer.SdcEndpointAddress / DataEndpointAddress
+        // pipeline injects that object via AddScriptToExecuteOnDocumentCreatedAsync.
+        // Pinning the contract here keeps the JS and C# halves from drifting apart.
+        [TestMethod]
+        public void BridgeJs_ReadsTiroFormFillerConfig()
+        {
+            var js = ReadEmbeddedString("Tiro.Health.FormFiller.WebView2.WebAssets.tiro-swm-bridge.js");
+
+            StringAssert.Contains(js, "window.__tiroFormFillerConfig");
+            StringAssert.Contains(js, "sdc-endpoint-address");
+            StringAssert.Contains(js, "data-endpoint-address");
+        }
+
+        private static string ReadEmbeddedString(string resourceName)
+        {
+            var asm = typeof(TiroFormViewerState).Assembly;
+            using var stream = asm.GetManifestResourceStream(resourceName);
+            Assert.IsNotNull(stream, $"Resource '{resourceName}' was not embedded.");
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
         }
     }
 }

@@ -251,6 +251,19 @@
     // ============================================================
 
     function wireFormFiller(formFiller) {
+        // Apply host-supplied endpoint overrides before tiro-web-sdk reads attributes.
+        // Host wins: if window.__tiroFormFillerConfig sets a value, it overrides whatever
+        // is baked into the HTML so the .NET host and embedded form always agree on which
+        // FHIR servers to hit. The host injects this object via WebView2's
+        // AddScriptToExecuteOnDocumentCreatedAsync, so it lands before any page script runs.
+        const endpointConfig = window.__tiroFormFillerConfig;
+        if (endpointConfig) {
+            if (endpointConfig.sdcEndpointAddress)
+                formFiller.setAttribute("sdc-endpoint-address", endpointConfig.sdcEndpointAddress);
+            if (endpointConfig.dataEndpointAddress)
+                formFiller.setAttribute("data-endpoint-address", endpointConfig.dataEndpointAddress);
+        }
+
         // Render the questionnaire when the host says so.
         SmartWebMessaging.on("sdc.displayQuestionnaire", payload => {
             const { questionnaire, questionnaireResponse, context } = payload || {};
