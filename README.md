@@ -2,88 +2,11 @@
 
 A .NET library for integrating [SMART Web Messaging](https://hl7.org/fhir/smart-app-launch/smart-web-messaging.html) and [FHIR Structured Data Capture (SDC)](https://hl7.org/fhir/uv/sdc/) into Windows desktop applications using WebView2.
 
-## Overview
-
 Embed FHIR-based questionnaire forms in a WebView2 control and exchange `QuestionnaireResponse` data with them over the SMART Web Messaging protocol. The host control owns the protocol, transport, and (optional) telemetry; the embedded HTML page is purely UI — it does not need to know about SMART Web Messaging, Sentry, or WebView2 at all. The bridge JS that drives the page is bundled with the host library and auto-injected before any page script runs.
 
-## Solution structure
+## Getting started
 
-```
-net-integration-harness/
-├── src/
-│   ├── Tiro.Health.SmartWebMessaging/              # Core protocol handler (FHIR-version-agnostic)
-│   ├── Tiro.Health.SmartWebMessaging.Fhir.R5/      # FHIR R5 closed bindings
-│   ├── Tiro.Health.SmartWebMessaging.Fhir.R4/      # FHIR R4 closed bindings
-│   ├── Tiro.Health.FormFiller.WebView2/            # WinForms UserControl + bridge JS (FHIR-agnostic)
-│   ├── Tiro.Health.FormFiller.WebView2.Fhir.R5/    # Designer-friendly R5 viewer
-│   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
-│   └── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
-├── samples/
-│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form demo (R4)
-│   └── Tiro.Health.FormFiller.WebView2.LauncherSample/ # Patient-list launcher → questionnaire dialog (R5)
-└── tests/
-    └── Tiro.Health.SmartWebMessaging.Tests/        # MSTest unit tests (25 tests)
-```
-
-## Projects
-
-### `Tiro.Health.SmartWebMessaging` (core)
-FHIR-version-agnostic implementation of the SMART Web Messaging protocol.
-
-- **Targets**: `netstandard2.0`, `net48`
-- **Key type**: `SmartMessageHandlerBase<TResource, TQuestionnaireResponse, TOperationOutcome>` — abstract generic handler covering protocol routing, request/response correlation via `Func<SmartMessageResponse, Task>` listeners, and `CancellationToken` plumbing across the entire async surface
-- **Handles**: `status.handshake`, `sdc.configure`, `sdc.configureContext`, `sdc.displayQuestionnaire`, `form.submitted`, `ui.form.requestSubmit`, `ui.form.persist`, `ui.done`
-- **Validation**: validates inbound `form.submitted` payloads via `Validator.ValidateObject` so subscribers never see null `Response`/`Outcome`
-
-### `Tiro.Health.SmartWebMessaging.Fhir.R5` / `Tiro.Health.SmartWebMessaging.Fhir.R4`
-Concrete bindings on top of the core library.
-
-- **Targets**: `netstandard2.0`, `net48`
-- **Key type**: `SmartMessageHandler` — binds the base handler to `Resource`, `QuestionnaireResponse`, `OperationOutcome` from the corresponding `Hl7.Fhir.*` package
-- **Adds**: strongly-typed `FormSubmitted` events, version-specific FHIR-resource convenience overloads on `SendSdcConfigureContextAsync` and `SendSdcDisplayQuestionnaireAsync`
-
-### `Tiro.Health.FormFiller.WebView2`
-Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to the messaging handler. FHIR-version-agnostic: derive `TiroFormViewerR4`/`R5` (or your own closed binding) to use it.
-
-- **Targets**: `net48` (C# SDK-style, WinForms + WebView2)
-- **Key type**: `TiroFormViewer<TResource, TQR, TOO>` — abstract generic UserControl
-- **Features**:
-  - Explicit lifecycle state machine (`TiroFormViewerState`: Initializing → Ready → ContextSet → Submitted → Disposed)
-  - Async API with `CancellationToken` end-to-end; in-flight operations cancel cleanly on disposal
-  - Pluggable `IEmbeddedBrowser` seam for testability (default: `WebView2EmbeddedBrowser`)
-  - Pluggable `ITelemetrySink` seam (default: `NullTelemetrySink`); see telemetry section below
-  - Embeds `WebAssets/tiro-swm-bridge.js` and auto-injects it into every page via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` — page is UI-only
-  - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a redirect placeholder
-
-### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
-Designer-friendly closed bindings of `TiroFormViewer<,,>`.
-
-- **Targets**: `net48`
-- **Key type**: `TiroFormViewerR5` / `TiroFormViewerR4` (sealed) — drop-in WinForms control
-- **Defaults**: telemetry → `SentryTelemetrySink` (Tiro DSN), so existing consumers get observability for free
-
-### `Tiro.Health.FormFiller.WebView2.Sentry`
-Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you want the Sentry behaviour.
-
-- **Targets**: `net48`
-- **Key type**: `SentryTelemetrySink` — owns two DSNs (one for the .NET host process, one injected into the embedded page) plus environment and release. Ctor overloads let consumers override either DSN, the Sentry options, or the entire SDK init.
-- Auto-detects release as `Tiro.Health.FormFiller.WebView2@<version>+<commit>` from the FormFiller assembly's `AssemblyInformationalVersion` (so traces deep-link to source via Sentry's release pipeline if you upload symbols)
-
-### `Tiro.Health.FormFiller.WebView2.Sample` / `LauncherSample`
-WinForms demos.
-
-- `Sample` — single-form demo bound to FHIR **R4**
-- `LauncherSample` — patient-list launcher that opens the questionnaire as a dialog, demonstrates running multiple form sessions in one process; bound to FHIR **R5**
-- Both: `.NET 4.8` (VB.NET, old-style project format)
-
-### `Tiro.Health.SmartWebMessaging.Tests`
-- **Target**: `net8.0`
-- **Framework**: MSTest + Moq
-- **Coverage**: 25 tests covering protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), and event firing
-
-## Consuming the harness
-
-These libraries ship as NuGet packages and are typically consumed from a WinForms app on .NET Framework 4.8. End-to-end setup:
+These libraries ship as NuGet packages and are typically consumed from a WinForms app on .NET Framework 4.8.
 
 ### 1. Add the NuGet source
 
@@ -151,7 +74,7 @@ MSBuild walks the closure each build and writes redirects into `<YourApp>.exe.co
 
 ### 4. Add the FormViewer to a form
 
-**Programmatic instantiation (recommended).** Bypasses the WinForms Designer entirely — robust for any project size and lets you skip the Designer's design-time binding-redirect quirk.
+Instantiate the viewer programmatically and add it to your form's controls. This bypasses the WinForms Designer entirely and is robust for any project size.
 
 ```vb
 Imports Hl7.Fhir.Model
@@ -207,16 +130,6 @@ End Class
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
 Disposal is handled by the form's `Controls` ownership chain — no extra cleanup needed in your form.
-
-**Designer placement (small apps only).** Drag-drop works, but `Hl7.Fhir.Base.dll`'s manifest strong-name-references `System.ComponentModel.Annotations` 4.2.0.0 while modern NuGet pulls 4.2.1.0. Runtime is fine (the auto-generated redirect handles it); the WinForms Designer in Visual Studio doesn't apply binding redirects, so it can't load `TiroFormViewerR5/R4`. Pin the older Annotations package in your consuming project:
-
-```xml
-<PackageReference Include="System.ComponentModel.Annotations" Version="4.4.1" />
-```
-
-This is the last package whose embedded assembly is still 4.2.0.0, satisfying `Hl7.Fhir.Base` directly without a redirect. NuGet emits an `NU1605` downgrade warning — expected; ignore.
-
-In larger applications skip the pin: it downgrades Annotations graph-wide and can collide with other libraries that strong-name reference 4.2.1.0+. Use programmatic instantiation instead.
 
 ## The embedded page
 
@@ -307,6 +220,79 @@ A full solution build via VS MSBuild restores both, builds C# libs first, then t
 
 Since the libraries publish at version `1.0.0` and the samples consume them via `PackageReference`, the local cache at `~/.nuget/packages/tiro.health.formfiller.webview2*` can serve stale bytes after API changes. Either bump versions, or purge the affected entries plus the sample's `obj/` and rebuild.
 
+## Solution structure
+
+```
+net-integration-harness/
+├── src/
+│   ├── Tiro.Health.SmartWebMessaging/              # Core protocol handler (FHIR-version-agnostic)
+│   ├── Tiro.Health.SmartWebMessaging.Fhir.R5/      # FHIR R5 closed bindings
+│   ├── Tiro.Health.SmartWebMessaging.Fhir.R4/      # FHIR R4 closed bindings
+│   ├── Tiro.Health.FormFiller.WebView2/            # WinForms UserControl + bridge JS (FHIR-agnostic)
+│   ├── Tiro.Health.FormFiller.WebView2.Fhir.R5/    # Designer-friendly R5 viewer
+│   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
+│   └── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
+├── samples/
+│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form demo (R4)
+│   └── Tiro.Health.FormFiller.WebView2.LauncherSample/ # Patient-list launcher → questionnaire dialog (R5)
+└── tests/
+    └── Tiro.Health.SmartWebMessaging.Tests/        # MSTest unit tests (25 tests)
+```
+
+### `Tiro.Health.SmartWebMessaging` (core)
+FHIR-version-agnostic implementation of the SMART Web Messaging protocol.
+
+- **Targets**: `netstandard2.0`, `net48`
+- **Key type**: `SmartMessageHandlerBase<TResource, TQuestionnaireResponse, TOperationOutcome>` — abstract generic handler covering protocol routing, request/response correlation via `Func<SmartMessageResponse, Task>` listeners, and `CancellationToken` plumbing across the entire async surface
+- **Handles**: `status.handshake`, `sdc.configure`, `sdc.configureContext`, `sdc.displayQuestionnaire`, `form.submitted`, `ui.form.requestSubmit`, `ui.form.persist`, `ui.done`
+- **Validation**: validates inbound `form.submitted` payloads via `Validator.ValidateObject` so subscribers never see null `Response`/`Outcome`
+
+### `Tiro.Health.SmartWebMessaging.Fhir.R5` / `Tiro.Health.SmartWebMessaging.Fhir.R4`
+Concrete bindings on top of the core library.
+
+- **Targets**: `netstandard2.0`, `net48`
+- **Key type**: `SmartMessageHandler` — binds the base handler to `Resource`, `QuestionnaireResponse`, `OperationOutcome` from the corresponding `Hl7.Fhir.*` package
+- **Adds**: strongly-typed `FormSubmitted` events, version-specific FHIR-resource convenience overloads on `SendSdcConfigureContextAsync` and `SendSdcDisplayQuestionnaireAsync`
+
+### `Tiro.Health.FormFiller.WebView2`
+Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to the messaging handler. FHIR-version-agnostic: derive `TiroFormViewerR4`/`R5` (or your own closed binding) to use it.
+
+- **Targets**: `net48` (C# SDK-style, WinForms + WebView2)
+- **Key type**: `TiroFormViewer<TResource, TQR, TOO>` — abstract generic UserControl
+- **Features**:
+  - Explicit lifecycle state machine (`TiroFormViewerState`: Initializing → Ready → ContextSet → Submitted → Disposed)
+  - Async API with `CancellationToken` end-to-end; in-flight operations cancel cleanly on disposal
+  - Pluggable `IEmbeddedBrowser` seam for testability (default: `WebView2EmbeddedBrowser`)
+  - Pluggable `ITelemetrySink` seam (default: `NullTelemetrySink`); see telemetry section below
+  - Embeds `WebAssets/tiro-swm-bridge.js` and auto-injects it into every page via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` — page is UI-only
+  - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a redirect placeholder
+
+### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
+Designer-friendly closed bindings of `TiroFormViewer<,,>`.
+
+- **Targets**: `net48`
+- **Key type**: `TiroFormViewerR5` / `TiroFormViewerR4` (sealed) — drop-in WinForms control
+- **Defaults**: telemetry → `SentryTelemetrySink` (Tiro DSN), so existing consumers get observability for free
+
+### `Tiro.Health.FormFiller.WebView2.Sentry`
+Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you want the Sentry behaviour.
+
+- **Targets**: `net48`
+- **Key type**: `SentryTelemetrySink` — owns two DSNs (one for the .NET host process, one injected into the embedded page) plus environment and release. Ctor overloads let consumers override either DSN, the Sentry options, or the entire SDK init.
+- Auto-detects release as `Tiro.Health.FormFiller.WebView2@<version>+<commit>` from the FormFiller assembly's `AssemblyInformationalVersion` (so traces deep-link to source via Sentry's release pipeline if you upload symbols)
+
+### `Tiro.Health.FormFiller.WebView2.Sample` / `LauncherSample`
+WinForms demos.
+
+- `Sample` — single-form demo bound to FHIR **R4**
+- `LauncherSample` — patient-list launcher that opens the questionnaire as a dialog, demonstrates running multiple form sessions in one process; bound to FHIR **R5**
+- Both: `.NET 4.8` (VB.NET, old-style project format)
+
+### `Tiro.Health.SmartWebMessaging.Tests`
+- **Target**: `net8.0`
+- **Framework**: MSTest + Moq
+- **Coverage**: 25 tests covering protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), and event firing
+
 ## Architecture notes
 
 ### Generic type binding
@@ -326,3 +312,19 @@ The host's traceId is injected into the embedded page in two ways: (1) as `<meta
 
 ### Bridge injection
 The JS that owns the page side of the protocol (`tiro-swm-bridge.js`) ships embedded in `Tiro.Health.FormFiller.WebView2` and is injected via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` so it runs before any page script. Mirrors the pattern used in `tiro-health/java-integration-harness` (form-filler-swing). The page is UI-only.
+
+## Troubleshooting
+
+### WinForms Designer can't load `TiroFormViewerR5/R4`
+
+If you drop the viewer onto a form via the Designer (instead of instantiating it programmatically as shown in [Getting started](#4-add-the-formviewer-to-a-form)), the Designer may fail to load it. `Hl7.Fhir.Base.dll`'s manifest strong-name-references `System.ComponentModel.Annotations` 4.2.0.0 while modern NuGet pulls 4.2.1.0. Runtime is fine (the auto-generated redirect handles it); the WinForms Designer in Visual Studio doesn't apply binding redirects.
+
+Pin the older Annotations package in your consuming project:
+
+```xml
+<PackageReference Include="System.ComponentModel.Annotations" Version="4.4.1" />
+```
+
+This is the last package whose embedded assembly is still 4.2.0.0, satisfying `Hl7.Fhir.Base` directly without a redirect. NuGet emits an `NU1605` downgrade warning — expected; ignore.
+
+In larger applications skip the pin: it downgrades Annotations graph-wide and can collide with other libraries that strong-name reference 4.2.1.0+. Use programmatic instantiation instead.
