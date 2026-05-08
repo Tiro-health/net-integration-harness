@@ -174,6 +174,24 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
+        /// Opt-in telemetry ctor: uses <see cref="CreateBrowser"/> and <see cref="CreateMessageHandler"/>
+        /// like the parameterless ctor, but plugs in the supplied <paramref name="telemetry"/> sink
+        /// instead of <see cref="CreateTelemetrySink"/>. Pass <c>null</c> to fall back to
+        /// <see cref="CreateTelemetrySink"/>. The viewer takes ownership of the sink and disposes it.
+        /// </summary>
+        protected TiroFormViewer(ITelemetrySink telemetry)
+        {
+            InitializeComponent();
+            if (System.ComponentModel.LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
+                return;
+            _browser = CreateBrowser();
+            _smartWebMessageHandler = CreateMessageHandler();
+            _telemetry = telemetry ?? CreateTelemetrySink();
+            _ownsTelemetrySink = true;
+            InitializeRuntime();
+        }
+
+        /// <summary>
         /// DI ctor for tests and advanced consumers. Bypasses the factory methods —
         /// dependencies are injected directly. Not used by the designer. The injected
         /// <paramref name="telemetry"/> sink (if any) is NOT disposed by this control;

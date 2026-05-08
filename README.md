@@ -35,16 +35,15 @@ For an R5 consumer (swap `.Fhir.R5` → `.Fhir.R4` and `Hl7.Fhir.R5` → `Hl7.Fh
   <PackageReference Include="Tiro.Health.SmartWebMessaging.Fhir.R5" Version="1.0.0" />
   <PackageReference Include="Tiro.Health.FormFiller.WebView2" Version="1.0.0" />
   <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="1.0.0" />
-  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
 </ItemGroup>
 ```
 
-To opt out of Sentry telemetry, drop the `.Sentry` package and override `CreateTelemetrySink()` in your own `TiroFormViewer<,,>` subclass — see [Telemetry](#telemetry).
+Telemetry is **opt-in**. To enable Sentry telemetry, also reference `Tiro.Health.FormFiller.WebView2.Sentry` and pass `new SentryTelemetrySink()` to the viewer's ctor — see [Telemetry](#telemetry).
 
 Old-style `.vbproj` quirks worth knowing:
 
 - Set `<RestoreProjectStyle>PackageReference</RestoreProjectStyle>` in the `PropertyGroup`.
-- Set `<RuntimeIdentifiers>win</RuntimeIdentifiers>` because WebView2 and Sentry ship native binaries.
+- Set `<RuntimeIdentifiers>win</RuntimeIdentifiers>` because WebView2 ships native binaries (and so does Sentry, if you opt in).
 
 ### 3. Enable auto-generated binding redirects
 
@@ -257,7 +256,19 @@ public interface ITelemetrySink : IDisposable
 }
 ```
 
-The default in the FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) is `SentryTelemetrySink` from the `Tiro.Health.FormFiller.WebView2.Sentry` package. It produces:
+The FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) default to `NullTelemetrySink` (no-op): the `.Sentry` adapter is **not** a transitive dependency, so by default no Sentry NuGet, no SDK init, no `Sentry.init` on the embedded page.
+
+To **opt in to Sentry telemetry**, add the adapter package and pass `new SentryTelemetrySink()` to the viewer's ctor:
+
+```xml
+<PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
+```
+
+```csharp
+var viewer = new TiroFormViewerR5(new SentryTelemetrySink());
+```
+
+You'll then get:
 
 - **One Sentry transaction per round-trip message** (e.g. `sdc.displayQuestionnaire`, `form.submitted`) — actual request/response latency, not just the `PostMessage` cost
 - **One unified trace per form session** spanning both .NET and JS Sentry projects (the host injects its `traceId` into the embedded page; the JS Sentry SDK continues that trace)
@@ -266,9 +277,9 @@ The default in the FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) is `Se
 - **Outcome-aware status** on the `form.submitted` transaction (Sentry `Ok` on success, `InvalidArgument` on validation failures)
 - **Release tag** auto-derived from the FormFiller assembly's `AssemblyInformationalVersion` (`Tiro.Health.FormFiller.WebView2@<semver>+<commit>`)
 
-To **opt out** of telemetry entirely, override `CreateTelemetrySink()` in your own `TiroFormViewer<,,>` subclass and return `NullTelemetrySink.Instance` — your closed binding never references the Sentry package.
+To **redirect to your own Sentry project(s)**, construct `new SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) and feed it to the same ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page) — the page itself never hardcodes a DSN.
 
-To **redirect to your own Sentry project(s)**, construct a `SentryTelemetrySink(dsn, embeddedDsn, environment, release)` and pass it via the `TiroFormViewer<,,>` DI ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page) — the page itself never hardcodes a DSN.
+For any other backend, implement `ITelemetrySink` yourself and pass it the same way.
 
 ## Building
 
@@ -347,7 +358,7 @@ Designer-friendly closed bindings of `TiroFormViewer<,,>`.
 
 - **Targets**: `net48`
 - **Key type**: `TiroFormViewerR5` / `TiroFormViewerR4` (sealed) — drop-in WinForms control
-- **Defaults**: telemetry → `SentryTelemetrySink` (Tiro DSN), so existing consumers get observability for free
+- **Defaults**: telemetry → `NullTelemetrySink` (no-op). Opt in to Sentry by referencing `Tiro.Health.FormFiller.WebView2.Sentry` and passing `new SentryTelemetrySink()` to the ctor — see [Telemetry](#telemetry)
 
 ### `Tiro.Health.FormFiller.WebView2.Sentry`
 Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you want the Sentry behaviour.
