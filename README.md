@@ -186,7 +186,7 @@ formViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5";
 The default page is fine for demos but couples your UI to the library's release cadence — branding, the embedded SDK version, copy strings, and clipboard layout all live inside the package. For production, host your own page:
 
 1. Run any of the samples; the default page renders with a yellow banner at the top.
-2. Click **Copy starter template** in that banner. The button copies a clean version of the page (banner stripped) to the clipboard.
+2. Click **Copy starter template** in that banner. The button writes a hardcoded minimal HTML5 page to your clipboard — `<!DOCTYPE html>`, the SDK script, the two CSS rules needed to make the form-filler fill the viewport, and a bare `<tiro-form-filler id="form-filler">`. No banner, no runtime-applied attributes (`questionnaire`, `launch-context`, `sdc-endpoint-address`), no SDK-injected styles.
 3. Paste it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) above) — don't hardcode them in the page.
 4. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
    ```xml
@@ -284,7 +284,8 @@ net-integration-harness/
 │   └── Tiro.Health.FormFiller.WebView2.EhrShellSample/ # Dummy EHR shell — patient/encounter/template selection,
 │                                                       # tabbed viewer, in-memory QR persistence, custom index.html (R5)
 └── tests/
-    └── Tiro.Health.SmartWebMessaging.Tests/        # MSTest unit tests (25 tests)
+    ├── Tiro.Health.SmartWebMessaging.Tests/        # MSTest, protocol/handler coverage
+    └── Tiro.Health.FormFiller.WebView2.Tests/      # MSTest, viewer lifecycle + telemetry contracts + embedded assets
 ```
 
 ### `Tiro.Health.SmartWebMessaging` (core)
@@ -333,19 +334,23 @@ Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you wan
 ### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
 WinForms demos.
 
-- **`Sample`** — single-form, single-patient demo bound to FHIR **R4**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence.
+- **`Sample`** — single-form, single-patient demo bound to FHIR **R4**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows how to extract the plain-text narrative from a submitted QR via the `narrative-alternative-format` extension (`QuestionnaireResponseHelper`).
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
-  - **Patient / encounter / template selection** — three hardcoded patients with their own encounters; three canonical templates verified live on the default SDC server.
-  - **Tabbed embedding** — the form viewer lives in a tab next to a "Patient details" tab. Switching tabs while filling a form *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit "Close session" button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
-  - **In-memory QR persistence** — submitted `QuestionnaireResponse`s are stored keyed by `(patient, encounter, template)`; relaunching the same combination passes the saved QR as `initialResponse` so the user resumes where they left off.
-  - **Custom `index.html`** — bundles its own `WebContent/index.html` and points `WebContentFolder` at it, instead of the library's default banner page. See [Shipping your own index.html](#shipping-your-own-indexhtml).
+  - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
+  - **Reports list per patient** — every submitted `QuestionnaireResponse` is saved in an in-memory `ResponseStore` keyed by `(patient, encounter, template)` and shown newest-first in the Patient details tab. Relaunching the same combination passes the saved QR as `initialResponse` so the user resumes where they left off.
+  - **Read-only narrative preview** — single-clicking a saved report renders its narrative in a `RichTextBox` (RTF when the SDC's `$generate-narrative` produced one, plain-text fallback otherwise — both via `QuestionnaireResponseHelper`). The preview is decoupled from session state, so the doctor can peek at older reports while a form is in progress.
+  - **Consultation window** — clicking **Open this report** spawns a separate top-level `ReportConsultationForm` with its own `TiroFormViewerR5`. The main shell's session is left alive (showcasing that multiple viewer instances coexist), and the consultation viewer loads a different `WebContent/Consultation/index.html` that bakes `<tiro-form-filler read-only>` into the page so the form is view-only.
+  - **Tabbed embedding with dynamic Form tab** — the Form tab only exists while a session is alive (added to / removed from `TabControl.TabPages` on launch / dispose). A context banner above the form viewer shows what's being filled. Switching tabs while filling *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit **Close session** button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
+  - **Custom `index.html` per role** — bundles `WebContent/Form/index.html` (editable) and `WebContent/Consultation/index.html` (read-only). The integrator picks which page to load by setting `WebContentFolder`, not by passing UI flags through the host API — UI concerns stay in the page. See [Shipping your own index.html](#shipping-your-own-indexhtml).
 - Both: `.NET 4.8` (VB.NET, old-style project format).
 
-### `Tiro.Health.SmartWebMessaging.Tests`
-- **Target**: `net8.0`
+### `Tiro.Health.SmartWebMessaging.Tests` / `Tiro.Health.FormFiller.WebView2.Tests`
+- **Targets**: `net8.0` (SmartWebMessaging) / `net48` (FormFiller — needs WinForms + WebView2)
 - **Framework**: MSTest + Moq
-- **Coverage**: 25 tests covering protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), and event firing
+- **Coverage** (~79 test methods across both projects):
+  - `SmartWebMessaging.Tests` — protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), event firing, JSON probe, async-task extensions
+  - `FormFiller.WebView2.Tests` — viewer lifecycle (state machine transitions, dispose semantics), telemetry sink contracts (`NullTelemetrySink` no-ops, span ordering, session tagging), embedded `WebAssets/` resource integrity
 
 ## Architecture notes
 
