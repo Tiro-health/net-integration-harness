@@ -44,9 +44,14 @@ Public Class Form1
             If result = DialogResult.No Then Return
         End If
 
-        Dim plainText As String = QuestionnaireResponseHelper.GetPlainTextNarrative(e.Response)
-        If Not String.IsNullOrEmpty(plainText) Then
-            MessageBox.Show(plainText, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
+        ' QuestionnaireResponse.Text.Div is the XHTML narrative the SDC backend
+        ' generates. Plain-text and RTF alternatives live on QR.text via the
+        ' http://fhir.tiro.health/StructureDefinition/narrative-alternative-format
+        ' extension (an Attachment with ContentType "text/plain" or "text/rtf").
+        ' See the EhrShellSample's QuestionnaireResponseHelper for how to read those.
+        Dim narrativeHtml As String = e.Response.Text?.Div
+        If Not String.IsNullOrEmpty(narrativeHtml) Then
+            MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
         End If
 
         Me.Close()

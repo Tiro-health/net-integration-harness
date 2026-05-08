@@ -33,10 +33,15 @@ The resulting `<PackageReference>` block in your `.csproj` / `.vbproj` should lo
 </ItemGroup>
 ```
 
-Old-style `.vbproj` quirks worth knowing:
+Old-style `.vbproj` projects (the `<Project ToolsVersion="15.0">` format — anything that isn't SDK-style `<Project Sdk="...">`) need a few extra properties. There's no Properties UI for these, so edit the XML directly: in Visual Studio right-click the project → **Unload Project** → right-click again → **Edit `<ProjectName>.vbproj`** (or open the file in any text editor). Add these inside the first `<PropertyGroup>` — the one with `<Configuration>` / `<OutputType>` / `<TargetFrameworkVersion>` etc.:
 
-- Set `<RestoreProjectStyle>PackageReference</RestoreProjectStyle>` in the `PropertyGroup` — without it the Manage NuGet Packages dialog falls back to `packages.config` and the install won't show up as `<PackageReference>`.
-- Set `<RuntimeIdentifiers>win</RuntimeIdentifiers>` because WebView2 ships native binaries (and so does Sentry, if you opt in).
+```xml
+<RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+<RuntimeIdentifiers>win</RuntimeIdentifiers>
+```
+
+- `RestoreProjectStyle` — pins the project to PackageReference. Without it the **Manage NuGet Packages** dialog can silently fall back to `packages.config` for new installs, and you end up with a mix of `<PackageReference>` (existing) and `<Reference>` + `packages.config` (new ones).
+- `RuntimeIdentifiers` — tells MSBuild to copy the runtime-specific native DLLs into your output folder (WebView2's `WebView2Loader.dll`, and Sentry's native bits if you opt in). Without it the WebView2 control fails at runtime with a missing-DLL error.
 
 > **Working against a local build of the harness?** Run `dotnet pack` and add `artifacts/packages/` as a custom package source via **Tools → NuGet Package Manager → Package Manager Settings → Package Sources**, then install from that source.
 
@@ -68,7 +73,15 @@ MSBuild walks the closure each build and writes redirects into `<YourApp>.exe.co
 
 ### 3. Add the FormViewer to a form
 
-Drop a `TiroFormViewerR5` (or `TiroFormViewerR4`) onto your form in the Designer (`Dock = Fill`) plus a Submit `Button` in a bottom panel, then wire three things:
+Open `Form1.vb` in the WinForms Designer in Visual Studio, then:
+
+1. **Drop the form viewer first.** Drag `TiroFormViewerR5` (or `TiroFormViewerR4`) from the Toolbox onto the form, set `Name = TiroFormViewer` (matches what the sample code below references) and `Dock = Fill`. If it's not in the Toolbox, build the project once, then right-click the Toolbox → **Choose Items...** → browse to your `bin\Debug\Tiro.Health.FormFiller.WebView2.Fhir.R5.dll`.
+2. **Drop a `Panel` onto the form** (not into the viewer), set `Dock = Bottom`, `Height = 46`. The viewer should resize to fill the area above it.
+3. **Drop a `Button` into the panel**, set `Name = SubmitButton` (this matters — VB.NET wires the `Handles SubmitButton.Click` clause from the sample by name; the default `Button1` won't bind), `Text = "Submit"`, `Anchor = Top, Right`, drag it near the right edge.
+
+> **Add order matters for docking.** The viewer needs to be added to the form's `Controls` collection *before* the bottom panel — that's how WinForms decides which docked sibling claims its slice first. The Designer gets this right as long as you place the viewer before the panel; if it doesn't, swap the two `Controls.Add(...)` calls in `Form1.Designer.vb`.
+
+Then wire three things:
 
 - `FormSubmitted` — the page emitted a QR. Inspect `e.Response`, optionally check `e.Outcome.Success` for validation errors, then close.
 - `CloseApplication` — the page emitted `ui.done` (e.g. its own Cancel button). Just close the form.
@@ -123,9 +136,14 @@ Public Class Form1
             If result = DialogResult.No Then Return
         End If
 
-        Dim plainText As String = QuestionnaireResponseHelper.GetPlainTextNarrative(e.Response)
-        If Not String.IsNullOrEmpty(plainText) Then
-            MessageBox.Show(plainText, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
+        ' QuestionnaireResponse.Text.Div is the XHTML narrative the SDC backend
+        ' generates. Plain-text and RTF alternatives live on QR.text via the
+        ' http://fhir.tiro.health/StructureDefinition/narrative-alternative-format
+        ' extension (an Attachment with ContentType "text/plain" or "text/rtf").
+        ' See the EhrShellSample's QuestionnaireResponseHelper for how to read those.
+        Dim narrativeHtml As String = e.Response.Text?.Div
+        If Not String.IsNullOrEmpty(narrativeHtml) Then
+            MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
         End If
 
         Me.Close()
@@ -334,7 +352,7 @@ Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you wan
 ### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
 WinForms demos.
 
-- **`Sample`** — single-form, single-patient demo bound to FHIR **R4**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows how to extract the plain-text narrative from a submitted QR via the `narrative-alternative-format` extension (`QuestionnaireResponseHelper`).
+- **`Sample`** — single-form, single-patient demo bound to FHIR **R4**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
   - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
