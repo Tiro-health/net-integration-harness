@@ -8,24 +8,19 @@ Embed FHIR-based questionnaire forms in a WebView2 control and exchange `Questio
 
 These libraries ship as NuGet packages and are typically consumed from a WinForms app on .NET Framework 4.8.
 
-### 1. Add the NuGet source
+### 1. Reference the packages
 
-The packages live on the harness's feed (or, for local development, in `artifacts/packages/` after `dotnet pack`). Add a `nuget.config` next to your `.sln`:
+There is no umbrella `net-integration-harness` package — the harness ships as a handful of individual NuGet packages that you install separately. In Visual Studio, right-click your project → **Manage NuGet Packages...** and search for each one (swap `.Fhir.R5` → `.Fhir.R4` for an R4 consumer):
 
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-    <add key="net-integration-harness" value="<path-or-url>" />
-  </packageSources>
-</configuration>
-```
+- `Hl7.Fhir.Base`
+- `Hl7.Fhir.R5` (or `Hl7.Fhir.R4`)
+- `Tiro.Health.SmartWebMessaging`
+- `Tiro.Health.SmartWebMessaging.Fhir.R5` (or `.Fhir.R4`)
+- `Tiro.Health.FormFiller.WebView2`
+- `Tiro.Health.FormFiller.WebView2.Fhir.R5` (or `.Fhir.R4`)
+- *(optional)* `Tiro.Health.FormFiller.WebView2.Sentry` — only if you want Sentry telemetry; see [Telemetry](#telemetry)
 
-### 2. Reference the packages
-
-For an R5 consumer (swap `.Fhir.R5` → `.Fhir.R4` and `Hl7.Fhir.R5` → `Hl7.Fhir.R4` for R4):
+The resulting `<PackageReference>` block in your `.csproj` / `.vbproj` should look like:
 
 ```xml
 <ItemGroup>
@@ -35,18 +30,17 @@ For an R5 consumer (swap `.Fhir.R5` → `.Fhir.R4` and `Hl7.Fhir.R5` → `Hl7.Fh
   <PackageReference Include="Tiro.Health.SmartWebMessaging.Fhir.R5" Version="1.0.0" />
   <PackageReference Include="Tiro.Health.FormFiller.WebView2" Version="1.0.0" />
   <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="1.0.0" />
-  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
 </ItemGroup>
 ```
 
-To opt out of Sentry telemetry, drop the `.Sentry` package and override `CreateTelemetrySink()` in your own `TiroFormViewer<,,>` subclass — see [Telemetry](#telemetry).
-
 Old-style `.vbproj` quirks worth knowing:
 
-- Set `<RestoreProjectStyle>PackageReference</RestoreProjectStyle>` in the `PropertyGroup`.
-- Set `<RuntimeIdentifiers>win</RuntimeIdentifiers>` because WebView2 and Sentry ship native binaries.
+- Set `<RestoreProjectStyle>PackageReference</RestoreProjectStyle>` in the `PropertyGroup` — without it the Manage NuGet Packages dialog falls back to `packages.config` and the install won't show up as `<PackageReference>`.
+- Set `<RuntimeIdentifiers>win</RuntimeIdentifiers>` because WebView2 ships native binaries (and so does Sentry, if you opt in).
 
-### 3. Enable auto-generated binding redirects
+> **Working against a local build of the harness?** Run `dotnet pack` and add `artifacts/packages/` as a custom package source via **Tools → NuGet Package Manager → Package Manager Settings → Package Sources**, then install from that source.
+
+### 2. Enable auto-generated binding redirects
 
 The `net48` packages pull modern `System.*` assemblies (`System.Text.Json` 9.x, `System.Memory`, `System.ComponentModel.Annotations`, etc.) whose versions don't match what's in the GAC, so binding redirects are mandatory. Don't hand-maintain them — let MSBuild emit them:
 
@@ -72,30 +66,27 @@ MSBuild walks the closure each build and writes redirects into `<YourApp>.exe.co
 
 > Library DLLs' own `app.config` files are ignored by the .NET Framework binding loader — only the executable's `.exe.config` is honored. The redirects have to come from the consuming project.
 
-### 4. Add the FormViewer to a form
+### 3. Add the FormViewer to a form
 
-Drop a `TiroFormViewerR5` (or `TiroFormViewerR4`) onto your form in the Designer, hook the `FormSubmitted` and `CloseApplication` events, and call `SetContextAsync(questionnaireCanonicalUrl, patient)` once the form has loaded. The full sample lives at `samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb`:
+Drop a `TiroFormViewerR5` (or `TiroFormViewerR4`) onto your form in the Designer (`Dock = Fill`) plus a Submit `Button` in a bottom panel, then wire three things:
+
+- `FormSubmitted` — the page emitted a QR. Inspect `e.Response`, optionally check `e.Outcome.Success` for validation errors, then close.
+- `CloseApplication` — the page emitted `ui.done` (e.g. its own Cancel button). Just close the form.
+- The Submit button's `Click` — `Await TiroFormViewer.SendFormRequestSubmitAsync()`. The page validates and round-trips back via `FormSubmitted`.
+
+The full sample lives at `samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb`:
 
 ```vb
 Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
 
 Public Class Form1
-    ' Flag that keeps track if form has been submitted
-    Private isFormSubmitted As Boolean = False
-
-    Public Sub New()
-        InitializeComponent()
-    End Sub
 
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
-        Await InitializeViewerAsync()
-    End Sub
 
-    Private Async Function InitializeViewerAsync() As System.Threading.Tasks.Task
-        Dim patient As Patient = New Patient() With {
+        Dim patient As New Patient() With {
             .Name = New List(Of HumanName) From {
                 New HumanName() With {
                     .Family = "da Vinci",
@@ -112,60 +103,42 @@ Public Class Form1
                 }
             }
         }
-        ' Hint: here it's possible to pass a previous QR as context
-        Await TiroFormViewer.SetContextAsync("http://templates.tiro.health/templates/2630b8675c214707b1f86d1fbd4deb87", patient)
-    End Function
 
-    ' ----------------------------------------------------
-    ' EVENT HANDLER FOR FORM SUBMISSION
-    ' ----------------------------------------------------
-    Private Sub HandleFormSubmitted(ByVal sender As Object, ByVal e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
+        Await TiroFormViewer.SetContextAsync(
+            "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699",
+            patient)
+    End Sub
 
-        ' Check if there are validation errors
+    Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click
+        Await TiroFormViewer.SendFormRequestSubmitAsync()
+    End Sub
+
+    Private Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
         If e.Outcome IsNot Nothing AndAlso e.Outcome.Success = False Then
-            Dim result As DialogResult = MessageBox.Show("There are validation errors. Do you want to close anyway?", "Validation Errors", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
-            If result = DialogResult.No Then
-                Return
-            End If
+            Dim result As DialogResult = MessageBox.Show(
+                "There are validation errors. Close anyway?",
+                "Validation Errors",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning)
+            If result = DialogResult.No Then Return
         End If
 
-        ' The FormSubmittedEventArgs contains the submitted FHIR resource
-        Dim response As QuestionnaireResponse = TryCast(e.Response, QuestionnaireResponse)
-
-        If response IsNot Nothing Then
-            Dim narrativeHtml As String = response.Text?.Div
-            If Not String.IsNullOrEmpty(narrativeHtml) Then
-                MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
-            Else
-                MessageBox.Show("Submitted QuestionnaireResponse has no narrative text.", "Submission Received")
-            End If
-        Else
-            MessageBox.Show("Form submission received, but resource was not a QuestionnaireResponse.", "Error")
+        Dim plainText As String = QuestionnaireResponseHelper.GetPlainTextNarrative(e.Response)
+        If Not String.IsNullOrEmpty(plainText) Then
+            MessageBox.Show(plainText, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
         End If
 
-        ' Close the form after handling submission
-        isFormSubmitted = True
         Me.Close()
     End Sub
 
-    ' ----------------------------------------------------
-    ' EVENT HANDLER FOR CLOSE APPLICATION (ui.done)
-    ' ----------------------------------------------------
-    Private Sub HandleCloseApplication(ByVal sender As Object, ByVal e As CloseApplicationEventArgs)
-        isFormSubmitted = True
-        MessageBox.Show("Closing.", "Closing")
+    Private Sub HandleCloseApplication(sender As Object, e As CloseApplicationEventArgs)
         Me.Close()
-    End Sub
-
-    Private Async Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles MyBase.FormClosing
-        If Not isFormSubmitted Then
-            e.Cancel = True
-            Await TiroFormViewer.SendFormRequestSubmitAsync()
-        End If
     End Sub
 
 End Class
 ```
+
+> **Want X-button → page-validate → keep-form-open-on-errors?** Hook `Form1_FormClosing`, set `e.Cancel = True`, `Await TiroFormViewer.SendFormRequestSubmitAsync()`, and use a flag to let the eventual `FormSubmitted` close re-enter cleanly. Skipped in this minimal sample — the EHR Shell sample shows the equivalent pattern (tab switch + explicit `Close session` button) for an embedded-in-tab integration.
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
@@ -184,15 +157,27 @@ For advanced flows that don't fit the auto-wired form-filler model, the lower-le
 
 ### Configuring FHIR endpoints from the host
 
-`<tiro-form-filler>` takes two endpoint attributes — `sdc-endpoint-address` (SDC FHIR server) and `data-endpoint-address` (FHIR data server). Configure both from the .NET host so the EHR process and the embedded JS hit the same servers; the host injects them via `AddScriptToExecuteOnDocumentCreatedAsync`, and the bridge applies them to every `<tiro-form-filler>` on the page before `tiro-web-sdk` reads attributes — overwriting any value baked into `index.html`.
+A `<tiro-form-filler>` typically talks to **two** FHIR servers:
+
+- **SDC server** — Tiro's Form SDK backend (see [docs.tiro.health → SDC Backend](https://docs.tiro.health/form-sdk/sdc-backend)). Serves the `Questionnaire` definitions, expands ValueSets for choice fields, and runs `$populate` (prefill), `$validate`, and `$generate-narrative`.
+- **Data server** — the FHIR endpoint that holds the **prepopulation data** the form fills itself from (`Patient`, `Observation`, `Condition`, etc.). The SDC backend's `$populate` operation reads from this server (via the `X-Data-Endpoint` header) to seed initial values.
+
+Configure both from the .NET host so the host process and the embedded JS hit the same servers; the host injects them via `AddScriptToExecuteOnDocumentCreatedAsync`, and the bridge applies them to every `<tiro-form-filler>` on the page before `tiro-web-sdk` reads attributes — overwriting any value baked into `index.html`.
 
 ```csharp
+// SDC backend — fetches the Questionnaire by canonical URL, expands ValueSets,
+// runs $populate / $validate / $generate-narrative.
 formViewer.SdcEndpointAddress  = "https://sdc.hospital.example/fhir/r5";
+
+// Data server — the FHIR endpoint with the prepopulation data. The SDC backend
+// reaches into it (via X-Data-Endpoint) when running $populate. Leave unset if
+// the form doesn't prefill from FHIR data.
 formViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5";
+
 // then await formViewer.SetContextAsync(...);
 ```
 
-`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box use works. `DataEndpointAddress` has no default — set it when the form needs to reach a data server. Either property must be set before `SetContextAsync` (the bridge reads them once, when the page is first wired).
+`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
 
 > **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
 
@@ -218,32 +203,6 @@ The default page is fine for demos but couples your UI to the library's release 
 
 The page contract stays the same: drop in a `<tiro-form-filler>` element (or call `window.SmartWebMessaging.{sendRequest, sendEvent, on}` directly for non-form-filler flows), and the auto-injected bridge handles the rest. The integrator owns the `tiro-web-sdk.iife.js` `<script>` tag.
 
-## Using the handler without the WinForms control
-
-The C# / netstandard2.0 path, for hosts that aren't WebView2-based:
-
-```csharp
-using Tiro.Health.SmartWebMessaging.Fhir.R5;
-
-var handler = new SmartMessageHandler();
-handler.SendMessage = json => YourTransport.PostAsync(json);  // fire-and-forget; returns Task
-
-handler.HandshakeReceived += async (_, _) =>
-{
-    await handler.SendSdcDisplayQuestionnaireAsync(
-        questionnaireCanonicalUrl: "http://example.org/fhir/Questionnaire/my-form",
-        patient: patient);
-};
-
-handler.FormSubmitted += (_, e) =>
-{
-    Console.WriteLine(e.Response.ToJson());
-};
-
-// Wire your transport's inbound channel:
-yourTransport.MessageReceived += json => handler.HandleMessage(json);
-```
-
 ## Telemetry
 
 The core `Tiro.Health.FormFiller.WebView2` package has **no** telemetry dependency. Telemetry is plugged in via `ITelemetrySink`:
@@ -257,18 +216,32 @@ public interface ITelemetrySink : IDisposable
 }
 ```
 
-The default in the FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) is `SentryTelemetrySink` from the `Tiro.Health.FormFiller.WebView2.Sentry` package. It produces:
+The FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) default to `NullTelemetrySink` (no-op): the `.Sentry` adapter is **not** a transitive dependency, so by default no Sentry NuGet, no SDK init, no `Sentry.init` on the embedded page.
+
+To **opt in to Sentry telemetry**, add the adapter package and pass `new SentryTelemetrySink()` to the viewer's ctor:
+
+```xml
+<PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
+```
+
+```csharp
+var viewer = new TiroFormViewerR5(new SentryTelemetrySink());
+```
+
+The parameterless ctor uses **Tiro's hosted DSNs** — host telemetry to `tirohealth/dotnet-winforms`, embedded-page telemetry to `tirohealth/javascript` (same Sentry org, unified trace view). This is the **recommended** path during integration: the Tiro team can see your form sessions and help diagnose issues quickly. The defaults are designed to be safe to ship — **no FHIR payloads are attached to spans**, so PHI does not flow to Sentry. What you do get:
 
 - **One Sentry transaction per round-trip message** (e.g. `sdc.displayQuestionnaire`, `form.submitted`) — actual request/response latency, not just the `PostMessage` cost
 - **One unified trace per form session** spanning both .NET and JS Sentry projects (the host injects its `traceId` into the embedded page; the JS Sentry SDK continues that trace)
-- **`form.session.id` tag** on every transaction for cross-project correlation
+- **`form.session.id` tag** + **`messageType` tag** on every transaction for cross-project correlation
+- **`questionnaire_url` tag** on `sdc.displayQuestionnaire` — the canonical URL of the form, not patient data
 - **Lifecycle breadcrumbs** for construction / handshake / dispose
 - **Outcome-aware status** on the `form.submitted` transaction (Sentry `Ok` on success, `InvalidArgument` on validation failures)
+- **Exceptions** captured via `SentrySdk.CaptureException` — the .NET-side exception type, message, and stack trace (these typically don't carry PHI; if your application code surfaces patient identifiers in exception messages, you'd want to scrub them before they bubble up)
 - **Release tag** auto-derived from the FormFiller assembly's `AssemblyInformationalVersion` (`Tiro.Health.FormFiller.WebView2@<semver>+<commit>`)
 
-To **opt out** of telemetry entirely, override `CreateTelemetrySink()` in your own `TiroFormViewer<,,>` subclass and return `NullTelemetrySink.Instance` — your closed binding never references the Sentry package.
+To **redirect to your own Sentry project(s)** instead, construct `new SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) and feed it to the same ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page).
 
-To **redirect to your own Sentry project(s)**, construct a `SentryTelemetrySink(dsn, embeddedDsn, environment, release)` and pass it via the `TiroFormViewer<,,>` DI ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page) — the page itself never hardcodes a DSN.
+For any other backend, implement `ITelemetrySink` yourself and pass it the same way.
 
 ## Building
 
@@ -307,8 +280,9 @@ net-integration-harness/
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
 │   └── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
 ├── samples/
-│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form demo (R4)
-│   └── Tiro.Health.FormFiller.WebView2.LauncherSample/ # Patient-list launcher → questionnaire dialog (R5)
+│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form, single-patient demo (R4)
+│   └── Tiro.Health.FormFiller.WebView2.EhrShellSample/ # Dummy EHR shell — patient/encounter/template selection,
+│                                                       # tabbed viewer, in-memory QR persistence, custom index.html (R5)
 └── tests/
     └── Tiro.Health.SmartWebMessaging.Tests/        # MSTest unit tests (25 tests)
 ```
@@ -347,7 +321,7 @@ Designer-friendly closed bindings of `TiroFormViewer<,,>`.
 
 - **Targets**: `net48`
 - **Key type**: `TiroFormViewerR5` / `TiroFormViewerR4` (sealed) — drop-in WinForms control
-- **Defaults**: telemetry → `SentryTelemetrySink` (Tiro DSN), so existing consumers get observability for free
+- **Defaults**: telemetry → `NullTelemetrySink` (no-op). Opt in to Sentry by referencing `Tiro.Health.FormFiller.WebView2.Sentry` and passing `new SentryTelemetrySink()` to the ctor — see [Telemetry](#telemetry)
 
 ### `Tiro.Health.FormFiller.WebView2.Sentry`
 Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you want the Sentry behaviour.
@@ -356,12 +330,17 @@ Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you wan
 - **Key type**: `SentryTelemetrySink` — owns two DSNs (one for the .NET host process, one injected into the embedded page) plus environment and release. Ctor overloads let consumers override either DSN, the Sentry options, or the entire SDK init.
 - Auto-detects release as `Tiro.Health.FormFiller.WebView2@<version>+<commit>` from the FormFiller assembly's `AssemblyInformationalVersion` (so traces deep-link to source via Sentry's release pipeline if you upload symbols)
 
-### `Tiro.Health.FormFiller.WebView2.Sample` / `LauncherSample`
+### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
 WinForms demos.
 
-- `Sample` — single-form demo bound to FHIR **R4**
-- `LauncherSample` — patient-list launcher that opens the questionnaire as a dialog, demonstrates running multiple form sessions in one process; bound to FHIR **R5**
-- Both: `.NET 4.8` (VB.NET, old-style project format)
+- **`Sample`** — single-form, single-patient demo bound to FHIR **R4**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence.
+- **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
+  - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
+  - **Patient / encounter / template selection** — three hardcoded patients with their own encounters; three canonical templates verified live on the default SDC server.
+  - **Tabbed embedding** — the form viewer lives in a tab next to a "Patient details" tab. Switching tabs while filling a form *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit "Close session" button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
+  - **In-memory QR persistence** — submitted `QuestionnaireResponse`s are stored keyed by `(patient, encounter, template)`; relaunching the same combination passes the saved QR as `initialResponse` so the user resumes where they left off.
+  - **Custom `index.html`** — bundles its own `WebContent/index.html` and points `WebContentFolder` at it, instead of the library's default banner page. See [Shipping your own index.html](#shipping-your-own-indexhtml).
+- Both: `.NET 4.8` (VB.NET, old-style project format).
 
 ### `Tiro.Health.SmartWebMessaging.Tests`
 - **Target**: `net8.0`

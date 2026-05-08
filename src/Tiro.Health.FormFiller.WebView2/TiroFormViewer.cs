@@ -174,6 +174,24 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
+        /// Opt-in telemetry ctor: uses <see cref="CreateBrowser"/> and <see cref="CreateMessageHandler"/>
+        /// like the parameterless ctor, but plugs in the supplied <paramref name="telemetry"/> sink
+        /// instead of <see cref="CreateTelemetrySink"/>. Pass <c>null</c> to fall back to
+        /// <see cref="CreateTelemetrySink"/>. The viewer takes ownership of the sink and disposes it.
+        /// </summary>
+        protected TiroFormViewer(ITelemetrySink telemetry)
+        {
+            InitializeComponent();
+            if (System.ComponentModel.LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
+                return;
+            _browser = CreateBrowser();
+            _smartWebMessageHandler = CreateMessageHandler();
+            _telemetry = telemetry ?? CreateTelemetrySink();
+            _ownsTelemetrySink = true;
+            InitializeRuntime();
+        }
+
+        /// <summary>
         /// DI ctor for tests and advanced consumers. Bypasses the factory methods —
         /// dependencies are injected directly. Not used by the designer. The injected
         /// <paramref name="telemetry"/> sink (if any) is NOT disposed by this control;
@@ -360,7 +378,13 @@ namespace Tiro.Health.FormFiller.WebView2
             var messageType = JsonProbe.ExtractStringField(inboundJson, "messageType") ?? "unknown";
             var transaction = _session?.StartTransaction(messageType, "swm.receive");
             transaction?.SetTag("messageType", messageType);
-            transaction?.SetExtra("message", inboundJson);
+            // Deliberately NOT attaching the raw message JSON here. SMART Web Messaging
+            // payloads carry FHIR resources (Patient in launch context, full
+            // QuestionnaireResponse on form.submitted, etc.); putting them on a Sentry
+            // span would exfiltrate PHI to whichever Sentry project the sink is wired
+            // up to. messageType + tracing + timing + exceptions stay enough to diagnose
+            // the vast majority of integration issues; if you need payload capture for
+            // dev work, do it in a custom ITelemetrySink in your own (non-shared) project.
             _currentReceiveTransaction = transaction;
 
             try
@@ -370,7 +394,6 @@ namespace Tiro.Health.FormFiller.WebView2
                 if (!string.IsNullOrEmpty(responseJson) && State != TiroFormViewerState.Disposed)
                 {
                     var responseSpan = transaction?.StartChild("swm.send", "response");
-                    responseSpan?.SetExtra("message", responseJson);
                     responseSpan?.Finish(TelemetrySpanStatus.Ok);
                     _browser.PostMessage(responseJson);
                 }
@@ -449,7 +472,7 @@ namespace Tiro.Health.FormFiller.WebView2
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
-            TQR intitialResponse = default,
+            TQR initialResponse = default,
             CancellationToken cancellationToken = default)
         {
             GuardCanSetContext();
@@ -471,7 +494,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
                     await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
                         questionnaireCanonicalUrl: questionnaireCanonicalUrl,
-                        questionnaireResponse: intitialResponse,
+                        questionnaireResponse: initialResponse,
                         patient: patient,
                         encounter: encounter,
                         author: author,

@@ -2,30 +2,17 @@ Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
 
 Public Class Form1
-    ' Flag that keeps track if form has been submitted
-    Private isFormSubmitted As Boolean = False
-
-    Public Sub New()
-        InitializeComponent()
-    End Sub
 
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-        ' SdcEndpointAddress defaults to TiroFormViewerR4.DefaultSdcEndpointAddress; override
-        ' before SetContextAsync if you point at a different SDC server. DataEndpointAddress
-        ' is unset by default — set it (same timing) when the form needs to reach a data
-        ' server too.
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
-        Await InitializeViewerAsync()
-    End Sub
 
-    Private Async Function InitializeViewerAsync() As System.Threading.Tasks.Task
-        Dim patient As Patient = New Patient() With {
+        Dim patient As New Patient() With {
             .Name = New List(Of HumanName) From {
                 New HumanName() With {
                     .Family = "da Vinci",
                     .Given = New List(Of String) From {"Leonardo"},
-                    .Text = "Leonardo da Vinci2"
+                    .Text = "Leonardo da Vinci"
                 }
             },
             .BirthDate = "1452-04-15",
@@ -37,63 +24,36 @@ Public Class Form1
                 }
             }
         }
-        ' Hint: here it's possible to pass a previous QR as context
-        Await TiroFormViewer.SetContextAsync("http://templates.tiro.health/templates/2630b8675c214707b1f86d1fbd4deb87", patient)
-    End Function
 
-    ' ----------------------------------------------------
-    ' EVENT HANDLER FOR FORM SUBMISSION
-    ' ----------------------------------------------------
-    Private Sub HandleFormSubmitted(ByVal sender As Object, ByVal e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
+        Await TiroFormViewer.SetContextAsync(
+            "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699",
+            patient)
+    End Sub
 
-        ' Check if there are validation errors
+    Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click
+        Await TiroFormViewer.SendFormRequestSubmitAsync()
+    End Sub
+
+    Private Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
         If e.Outcome IsNot Nothing AndAlso e.Outcome.Success = False Then
-            Dim result As DialogResult = MessageBox.Show("There are validation errors. Do you want to close anyway?", "Validation Errors", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
-            If result = DialogResult.No Then
-                Return
-            End If
+            Dim result As DialogResult = MessageBox.Show(
+                "There are validation errors. Close anyway?",
+                "Validation Errors",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning)
+            If result = DialogResult.No Then Return
         End If
 
-        ' The FormSubmittedEventArgs contains the submitted FHIR resource
-        Dim response As QuestionnaireResponse = TryCast(e.Response, QuestionnaireResponse)
-
-        If response IsNot Nothing Then
-
-            ' Access the narrative property
-            Dim narrativeHtml As String = response.Text?.Div
-
-            ' Check if the narrative is present
-            If Not String.IsNullOrEmpty(narrativeHtml) Then
-                ' Display the narrative in a simple message box (or a rich text box)
-                MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
-            Else
-                MessageBox.Show("Submitted QuestionnaireResponse has no narrative text.", "Submission Received")
-            End If
-
-        Else
-            MessageBox.Show("Form submission received, but resource was not a QuestionnaireResponse.", "Error")
+        Dim plainText As String = QuestionnaireResponseHelper.GetPlainTextNarrative(e.Response)
+        If Not String.IsNullOrEmpty(plainText) Then
+            MessageBox.Show(plainText, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
         End If
 
-        ' Close the form after handling submission
-        isFormSubmitted = True
-        Me.Close()
-
-    End Sub
-
-    ' ----------------------------------------------------
-    ' EVENT HANDLER FOR CLOSE APPLICATION (ui.done)
-    ' ----------------------------------------------------
-    Private Sub HandleCloseApplication(ByVal sender As Object, ByVal e As CloseApplicationEventArgs)
-        isFormSubmitted = True
-        MessageBox.Show("Closing.", "Closing")
         Me.Close()
     End Sub
 
-    Private Async Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles MyBase.FormClosing
-        If Not isFormSubmitted Then
-            e.Cancel = True
-            Await TiroFormViewer.SendFormRequestSubmitAsync()
-        End If
+    Private Sub HandleCloseApplication(sender As Object, e As CloseApplicationEventArgs)
+        Me.Close()
     End Sub
 
 End Class

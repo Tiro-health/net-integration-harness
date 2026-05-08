@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EHR Shell — viewing report (read-only)</title>
+    <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer></script>
+    <style>
+        html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; display: flex; flex-direction: column; }
+        header { padding: 8px 16px; background: #fef3c7; border-bottom: 1px solid #fbbf24; font-size: 0.85rem; color: #92400e; }
+        header code { background: rgba(146, 64, 14, 0.12); padding: 1px 4px; border-radius: 3px; }
+        tiro-form-filler { display: block; flex: 1; }
+    </style>
+</head>
+<body>
+    <header>Read-only consultation page shipped by the EHR Shell sample (<code>WebContent/Consultation/</code>). The <code>read-only</code> attribute is baked into the form-filler element.</header>
+    <tiro-form-filler id="form-filler" read-only></tiro-form-filler>
+</body>
+</html>

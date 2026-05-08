@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EHR Shell — embedded form</title>
+    <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer></script>
+    <style>
+        html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; display: flex; flex-direction: column; }
+        header { padding: 8px 16px; background: #f1f5f9; border-bottom: 1px solid #cbd5e1; font-size: 0.85rem; color: #334155; }
+        header code { background: #e2e8f0; padding: 1px 4px; border-radius: 3px; }
+        tiro-form-filler { display: block; flex: 1; }
+    </style>
+</head>
+<body>
+    <header>Editable form page shipped by the EHR Shell sample (<code>WebContent/Form/</code>).</header>
+    <tiro-form-filler id="form-filler"></tiro-form-filler>
+</body>
+</html>
