@@ -28,9 +28,15 @@ Partial Class EhrShell
         PatientList = New ListBox()
         MainTabs = New TabControl()
         DetailsTab = New TabPage()
-        ReportsHeaderLabel = New Label()
+        ReportsPanel = New Panel()
         ReportsList = New ListBox()
+        ReportsHeaderRow = New Panel()
+        ReportsHeaderLabel = New Label()
         NewReportButton = New Button()
+        PreviewPanel = New Panel()
+        NarrativePreviewBox = New RichTextBox()
+        NarrativePreviewLabel = New Label()
+        HeaderPanel = New Panel()
         PatientHeaderLabel = New Label()
         PatientDetailsLabel = New Label()
         FormTab = New TabPage()
@@ -44,6 +50,10 @@ Partial Class EhrShell
         PatientsGroup.SuspendLayout()
         MainTabs.SuspendLayout()
         DetailsTab.SuspendLayout()
+        ReportsPanel.SuspendLayout()
+        ReportsHeaderRow.SuspendLayout()
+        PreviewPanel.SuspendLayout()
+        HeaderPanel.SuspendLayout()
         FormTab.SuspendLayout()
         FormFooterPanel.SuspendLayout()
         SuspendLayout()
@@ -66,9 +76,9 @@ Partial Class EhrShell
         ' LeftPanel
         '
         ' Two stacked sections inside the left strip: Patients (top, fill remaining)
-        ' and Encounters (bottom, fixed 240px). Add order: PatientsGroup first so it
-        ' docks LAST and gets the leftover Fill height; EncountersGroup second so it
-        ' docks FIRST and claims its 240px bottom strip.
+        ' and Encounters (bottom, fixed 240px). Add order matters for docking —
+        ' PatientsGroup added first so it docks LAST (Fill); EncountersGroup
+        ' added second so it docks FIRST (claims its 240px bottom strip).
         LeftPanel.Controls.Add(PatientsGroup)
         LeftPanel.Controls.Add(EncountersGroup)
         LeftPanel.Dock = DockStyle.Left
@@ -151,11 +161,13 @@ Partial Class EhrShell
         '
         ' DetailsTab
         '
-        DetailsTab.Controls.Add(ReportsList)
-        DetailsTab.Controls.Add(ReportsHeaderLabel)
-        DetailsTab.Controls.Add(NewReportButton)
-        DetailsTab.Controls.Add(PatientDetailsLabel)
-        DetailsTab.Controls.Add(PatientHeaderLabel)
+        ' Three stacked Dock-based regions: HeaderPanel (Top), PreviewPanel
+        ' (Bottom), ReportsPanel (Fill). Add order is reverse of the visual
+        ' layering: Fill first (docks last, takes leftover middle), Bottom
+        ' next (claims its strip), Top last (claims top strip first).
+        DetailsTab.Controls.Add(ReportsPanel)
+        DetailsTab.Controls.Add(PreviewPanel)
+        DetailsTab.Controls.Add(HeaderPanel)
         DetailsTab.Location = New Point(4, 24)
         DetailsTab.Name = "DetailsTab"
         DetailsTab.Padding = New Padding(20)
@@ -164,11 +176,21 @@ Partial Class EhrShell
         DetailsTab.Text = "Patient details"
         DetailsTab.UseVisualStyleBackColor = True
         '
+        ' HeaderPanel
+        '
+        HeaderPanel.Controls.Add(PatientDetailsLabel)
+        HeaderPanel.Controls.Add(PatientHeaderLabel)
+        HeaderPanel.Dock = DockStyle.Top
+        HeaderPanel.Location = New Point(20, 20)
+        HeaderPanel.Name = "HeaderPanel"
+        HeaderPanel.Size = New Size(792, 60)
+        HeaderPanel.TabIndex = 0
+        '
         ' PatientHeaderLabel
         '
         PatientHeaderLabel.AutoSize = True
         PatientHeaderLabel.Font = New Font("Segoe UI Semibold", 12.0F, FontStyle.Bold)
-        PatientHeaderLabel.Location = New Point(24, 24)
+        PatientHeaderLabel.Location = New Point(4, 4)
         PatientHeaderLabel.Name = "PatientHeaderLabel"
         PatientHeaderLabel.Text = "(no patient selected)"
         '
@@ -176,39 +198,104 @@ Partial Class EhrShell
         '
         PatientDetailsLabel.AutoSize = True
         PatientDetailsLabel.ForeColor = Color.Gray
-        PatientDetailsLabel.Location = New Point(24, 54)
+        PatientDetailsLabel.Location = New Point(4, 32)
         PatientDetailsLabel.Name = "PatientDetailsLabel"
         PatientDetailsLabel.Text = ""
+        '
+        ' PreviewPanel
+        '
+        PreviewPanel.Controls.Add(NarrativePreviewBox)
+        PreviewPanel.Controls.Add(NarrativePreviewLabel)
+        PreviewPanel.Dock = DockStyle.Bottom
+        PreviewPanel.Location = New Point(20, 410)
+        PreviewPanel.Name = "PreviewPanel"
+        PreviewPanel.Padding = New Padding(0, 8, 0, 0)
+        PreviewPanel.Size = New Size(792, 220)
+        PreviewPanel.TabIndex = 1
+        '
+        ' NarrativePreviewLabel
+        '
+        NarrativePreviewLabel.AutoSize = True
+        NarrativePreviewLabel.Font = New Font("Segoe UI Semibold", 10.0F, FontStyle.Bold)
+        NarrativePreviewLabel.Location = New Point(4, 12)
+        NarrativePreviewLabel.Name = "NarrativePreviewLabel"
+        NarrativePreviewLabel.Text = "Selected report — narrative"
+        '
+        ' NarrativePreviewBox
+        '
+        ' RichTextBox so we can render the RTF narrative (when present) via the
+        ' Rtf property; plain text is also supported via the Text property when
+        ' RTF isn't available. ReadOnly + DetectUrls=False to keep it as a pure
+        ' renderer (no editing, no URL auto-linking surprises).
+        NarrativePreviewBox.Anchor = AnchorStyles.Top Or AnchorStyles.Bottom Or AnchorStyles.Left Or AnchorStyles.Right
+        NarrativePreviewBox.BackColor = Color.FromArgb(248, 250, 252)
+        NarrativePreviewBox.BorderStyle = BorderStyle.FixedSingle
+        NarrativePreviewBox.DetectUrls = False
+        NarrativePreviewBox.Font = New Font("Segoe UI", 9.0F)
+        NarrativePreviewBox.Location = New Point(4, 36)
+        NarrativePreviewBox.Name = "NarrativePreviewBox"
+        NarrativePreviewBox.ReadOnly = True
+        NarrativePreviewBox.ScrollBars = RichTextBoxScrollBars.Vertical
+        NarrativePreviewBox.Size = New Size(784, 180)
+        NarrativePreviewBox.TabIndex = 0
+        NarrativePreviewBox.WordWrap = True
+        ' RTF carries its own font sizes (typically authored at 16–20pt for print)
+        ' so the control's Font property is ignored. Scale everything down uniformly
+        ' so a tighter on-screen rendering doesn't dominate the preview pane.
+        NarrativePreviewBox.ZoomFactor = 0.75F
+        '
+        ' ReportsPanel
+        '
+        ReportsPanel.Controls.Add(ReportsList)
+        ReportsPanel.Controls.Add(ReportsHeaderRow)
+        ReportsPanel.Dock = DockStyle.Fill
+        ReportsPanel.Location = New Point(20, 80)
+        ReportsPanel.Name = "ReportsPanel"
+        ReportsPanel.Padding = New Padding(0, 8, 0, 8)
+        ReportsPanel.Size = New Size(792, 330)
+        ReportsPanel.TabIndex = 2
+        '
+        ' ReportsHeaderRow
+        '
+        ' Top strip with Reports label on the left and "+ New report" button on
+        ' the right. Always visible regardless of how the Reports list is sized.
+        ReportsHeaderRow.Controls.Add(NewReportButton)
+        ReportsHeaderRow.Controls.Add(ReportsHeaderLabel)
+        ReportsHeaderRow.Dock = DockStyle.Top
+        ReportsHeaderRow.Location = New Point(0, 8)
+        ReportsHeaderRow.Name = "ReportsHeaderRow"
+        ReportsHeaderRow.Size = New Size(792, 40)
+        ReportsHeaderRow.TabIndex = 0
         '
         ' ReportsHeaderLabel
         '
         ReportsHeaderLabel.AutoSize = True
         ReportsHeaderLabel.Font = New Font("Segoe UI Semibold", 10.0F, FontStyle.Bold)
-        ReportsHeaderLabel.Location = New Point(24, 100)
+        ReportsHeaderLabel.Location = New Point(4, 10)
         ReportsHeaderLabel.Name = "ReportsHeaderLabel"
         ReportsHeaderLabel.Text = "Reports"
         '
+        ' NewReportButton
+        '
+        NewReportButton.Anchor = AnchorStyles.Top Or AnchorStyles.Right
+        NewReportButton.Enabled = False
+        NewReportButton.Location = New Point(648, 5)
+        NewReportButton.Name = "NewReportButton"
+        NewReportButton.Size = New Size(140, 30)
+        NewReportButton.TabIndex = 0
+        NewReportButton.Text = "+ New report"
+        NewReportButton.UseVisualStyleBackColor = True
+        '
         ' ReportsList
         '
-        ReportsList.Anchor = AnchorStyles.Top Or AnchorStyles.Bottom Or AnchorStyles.Left Or AnchorStyles.Right
+        ReportsList.Dock = DockStyle.Fill
         ReportsList.Font = New Font("Segoe UI", 9.0F)
         ReportsList.IntegralHeight = False
         ReportsList.ItemHeight = 18
-        ReportsList.Location = New Point(24, 130)
+        ReportsList.Location = New Point(0, 48)
         ReportsList.Name = "ReportsList"
-        ReportsList.Size = New Size(784, 460)
-        ReportsList.TabIndex = 0
-        '
-        ' NewReportButton
-        '
-        NewReportButton.Anchor = AnchorStyles.Bottom Or AnchorStyles.Left
-        NewReportButton.Enabled = False
-        NewReportButton.Location = New Point(24, 605)
-        NewReportButton.Name = "NewReportButton"
-        NewReportButton.Size = New Size(140, 30)
-        NewReportButton.TabIndex = 1
-        NewReportButton.Text = "+ New report"
-        NewReportButton.UseVisualStyleBackColor = True
+        ReportsList.Size = New Size(792, 274)
+        ReportsList.TabIndex = 1
         '
         ' FormTab
         '
@@ -287,7 +374,13 @@ Partial Class EhrShell
         PatientsGroup.PerformLayout()
         MainTabs.ResumeLayout(False)
         DetailsTab.ResumeLayout(False)
-        DetailsTab.PerformLayout()
+        ReportsPanel.ResumeLayout(False)
+        ReportsHeaderRow.ResumeLayout(False)
+        ReportsHeaderRow.PerformLayout()
+        PreviewPanel.ResumeLayout(False)
+        PreviewPanel.PerformLayout()
+        HeaderPanel.ResumeLayout(False)
+        HeaderPanel.PerformLayout()
         FormTab.ResumeLayout(False)
         FormFooterPanel.ResumeLayout(False)
         ResumeLayout(False)
@@ -305,11 +398,17 @@ Partial Class EhrShell
     Friend WithEvents PatientList As ListBox
     Friend WithEvents MainTabs As TabControl
     Friend WithEvents DetailsTab As TabPage
+    Friend WithEvents HeaderPanel As Panel
     Friend WithEvents PatientHeaderLabel As Label
     Friend WithEvents PatientDetailsLabel As Label
+    Friend WithEvents ReportsPanel As Panel
+    Friend WithEvents ReportsHeaderRow As Panel
     Friend WithEvents ReportsHeaderLabel As Label
-    Friend WithEvents ReportsList As ListBox
     Friend WithEvents NewReportButton As Button
+    Friend WithEvents ReportsList As ListBox
+    Friend WithEvents PreviewPanel As Panel
+    Friend WithEvents NarrativePreviewLabel As Label
+    Friend WithEvents NarrativePreviewBox As RichTextBox
     Friend WithEvents FormTab As TabPage
     Friend WithEvents ContextLabel As Label
     Friend WithEvents FormFooterPanel As Panel

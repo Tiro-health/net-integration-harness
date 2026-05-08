@@ -96,6 +96,7 @@
     <Compile Include="Program.vb" />
     <Compile Include="DemoData.vb" />
     <Compile Include="ResponseStore.vb" />
+    <Compile Include="QuestionnaireResponseHelper.vb" />
     <Compile Include="EhrShell.vb">
       <SubType>Form</SubType>
     </Compile>

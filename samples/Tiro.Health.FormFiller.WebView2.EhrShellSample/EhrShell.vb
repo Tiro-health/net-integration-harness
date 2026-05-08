@@ -76,6 +76,7 @@ Public Class EhrShell
     Private Sub ReloadReports()
         ReportsList.Items.Clear()
         _reportsBacking.Clear()
+        NarrativePreviewBox.Clear()
         Dim pr = SelectedPatientRecord()
         If pr Is Nothing Then Return
         For Each entry In _store.GetReportsFor(pr.Patient)
@@ -88,6 +89,37 @@ Public Class EhrShell
         Else
             ReportsList.Enabled = True
         End If
+    End Sub
+
+    Private Sub ReportsList_SelectedIndexChanged(sender As Object, e As EventArgs) Handles ReportsList.SelectedIndexChanged
+        ' Single-click: render the selected report's narrative in the read-only
+        ' preview pane. Works regardless of session state — peeking at an old
+        ' report doesn't disturb a live form session in the Form tab.
+        '
+        ' Prefer the RTF narrative (richer formatting); fall back to the plain
+        ' text alternative; show a placeholder if neither is available.
+        If ReportsList.SelectedIndex < 0 OrElse ReportsList.SelectedIndex >= _reportsBacking.Count Then
+            NarrativePreviewBox.Clear()
+            Return
+        End If
+
+        Dim entry = _reportsBacking(ReportsList.SelectedIndex)
+        Dim rtf = QuestionnaireResponseHelper.GetRtfNarrative(entry.Response)
+        If Not String.IsNullOrEmpty(rtf) Then
+            Try
+                NarrativePreviewBox.Rtf = rtf
+                ' Re-apply the zoom factor — assigning Rtf can reset it.
+                NarrativePreviewBox.ZoomFactor = 0.75F
+                Return
+            Catch ex As ArgumentException
+                ' Malformed RTF — fall through to the plain-text path.
+            End Try
+        End If
+
+        Dim plain = QuestionnaireResponseHelper.GetPlainTextNarrative(entry.Response)
+        NarrativePreviewBox.Text = If(String.IsNullOrEmpty(plain),
+                                      "(no narrative available — the form may not have produced one)",
+                                      plain)
     End Sub
 
     Private Sub UpdateNewReportButton()
