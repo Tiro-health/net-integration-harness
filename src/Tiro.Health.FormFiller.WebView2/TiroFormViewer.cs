@@ -378,7 +378,13 @@ namespace Tiro.Health.FormFiller.WebView2
             var messageType = JsonProbe.ExtractStringField(inboundJson, "messageType") ?? "unknown";
             var transaction = _session?.StartTransaction(messageType, "swm.receive");
             transaction?.SetTag("messageType", messageType);
-            transaction?.SetExtra("message", inboundJson);
+            // Deliberately NOT attaching the raw message JSON here. SMART Web Messaging
+            // payloads carry FHIR resources (Patient in launch context, full
+            // QuestionnaireResponse on form.submitted, etc.); putting them on a Sentry
+            // span would exfiltrate PHI to whichever Sentry project the sink is wired
+            // up to. messageType + tracing + timing + exceptions stay enough to diagnose
+            // the vast majority of integration issues; if you need payload capture for
+            // dev work, do it in a custom ITelemetrySink in your own (non-shared) project.
             _currentReceiveTransaction = transaction;
 
             try
@@ -388,7 +394,6 @@ namespace Tiro.Health.FormFiller.WebView2
                 if (!string.IsNullOrEmpty(responseJson) && State != TiroFormViewerState.Disposed)
                 {
                     var responseSpan = transaction?.StartChild("swm.send", "response");
-                    responseSpan?.SetExtra("message", responseJson);
                     responseSpan?.Finish(TelemetrySpanStatus.Ok);
                     _browser.PostMessage(responseJson);
                 }

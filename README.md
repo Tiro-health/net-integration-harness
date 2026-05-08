@@ -203,32 +203,6 @@ The default page is fine for demos but couples your UI to the library's release 
 
 The page contract stays the same: drop in a `<tiro-form-filler>` element (or call `window.SmartWebMessaging.{sendRequest, sendEvent, on}` directly for non-form-filler flows), and the auto-injected bridge handles the rest. The integrator owns the `tiro-web-sdk.iife.js` `<script>` tag.
 
-## Using the handler without the WinForms control
-
-The C# / netstandard2.0 path, for hosts that aren't WebView2-based:
-
-```csharp
-using Tiro.Health.SmartWebMessaging.Fhir.R5;
-
-var handler = new SmartMessageHandler();
-handler.SendMessage = json => YourTransport.PostAsync(json);  // fire-and-forget; returns Task
-
-handler.HandshakeReceived += async (_, _) =>
-{
-    await handler.SendSdcDisplayQuestionnaireAsync(
-        questionnaireCanonicalUrl: "http://example.org/fhir/Questionnaire/my-form",
-        patient: patient);
-};
-
-handler.FormSubmitted += (_, e) =>
-{
-    Console.WriteLine(e.Response.ToJson());
-};
-
-// Wire your transport's inbound channel:
-yourTransport.MessageReceived += json => handler.HandleMessage(json);
-```
-
 ## Telemetry
 
 The core `Tiro.Health.FormFiller.WebView2` package has **no** telemetry dependency. Telemetry is plugged in via `ITelemetrySink`:
@@ -254,16 +228,18 @@ To **opt in to Sentry telemetry**, add the adapter package and pass `new SentryT
 var viewer = new TiroFormViewerR5(new SentryTelemetrySink());
 ```
 
-You'll then get:
+The parameterless ctor uses **Tiro's hosted DSNs** — host telemetry to `tirohealth/dotnet-winforms`, embedded-page telemetry to `tirohealth/javascript` (same Sentry org, unified trace view). This is the **recommended** path during integration: the Tiro team can see your form sessions and help diagnose issues quickly. The defaults are designed to be safe to ship — **no FHIR payloads are attached to spans**, so PHI does not flow to Sentry. What you do get:
 
 - **One Sentry transaction per round-trip message** (e.g. `sdc.displayQuestionnaire`, `form.submitted`) — actual request/response latency, not just the `PostMessage` cost
 - **One unified trace per form session** spanning both .NET and JS Sentry projects (the host injects its `traceId` into the embedded page; the JS Sentry SDK continues that trace)
-- **`form.session.id` tag** on every transaction for cross-project correlation
+- **`form.session.id` tag** + **`messageType` tag** on every transaction for cross-project correlation
+- **`questionnaire_url` tag** on `sdc.displayQuestionnaire` — the canonical URL of the form, not patient data
 - **Lifecycle breadcrumbs** for construction / handshake / dispose
 - **Outcome-aware status** on the `form.submitted` transaction (Sentry `Ok` on success, `InvalidArgument` on validation failures)
+- **Exceptions** captured via `SentrySdk.CaptureException` — the .NET-side exception type, message, and stack trace (these typically don't carry PHI; if your application code surfaces patient identifiers in exception messages, you'd want to scrub them before they bubble up)
 - **Release tag** auto-derived from the FormFiller assembly's `AssemblyInformationalVersion` (`Tiro.Health.FormFiller.WebView2@<semver>+<commit>`)
 
-To **redirect to your own Sentry project(s)**, construct `new SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) and feed it to the same ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page) — the page itself never hardcodes a DSN.
+To **redirect to your own Sentry project(s)** instead, construct `new SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) and feed it to the same ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page).
 
 For any other backend, implement `ITelemetrySink` yourself and pass it the same way.
 
