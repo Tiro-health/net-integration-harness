@@ -160,52 +160,13 @@ End Class
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
-## The embedded page
+## Shipping your own index.html
 
-The host injects a JS bridge into every page before any page script runs. Your `index.html` therefore stays UI-only — no Sentry CDN tag, no SMART Web Messaging module, no WebView2 transport setup. The library ships a working default `index.html` so the samples run out-of-the-box; production integrators should ship their own (see [Shipping your own index.html](#shipping-your-own-indexhtml) below).
-
-Two seams the page interacts with:
-
-1. **`<tiro-form-filler>`** (from `tiro-web-sdk.iife.js`) — auto-wired by the bridge: questionnaires arrive via the `questionnaire` attribute, user submissions come back via the `tiro-submit` event, and the bridge takes care of marshalling them onto the protocol.
-2. **`window.tiro.cancel()`** — call from a Cancel button to send `ui.done` to the host.
-
-The bridge dispatches `CustomEvent`s on `document` for status hooks: `tiro-connected`, `tiro-disconnected`, `tiro-submitted`, `tiro-submit-error`, `tiro-cancelled`. Listen if you want a status bar; ignore if you don't.
-
-For advanced flows that don't fit the auto-wired form-filler model, the lower-level API is still exposed at `window.SmartWebMessaging.{sendRequest, sendEvent, on}`.
-
-### Configuring FHIR endpoints from the host
-
-A `<tiro-form-filler>` typically talks to **two** FHIR servers:
-
-- **SDC server** — Tiro's Form SDK backend (see [docs.tiro.health → SDC Backend](https://docs.tiro.health/form-sdk/sdc-backend)). Serves the `Questionnaire` definitions, expands ValueSets for choice fields, and runs `$populate` (prefill), `$validate`, and `$generate-narrative`.
-- **Data server** — the FHIR endpoint that holds the **prepopulation data** the form fills itself from (`Patient`, `Observation`, `Condition`, etc.). The SDC backend's `$populate` operation reads from this server (via the `X-Data-Endpoint` header) to seed initial values.
-
-Configure both from the .NET host so the host process and the embedded JS hit the same servers; the host injects them via `AddScriptToExecuteOnDocumentCreatedAsync`, and the bridge applies them to every `<tiro-form-filler>` on the page before `tiro-web-sdk` reads attributes — overwriting any value baked into `index.html`.
-
-```csharp
-// SDC backend — fetches the Questionnaire by canonical URL, expands ValueSets,
-// runs $populate / $validate / $generate-narrative.
-formViewer.SdcEndpointAddress  = "https://sdc.hospital.example/fhir/r5";
-
-// Data server — the FHIR endpoint with the prepopulation data. The SDC backend
-// reaches into it (via X-Data-Endpoint) when running $populate. Leave unset if
-// the form doesn't prefill from FHIR data.
-formViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5";
-
-// then await formViewer.SetContextAsync(...);
-```
-
-`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
-
-> **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
-
-### Shipping your own index.html
-
-The default page is fine for demos but couples your UI to the library's release cadence — branding, the embedded SDK version, copy strings, and clipboard layout all live inside the package. For production, host your own page:
+The library ships a working default `index.html` so the samples run out-of-the-box, but for production you'll want to host your own page. The bridge and SMART Web Messaging plumbing are auto-injected by the host (regardless of which page is loaded), so your `index.html` stays UI-only — no SDK init, no transport setup, no Sentry CDN tag.
 
 1. Run any of the samples; the default page renders with a yellow banner at the top.
 2. Click **Copy starter template** in that banner. The button writes a hardcoded minimal HTML5 page to your clipboard — `<!DOCTYPE html>`, the SDK script, the two CSS rules needed to make the form-filler fill the viewport, and a bare `<tiro-form-filler id="form-filler">`. No banner, no runtime-applied attributes (`questionnaire`, `launch-context`, `sdc-endpoint-address`), no SDK-injected styles.
-3. Paste it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) above) — don't hardcode them in the page.
+3. Paste it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) below) — don't hardcode them in the page.
 4. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
    ```xml
    <ItemGroup>
@@ -215,35 +176,34 @@ The default page is fine for demos but couples your UI to the library's release 
    </ItemGroup>
    ```
 5. Point `WebContentFolder` at the deployed folder before the viewer's handle is created (typically right after `InitializeComponent`):
-   ```csharp
-   formViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent");
+   ```vb
+   TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
    ```
-
-The page contract stays the same: drop in a `<tiro-form-filler>` element (or call `window.SmartWebMessaging.{sendRequest, sendEvent, on}` directly for non-form-filler flows), and the auto-injected bridge handles the rest. The integrator owns the `tiro-web-sdk.iife.js` `<script>` tag.
 
 ## Telemetry
 
 The core `Tiro.Health.FormFiller.WebView2` package has **no** telemetry dependency. Telemetry is plugged in via `ITelemetrySink`:
 
-```csharp
-public interface ITelemetrySink : IDisposable
-{
-    ITelemetrySession BeginSession(string sessionId);
-    void CaptureException(Exception ex);
-    void Flush(TimeSpan timeout);
-}
+```vb
+Public Interface ITelemetrySink
+    Inherits IDisposable
+
+    Function BeginSession(sessionId As String) As ITelemetrySession
+    Sub CaptureException(ex As Exception)
+    Sub Flush(timeout As TimeSpan)
+End Interface
 ```
 
 The FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) default to `NullTelemetrySink` (no-op): the `.Sentry` adapter is **not** a transitive dependency, so by default no Sentry NuGet, no SDK init, no `Sentry.init` on the embedded page.
 
-To **opt in to Sentry telemetry**, add the adapter package and pass `new SentryTelemetrySink()` to the viewer's ctor:
+To **opt in to Sentry telemetry**, add the adapter package and pass `New SentryTelemetrySink()` to the viewer's ctor:
 
 ```xml
 <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
 ```
 
-```csharp
-var viewer = new TiroFormViewerR5(new SentryTelemetrySink());
+```vb
+Dim viewer As New TiroFormViewerR5(New SentryTelemetrySink())
 ```
 
 The parameterless ctor uses **Tiro's hosted DSNs** — host telemetry to `tirohealth/dotnet-winforms`, embedded-page telemetry to `tirohealth/javascript` (same Sentry org, unified trace view). This is the **recommended** path during integration: the Tiro team can see your form sessions and help diagnose issues quickly. The defaults are designed to be safe to ship — **no FHIR payloads are attached to spans**, so PHI does not flow to Sentry. What you do get:
@@ -257,9 +217,35 @@ The parameterless ctor uses **Tiro's hosted DSNs** — host telemetry to `tirohe
 - **Exceptions** captured via `SentrySdk.CaptureException` — the .NET-side exception type, message, and stack trace (these typically don't carry PHI; if your application code surfaces patient identifiers in exception messages, you'd want to scrub them before they bubble up)
 - **Release tag** auto-derived from the FormFiller assembly's `AssemblyInformationalVersion` (`Tiro.Health.FormFiller.WebView2@<semver>+<commit>`)
 
-To **redirect to your own Sentry project(s)** instead, construct `new SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) and feed it to the same ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page).
+To **redirect to your own Sentry project(s)** instead, construct `New SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) and feed it to the same ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page).
 
 For any other backend, implement `ITelemetrySink` yourself and pass it the same way.
+
+## Configuring FHIR endpoints from the host
+
+A `<tiro-form-filler>` typically talks to **two** FHIR servers:
+
+- **SDC server** — Tiro's Form SDK backend (see [docs.tiro.health → SDC Backend](https://docs.tiro.health/form-sdk/sdc-backend)). Serves the `Questionnaire` definitions, expands ValueSets for choice fields, and runs `$populate` (prefill), `$validate`, and `$generate-narrative`.
+- **Data server** — the FHIR endpoint that holds the **prepopulation data** the form fills itself from (`Patient`, `Observation`, `Condition`, etc.). The SDC backend's `$populate` operation reads from this server (via the `X-Data-Endpoint` header) to seed initial values.
+
+Configure both from the .NET host so the host process and the embedded JS hit the same servers; the host injects them via `AddScriptToExecuteOnDocumentCreatedAsync`, and the bridge applies them to every `<tiro-form-filler>` on the page before `tiro-web-sdk` reads attributes — overwriting any value baked into `index.html`.
+
+```vb
+' SDC backend — fetches the Questionnaire by canonical URL, expands ValueSets,
+' runs $populate / $validate / $generate-narrative.
+TiroFormViewer.SdcEndpointAddress = "https://sdc.hospital.example/fhir/r5"
+
+' Data server — the FHIR endpoint with the prepopulation data. The SDC backend
+' reaches into it (via X-Data-Endpoint) when running $populate. Leave unset if
+' the form doesn't prefill from FHIR data.
+TiroFormViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5"
+
+' then Await TiroFormViewer.SetContextAsync(...)
+```
+
+`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
+
+> **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
 
 ## Building
 
@@ -340,7 +326,7 @@ Designer-friendly closed bindings of `TiroFormViewer<,,>`.
 
 - **Targets**: `net48`
 - **Key type**: `TiroFormViewerR5` / `TiroFormViewerR4` (sealed) — drop-in WinForms control
-- **Defaults**: telemetry → `NullTelemetrySink` (no-op). Opt in to Sentry by referencing `Tiro.Health.FormFiller.WebView2.Sentry` and passing `new SentryTelemetrySink()` to the ctor — see [Telemetry](#telemetry)
+- **Defaults**: telemetry → `NullTelemetrySink` (no-op). Opt in to Sentry by referencing `Tiro.Health.FormFiller.WebView2.Sentry` and passing `New SentryTelemetrySink()` to the ctor — see [Telemetry](#telemetry)
 
 ### `Tiro.Health.FormFiller.WebView2.Sentry`
 Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you want the Sentry behaviour.
@@ -389,6 +375,17 @@ The host's traceId is injected into the embedded page in two ways: (1) as `<meta
 
 ### Bridge injection
 The JS that owns the page side of the protocol (`tiro-swm-bridge.js`) ships embedded in `Tiro.Health.FormFiller.WebView2` and is injected via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` so it runs before any page script. Mirrors the pattern used in `tiro-health/java-integration-harness` (form-filler-swing). The page is UI-only.
+
+## Page-side API
+
+Reference for integrators customizing their `index.html`. The auto-injected bridge exposes the following to the page:
+
+- **`<tiro-form-filler>`** (from `tiro-web-sdk.iife.js`) — auto-wired by the bridge: questionnaires arrive via the `questionnaire` attribute, user submissions come back via the `tiro-submit` event, and the bridge takes care of marshalling them onto the protocol.
+- **`window.tiro.cancel()`** — call from a Cancel button to send `ui.done` to the host.
+- **`document` `CustomEvent`s** for status hooks: `tiro-connected`, `tiro-disconnected`, `tiro-submitted`, `tiro-submit-error`, `tiro-cancelled`. Listen if you want a status bar; ignore if you don't.
+- **`window.SmartWebMessaging.{sendRequest, sendEvent, on}`** — lower-level API for advanced flows that don't fit the auto-wired form-filler model.
+
+The integrator owns the `tiro-web-sdk.iife.js` `<script>` tag in their `index.html`.
 
 ## Troubleshooting
 
