@@ -8,24 +8,19 @@ Embed FHIR-based questionnaire forms in a WebView2 control and exchange `Questio
 
 These libraries ship as NuGet packages and are typically consumed from a WinForms app on .NET Framework 4.8.
 
-### 1. Add the NuGet source
+### 1. Reference the packages
 
-The packages live on the harness's feed (or, for local development, in `artifacts/packages/` after `dotnet pack`). Add a `nuget.config` next to your `.sln`:
+There is no umbrella `net-integration-harness` package — the harness ships as a handful of individual NuGet packages that you install separately. In Visual Studio, right-click your project → **Manage NuGet Packages...** and search for each one (swap `.Fhir.R5` → `.Fhir.R4` for an R4 consumer):
 
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-    <add key="net-integration-harness" value="<path-or-url>" />
-  </packageSources>
-</configuration>
-```
+- `Hl7.Fhir.Base`
+- `Hl7.Fhir.R5` (or `Hl7.Fhir.R4`)
+- `Tiro.Health.SmartWebMessaging`
+- `Tiro.Health.SmartWebMessaging.Fhir.R5` (or `.Fhir.R4`)
+- `Tiro.Health.FormFiller.WebView2`
+- `Tiro.Health.FormFiller.WebView2.Fhir.R5` (or `.Fhir.R4`)
+- *(optional)* `Tiro.Health.FormFiller.WebView2.Sentry` — only if you want Sentry telemetry; see [Telemetry](#telemetry)
 
-### 2. Reference the packages
-
-For an R5 consumer (swap `.Fhir.R5` → `.Fhir.R4` and `Hl7.Fhir.R5` → `Hl7.Fhir.R4` for R4):
+The resulting `<PackageReference>` block in your `.csproj` / `.vbproj` should look like:
 
 ```xml
 <ItemGroup>
@@ -38,14 +33,14 @@ For an R5 consumer (swap `.Fhir.R5` → `.Fhir.R4` and `Hl7.Fhir.R5` → `Hl7.Fh
 </ItemGroup>
 ```
 
-Telemetry is **opt-in**. To enable Sentry telemetry, also reference `Tiro.Health.FormFiller.WebView2.Sentry` and pass `new SentryTelemetrySink()` to the viewer's ctor — see [Telemetry](#telemetry).
-
 Old-style `.vbproj` quirks worth knowing:
 
-- Set `<RestoreProjectStyle>PackageReference</RestoreProjectStyle>` in the `PropertyGroup`.
+- Set `<RestoreProjectStyle>PackageReference</RestoreProjectStyle>` in the `PropertyGroup` — without it the Manage NuGet Packages dialog falls back to `packages.config` and the install won't show up as `<PackageReference>`.
 - Set `<RuntimeIdentifiers>win</RuntimeIdentifiers>` because WebView2 ships native binaries (and so does Sentry, if you opt in).
 
-### 3. Enable auto-generated binding redirects
+> **Working against a local build of the harness?** Run `dotnet pack` and add `artifacts/packages/` as a custom package source via **Tools → NuGet Package Manager → Package Manager Settings → Package Sources**, then install from that source.
+
+### 2. Enable auto-generated binding redirects
 
 The `net48` packages pull modern `System.*` assemblies (`System.Text.Json` 9.x, `System.Memory`, `System.ComponentModel.Annotations`, etc.) whose versions don't match what's in the GAC, so binding redirects are mandatory. Don't hand-maintain them — let MSBuild emit them:
 
@@ -71,7 +66,7 @@ MSBuild walks the closure each build and writes redirects into `<YourApp>.exe.co
 
 > Library DLLs' own `app.config` files are ignored by the .NET Framework binding loader — only the executable's `.exe.config` is honored. The redirects have to come from the consuming project.
 
-### 4. Add the FormViewer to a form
+### 3. Add the FormViewer to a form
 
 Drop a `TiroFormViewerR5` (or `TiroFormViewerR4`) onto your form in the Designer, hook the `FormSubmitted` and `CloseApplication` events, and call `SetContextAsync(questionnaireCanonicalUrl, patient)` once the form has loaded. The full sample lives at `samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb`:
 
