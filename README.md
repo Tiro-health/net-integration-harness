@@ -138,7 +138,7 @@ Public Class Form1
 End Class
 ```
 
-> **Want X-button → page-validate → keep-form-open-on-errors?** Hook `Form1_FormClosing`, set `e.Cancel = True`, `Await TiroFormViewer.SendFormRequestSubmitAsync()`, and use a flag to let the eventual `FormSubmitted` close re-enter cleanly. The R5 `LauncherSample` demonstrates this. Skipped here to keep the R4 sample minimal.
+> **Want X-button → page-validate → keep-form-open-on-errors?** Hook `Form1_FormClosing`, set `e.Cancel = True`, `Await TiroFormViewer.SendFormRequestSubmitAsync()`, and use a flag to let the eventual `FormSubmitted` close re-enter cleanly. Skipped in this minimal sample — the EHR Shell sample shows the equivalent pattern (tab switch + explicit `Close session` button) for an embedded-in-tab integration.
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
@@ -280,8 +280,9 @@ net-integration-harness/
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
 │   └── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
 ├── samples/
-│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form demo (R4)
-│   └── Tiro.Health.FormFiller.WebView2.LauncherSample/ # Patient-list launcher → questionnaire dialog (R5)
+│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form, single-patient demo (R4)
+│   └── Tiro.Health.FormFiller.WebView2.EhrShellSample/ # Dummy EHR shell — patient/encounter/template selection,
+│                                                       # tabbed viewer, in-memory QR persistence, custom index.html (R5)
 └── tests/
     └── Tiro.Health.SmartWebMessaging.Tests/        # MSTest unit tests (25 tests)
 ```
@@ -329,12 +330,17 @@ Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you wan
 - **Key type**: `SentryTelemetrySink` — owns two DSNs (one for the .NET host process, one injected into the embedded page) plus environment and release. Ctor overloads let consumers override either DSN, the Sentry options, or the entire SDK init.
 - Auto-detects release as `Tiro.Health.FormFiller.WebView2@<version>+<commit>` from the FormFiller assembly's `AssemblyInformationalVersion` (so traces deep-link to source via Sentry's release pipeline if you upload symbols)
 
-### `Tiro.Health.FormFiller.WebView2.Sample` / `LauncherSample`
+### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
 WinForms demos.
 
-- `Sample` — single-form demo bound to FHIR **R4**
-- `LauncherSample` — patient-list launcher that opens the questionnaire as a dialog, demonstrates running multiple form sessions in one process; bound to FHIR **R5**
-- Both: `.NET 4.8` (VB.NET, old-style project format)
+- **`Sample`** — single-form, single-patient demo bound to FHIR **R4**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence.
+- **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
+  - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
+  - **Patient / encounter / template selection** — three hardcoded patients with their own encounters; three canonical templates verified live on the default SDC server.
+  - **Tabbed embedding** — the form viewer lives in a tab next to a "Patient details" tab. Switching tabs while filling a form *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit "Close session" button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
+  - **In-memory QR persistence** — submitted `QuestionnaireResponse`s are stored keyed by `(patient, encounter, template)`; relaunching the same combination passes the saved QR as `initialResponse` so the user resumes where they left off.
+  - **Custom `index.html`** — bundles its own `WebContent/index.html` and points `WebContentFolder` at it, instead of the library's default banner page. See [Shipping your own index.html](#shipping-your-own-indexhtml).
+- Both: `.NET 4.8` (VB.NET, old-style project format).
 
 ### `Tiro.Health.SmartWebMessaging.Tests`
 - **Target**: `net8.0`

@@ -472,7 +472,7 @@ namespace Tiro.Health.FormFiller.WebView2
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
-            TQR intitialResponse = default,
+            TQR initialResponse = default,
             CancellationToken cancellationToken = default)
         {
             GuardCanSetContext();
@@ -494,7 +494,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
                     await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
                         questionnaireCanonicalUrl: questionnaireCanonicalUrl,
-                        questionnaireResponse: intitialResponse,
+                        questionnaireResponse: initialResponse,
                         patient: patient,
                         encounter: encounter,
                         author: author,

@@ -3,6 +3,6 @@ Module Program
     Public Sub Main()
         Application.EnableVisualStyles()
         Application.SetCompatibleTextRenderingDefault(False)
-        Application.Run(New LauncherForm())
+        Application.Run(New EhrShell())
     End Sub
 End Module
