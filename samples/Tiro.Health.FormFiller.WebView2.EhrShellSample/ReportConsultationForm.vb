@@ -18,10 +18,11 @@ Public Class ReportConsultationForm
         InitializeComponent()
         _entry = entry
         _practitioner = practitioner
-        ' Set WebContentFolder before the WebView2 handle is created (i.e. before
-        ' the form is shown). InitializeComponent has just created the viewer
-        ' but its handle is created lazily on first paint.
-        TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
+        ' Point WebContentFolder at the read-only "Consultation" page — its
+        ' index.html bakes the <tiro-form-filler read-only> attribute into the
+        ' element so the rendered form is view-only. Must be set before the
+        ' WebView2 handle is created (i.e. before the form is shown).
+        TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent", "Consultation")
     End Sub
 
     Private Async Sub ReportConsultationForm_Load(sender As Object, e As EventArgs) Handles MyBase.Load

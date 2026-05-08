@@ -185,11 +185,13 @@ Public Class EhrShell
         _activeTemplate = template
 
         _viewer = New TiroFormViewerR5() With {.Dock = DockStyle.Fill}
-        ' Showcase the WebContentFolder seam: point the viewer at the bundled
-        ' WebContent folder so it loads the sample's own index.html instead of
-        ' the library's default banner page. Must be set before the handle is
-        ' created — i.e. before the viewer is added to a Controls collection.
-        _viewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
+        ' Point the viewer at WebContent\Form — the editable form page bundled
+        ' with the sample. Each role gets its own page (Form for filling,
+        ' Consultation for read-only viewing); the integrator picks which one
+        ' by setting WebContentFolder, not by passing UI flags through the
+        ' host API. Must be set before the handle is created (i.e. before the
+        ' viewer is added to a Controls collection).
+        _viewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent", "Form")
         AddHandler _viewer.FormSubmitted, AddressOf OnFormSubmitted
         AddHandler _viewer.CloseApplication, AddressOf OnCloseApplication
 
