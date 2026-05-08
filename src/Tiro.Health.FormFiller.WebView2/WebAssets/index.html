@@ -27,17 +27,47 @@
     </div>
     <tiro-form-filler id="form-filler"></tiro-form-filler>
     <script data-sample-only>
+        // Hardcoded ultra-minimal starter template emitted by the "Copy starter
+        // template" button. Intentionally NOT a live-DOM clone: by the time the
+        // user clicks Copy, the form-filler has runtime-applied attributes
+        // (sdc-endpoint-address, launch-context, questionnaire) and the
+        // tiro-web-sdk has injected its own runtime <style> blocks (audio-recorder
+        // etc.). A static template gives the integrator the bare scaffolding —
+        // doctype, SDK script, a few CSS rules to make the element fill the
+        // viewport, and the element itself. No <html>/<head>/<body> wrappers
+        // (HTML5 makes them optional) so the result is essentially just the
+        // <tiro-form-filler> element with the minimum to make it render.
+        //
+        // The end-script-tag inside this template literal is written as
+        // <\/script> so the HTML parser doesn't close the enclosing script
+        // block prematurely (the JS string evaluates back to the actual tag).
+        // (Don't write the literal characters here either — even in a comment
+        // the HTML parser still scans for them and would close the script.)
+        const STARTER_TEMPLATE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tiro Form Filler</title>
+    <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer><\/script>
+    <style>
+        html, body { margin: 0; height: 100%; }
+        tiro-form-filler { display: block; height: 100%; }
+    </style>
+</head>
+<body>
+    <tiro-form-filler id="form-filler"></tiro-form-filler>
+</body>
+</html>
+`;
+
         document.addEventListener("DOMContentLoaded", () => {
             const banner = document.getElementById("sample-banner");
             const copyBtn = document.getElementById("copy-template-btn");
             document.getElementById("dismiss-banner-btn").addEventListener("click", () => banner.remove());
             copyBtn.addEventListener("click", async () => {
-                const cloned = document.documentElement.cloneNode(true);
-                cloned.querySelectorAll("[data-sample-only]").forEach((n) => n.remove());
-                const html = "<!DOCTYPE html>\n" + cloned.outerHTML;
                 const original = copyBtn.textContent;
                 try {
-                    await navigator.clipboard.writeText(html);
+                    await navigator.clipboard.writeText(STARTER_TEMPLATE);
                     copyBtn.textContent = "Copied ✓";
                 } catch (err) {
                     console.error("Copy starter template failed:", err);
