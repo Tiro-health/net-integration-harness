@@ -109,6 +109,12 @@
     <Compile Include="TemplatePickerDialog.Designer.vb">
       <DependentUpon>TemplatePickerDialog.vb</DependentUpon>
     </Compile>
+    <Compile Include="ReportConsultationForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="ReportConsultationForm.Designer.vb">
+      <DependentUpon>ReportConsultationForm.vb</DependentUpon>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

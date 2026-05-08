@@ -77,6 +77,7 @@ Public Class EhrShell
         ReportsList.Items.Clear()
         _reportsBacking.Clear()
         NarrativePreviewBox.Clear()
+        OpenReportButton.Enabled = False
         Dim pr = SelectedPatientRecord()
         If pr Is Nothing Then Return
         For Each entry In _store.GetReportsFor(pr.Patient)
@@ -100,8 +101,11 @@ Public Class EhrShell
         ' text alternative; show a placeholder if neither is available.
         If ReportsList.SelectedIndex < 0 OrElse ReportsList.SelectedIndex >= _reportsBacking.Count Then
             NarrativePreviewBox.Clear()
+            OpenReportButton.Enabled = False
             Return
         End If
+
+        OpenReportButton.Enabled = True
 
         Dim entry = _reportsBacking(ReportsList.SelectedIndex)
         Dim rtf = QuestionnaireResponseHelper.GetRtfNarrative(entry.Response)
@@ -153,13 +157,20 @@ Public Class EhrShell
         OpenSelectedReport()
     End Sub
 
+    Private Sub OpenReportButton_Click(sender As Object, e As EventArgs) Handles OpenReportButton.Click
+        OpenSelectedReport()
+    End Sub
+
     Private Sub OpenSelectedReport()
-        If _viewer IsNot Nothing Then Return  ' a session is already live
         If ReportsList.SelectedIndex < 0 OrElse ReportsList.SelectedIndex >= _reportsBacking.Count Then Return
 
+        ' Spawn a separate top-level window with its own TiroFormViewerR5 so the
+        ' main shell's in-progress session (if any) stays alive. The doctor can
+        ' position the consultation window next to the EHR shell, read the
+        ' previous report, then continue filling out the current one.
         Dim entry = _reportsBacking(ReportsList.SelectedIndex)
-        Dim encRec = New EncounterRecord(entry.Encounter, entry.EncounterLabel)
-        LaunchSession(entry.Patient, encRec, entry.Template, initialResponse:=entry.Response)
+        Dim consultation As New ReportConsultationForm(entry, _practitioner)
+        consultation.Show(Me)
     End Sub
 
     ' ------------------------------------------------------------

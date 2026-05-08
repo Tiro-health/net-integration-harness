@@ -36,6 +36,7 @@ Partial Class EhrShell
         PreviewPanel = New Panel()
         NarrativePreviewBox = New RichTextBox()
         NarrativePreviewLabel = New Label()
+        OpenReportButton = New Button()
         HeaderPanel = New Panel()
         PatientHeaderLabel = New Label()
         PatientDetailsLabel = New Label()
@@ -205,6 +206,7 @@ Partial Class EhrShell
         ' PreviewPanel
         '
         PreviewPanel.Controls.Add(NarrativePreviewBox)
+        PreviewPanel.Controls.Add(OpenReportButton)
         PreviewPanel.Controls.Add(NarrativePreviewLabel)
         PreviewPanel.Dock = DockStyle.Bottom
         PreviewPanel.Location = New Point(20, 410)
@@ -220,6 +222,21 @@ Partial Class EhrShell
         NarrativePreviewLabel.Location = New Point(4, 12)
         NarrativePreviewLabel.Name = "NarrativePreviewLabel"
         NarrativePreviewLabel.Text = "Selected report — narrative"
+        '
+        ' OpenReportButton
+        '
+        ' Right-aligned to the preview header so it sits next to the narrative
+        ' label. Enabled only when a real saved report is selected. Clicking
+        ' reopens the report in the form viewer (with the saved QR as the
+        ' initial response); confirmation dialog kicks in if a session is alive.
+        OpenReportButton.Anchor = AnchorStyles.Top Or AnchorStyles.Right
+        OpenReportButton.Enabled = False
+        OpenReportButton.Location = New Point(628, 6)
+        OpenReportButton.Name = "OpenReportButton"
+        OpenReportButton.Size = New Size(160, 28)
+        OpenReportButton.TabIndex = 1
+        OpenReportButton.Text = "Open this report"
+        OpenReportButton.UseVisualStyleBackColor = True
         '
         ' NarrativePreviewBox
         '
@@ -408,6 +425,7 @@ Partial Class EhrShell
     Friend WithEvents ReportsList As ListBox
     Friend WithEvents PreviewPanel As Panel
     Friend WithEvents NarrativePreviewLabel As Label
+    Friend WithEvents OpenReportButton As Button
     Friend WithEvents NarrativePreviewBox As RichTextBox
     Friend WithEvents FormTab As TabPage
     Friend WithEvents ContextLabel As Label
