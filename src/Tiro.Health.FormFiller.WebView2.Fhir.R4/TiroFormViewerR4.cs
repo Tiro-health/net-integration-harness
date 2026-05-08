@@ -20,7 +20,10 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R4
         /// no SLA, no uptime guarantees, not suitable for clinical workflows. Production
         /// integrators should host their own SDC server and override <c>SdcEndpointAddress</c>.
         /// </summary>
-        public const string DefaultSdcEndpointAddress = "https://sdc.tiro.health/fhir/r4";
+        // Temporary: the dedicated R4 endpoint (`/fhir/r4`) is offline, so we point the R4
+        // default at the R5 endpoint to keep the demo working. Revert to `/fhir/r4` once
+        // the R4 SDC server is back online.
+        public const string DefaultSdcEndpointAddress = "https://sdc.tiro.health/fhir/r5";
 
         /// <summary>
         /// Designer-friendly parameterless ctor. Telemetry is <see cref="NullTelemetrySink"/>.

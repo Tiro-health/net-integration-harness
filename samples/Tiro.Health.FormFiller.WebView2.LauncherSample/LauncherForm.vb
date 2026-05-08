@@ -1,7 +1,7 @@
 Imports Hl7.Fhir.Model
 
 Public Class LauncherForm
-    Private Const QuestionnaireUrl As String = "http://templates.tiro.health/templates/2630b8675c214707b1f86d1fbd4deb87"
+    Private Const QuestionnaireUrl As String = "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699"
 
     Private ReadOnly _patients As List(Of Patient) = BuildPatients()
     Private _openCount As Integer = 0

@@ -68,28 +68,25 @@ MSBuild walks the closure each build and writes redirects into `<YourApp>.exe.co
 
 ### 3. Add the FormViewer to a form
 
-Drop a `TiroFormViewerR5` (or `TiroFormViewerR4`) onto your form in the Designer, hook the `FormSubmitted` and `CloseApplication` events, and call `SetContextAsync(questionnaireCanonicalUrl, patient)` once the form has loaded. The full sample lives at `samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb`:
+Drop a `TiroFormViewerR5` (or `TiroFormViewerR4`) onto your form in the Designer (`Dock = Fill`) plus a Submit `Button` in a bottom panel, then wire three things:
+
+- `FormSubmitted` — the page emitted a QR. Inspect `e.Response`, optionally check `e.Outcome.Success` for validation errors, then close.
+- `CloseApplication` — the page emitted `ui.done` (e.g. its own Cancel button). Just close the form.
+- The Submit button's `Click` — `Await TiroFormViewer.SendFormRequestSubmitAsync()`. The page validates and round-trips back via `FormSubmitted`.
+
+The full sample lives at `samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb`:
 
 ```vb
 Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
 
 Public Class Form1
-    ' Flag that keeps track if form has been submitted
-    Private isFormSubmitted As Boolean = False
-
-    Public Sub New()
-        InitializeComponent()
-    End Sub
 
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
-        Await InitializeViewerAsync()
-    End Sub
 
-    Private Async Function InitializeViewerAsync() As System.Threading.Tasks.Task
-        Dim patient As Patient = New Patient() With {
+        Dim patient As New Patient() With {
             .Name = New List(Of HumanName) From {
                 New HumanName() With {
                     .Family = "da Vinci",
@@ -106,60 +103,42 @@ Public Class Form1
                 }
             }
         }
-        ' Hint: here it's possible to pass a previous QR as context
-        Await TiroFormViewer.SetContextAsync("http://templates.tiro.health/templates/2630b8675c214707b1f86d1fbd4deb87", patient)
-    End Function
 
-    ' ----------------------------------------------------
-    ' EVENT HANDLER FOR FORM SUBMISSION
-    ' ----------------------------------------------------
-    Private Sub HandleFormSubmitted(ByVal sender As Object, ByVal e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
+        Await TiroFormViewer.SetContextAsync(
+            "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699",
+            patient)
+    End Sub
 
-        ' Check if there are validation errors
+    Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click
+        Await TiroFormViewer.SendFormRequestSubmitAsync()
+    End Sub
+
+    Private Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
         If e.Outcome IsNot Nothing AndAlso e.Outcome.Success = False Then
-            Dim result As DialogResult = MessageBox.Show("There are validation errors. Do you want to close anyway?", "Validation Errors", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
-            If result = DialogResult.No Then
-                Return
-            End If
+            Dim result As DialogResult = MessageBox.Show(
+                "There are validation errors. Close anyway?",
+                "Validation Errors",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning)
+            If result = DialogResult.No Then Return
         End If
 
-        ' The FormSubmittedEventArgs contains the submitted FHIR resource
-        Dim response As QuestionnaireResponse = TryCast(e.Response, QuestionnaireResponse)
-
-        If response IsNot Nothing Then
-            Dim narrativeHtml As String = response.Text?.Div
-            If Not String.IsNullOrEmpty(narrativeHtml) Then
-                MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
-            Else
-                MessageBox.Show("Submitted QuestionnaireResponse has no narrative text.", "Submission Received")
-            End If
-        Else
-            MessageBox.Show("Form submission received, but resource was not a QuestionnaireResponse.", "Error")
+        Dim plainText As String = QuestionnaireResponseHelper.GetPlainTextNarrative(e.Response)
+        If Not String.IsNullOrEmpty(plainText) Then
+            MessageBox.Show(plainText, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
         End If
 
-        ' Close the form after handling submission
-        isFormSubmitted = True
         Me.Close()
     End Sub
 
-    ' ----------------------------------------------------
-    ' EVENT HANDLER FOR CLOSE APPLICATION (ui.done)
-    ' ----------------------------------------------------
-    Private Sub HandleCloseApplication(ByVal sender As Object, ByVal e As CloseApplicationEventArgs)
-        isFormSubmitted = True
-        MessageBox.Show("Closing.", "Closing")
+    Private Sub HandleCloseApplication(sender As Object, e As CloseApplicationEventArgs)
         Me.Close()
-    End Sub
-
-    Private Async Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles MyBase.FormClosing
-        If Not isFormSubmitted Then
-            e.Cancel = True
-            Await TiroFormViewer.SendFormRequestSubmitAsync()
-        End If
     End Sub
 
 End Class
 ```
+
+> **Want X-button → page-validate → keep-form-open-on-errors?** Hook `Form1_FormClosing`, set `e.Cancel = True`, `Await TiroFormViewer.SendFormRequestSubmitAsync()`, and use a flag to let the eventual `FormSubmitted` close re-enter cleanly. The R5 `LauncherSample` demonstrates this. Skipped here to keep the R4 sample minimal.
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
@@ -178,15 +157,27 @@ For advanced flows that don't fit the auto-wired form-filler model, the lower-le
 
 ### Configuring FHIR endpoints from the host
 
-`<tiro-form-filler>` takes two endpoint attributes — `sdc-endpoint-address` (SDC FHIR server) and `data-endpoint-address` (FHIR data server). Configure both from the .NET host so the EHR process and the embedded JS hit the same servers; the host injects them via `AddScriptToExecuteOnDocumentCreatedAsync`, and the bridge applies them to every `<tiro-form-filler>` on the page before `tiro-web-sdk` reads attributes — overwriting any value baked into `index.html`.
+A `<tiro-form-filler>` typically talks to **two** FHIR servers:
+
+- **SDC server** — Tiro's Form SDK backend (see [docs.tiro.health → SDC Backend](https://docs.tiro.health/form-sdk/sdc-backend)). Serves the `Questionnaire` definitions, expands ValueSets for choice fields, and runs `$populate` (prefill), `$validate`, and `$generate-narrative`.
+- **Data server** — the FHIR endpoint that holds the **prepopulation data** the form fills itself from (`Patient`, `Observation`, `Condition`, etc.). The SDC backend's `$populate` operation reads from this server (via the `X-Data-Endpoint` header) to seed initial values.
+
+Configure both from the .NET host so the host process and the embedded JS hit the same servers; the host injects them via `AddScriptToExecuteOnDocumentCreatedAsync`, and the bridge applies them to every `<tiro-form-filler>` on the page before `tiro-web-sdk` reads attributes — overwriting any value baked into `index.html`.
 
 ```csharp
+// SDC backend — fetches the Questionnaire by canonical URL, expands ValueSets,
+// runs $populate / $validate / $generate-narrative.
 formViewer.SdcEndpointAddress  = "https://sdc.hospital.example/fhir/r5";
+
+// Data server — the FHIR endpoint with the prepopulation data. The SDC backend
+// reaches into it (via X-Data-Endpoint) when running $populate. Leave unset if
+// the form doesn't prefill from FHIR data.
 formViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5";
+
 // then await formViewer.SetContextAsync(...);
 ```
 
-`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box use works. `DataEndpointAddress` has no default — set it when the form needs to reach a data server. Either property must be set before `SetContextAsync` (the bridge reads them once, when the page is first wired).
+`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
 
 > **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
 
