@@ -175,9 +175,12 @@ The library ships a working default `index.html` so the samples run out-of-the-b
      </Content>
    </ItemGroup>
    ```
-5. Point `WebContentFolder` at the deployed folder before the viewer's handle is created (typically right after `InitializeComponent`):
+5. Point `WebContentFolder` at the deployed folder. In a Designer-built VB.NET form, set it inside `Form_Load` *before* you call `SetContextAsync` (the WebView2 initializes lazily inside `SetContextAsync`, so as long as the property is set first, the right `index.html` is the one that loads):
    ```vb
-   TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
+   Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+       TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
+       ' ... AddHandler / build patient / SetContextAsync ...
+   End Sub
    ```
 
 ## Telemetry
