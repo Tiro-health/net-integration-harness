@@ -497,11 +497,34 @@ namespace Tiro.Health.FormFiller.WebView2
                         object configuration = string.IsNullOrEmpty(SdcEndpointAddress)
                             ? null
                             : (object)new System.Collections.Generic.Dictionary<string, object> { ["sdcServer"] = SdcEndpointAddress };
-                        await _smartWebMessageHandler.SendSdcConfigureAsync(
-                            terminologyServer: null,
-                            dataServer: string.IsNullOrEmpty(DataEndpointAddress) ? null : DataEndpointAddress,
-                            configuration: configuration,
-                            cancellationToken: linkedCts.Token);
+
+                        // sdc.configure is fire-and-forget — no response message — so the
+                        // span finishes synchronously on send completion. Mirrors the JS
+                        // bridge's swm.receive span so the trace shows both halves.
+                        var configureSpan = _session?.StartTransaction("sdc.configure", "swm.send");
+                        configureSpan?.SetTag("messageType", "sdc.configure");
+                        if (!string.IsNullOrEmpty(SdcEndpointAddress)) configureSpan?.SetTag("sdc_server", SdcEndpointAddress);
+                        if (!string.IsNullOrEmpty(DataEndpointAddress)) configureSpan?.SetTag("data_server", DataEndpointAddress);
+
+                        try
+                        {
+                            await _smartWebMessageHandler.SendSdcConfigureAsync(
+                                terminologyServer: null,
+                                dataServer: string.IsNullOrEmpty(DataEndpointAddress) ? null : DataEndpointAddress,
+                                configuration: configuration,
+                                cancellationToken: linkedCts.Token);
+                            configureSpan?.Finish(TelemetrySpanStatus.Ok);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            configureSpan?.Finish(TelemetrySpanStatus.Cancelled);
+                            throw;
+                        }
+                        catch
+                        {
+                            configureSpan?.Finish(TelemetrySpanStatus.InternalError);
+                            throw;
+                        }
                     }
 
                     var wrappedHandler = WrapForRoundTrip(span, cancellationToken, originalHandler: null);

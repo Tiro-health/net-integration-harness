@@ -214,6 +214,60 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task SetContextAsync_StartsSdcConfigureTransaction_WhenEndpointsAreSet()
+        {
+            // PR #14 introduced sdc.configure as the protocol-conformant way to push
+            // endpoints into the page. The JS bridge already records a swm.receive span
+            // for it; this asserts the .NET sender side now mirrors that with its own
+            // swm.send span — so a unified trace shows both halves and Sentry users
+            // can see configure activity in the .NET project, not only in JS.
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            viewer.SdcEndpointAddress = "https://sdc.example.test/fhir/r5";
+            viewer.DataEndpointAddress = "https://data.example.test/fhir";
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+            var setContextTask = viewer.SetContextAsync("http://example.org/my-form");
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContextTask.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+            var session = sink.Sessions[0];
+            var configureSpan = session.Transactions.FirstOrDefault(t =>
+                t.Operation == "swm.send" && t.Name == "sdc.configure");
+            Assert.IsNotNull(configureSpan, "Expected an swm.send transaction named sdc.configure.");
+            Assert.IsTrue(configureSpan.Finished, "sdc.configure is fire-and-forget; the span should finish synchronously.");
+            Assert.AreEqual(TelemetrySpanStatus.Ok, configureSpan.FinalStatus);
+            Assert.IsTrue(configureSpan.Tags.TryGetValue("messageType", out var mt) && mt == "sdc.configure");
+            Assert.IsTrue(configureSpan.Tags.TryGetValue("sdc_server", out var sdc) && sdc == "https://sdc.example.test/fhir/r5",
+                "Expected sdc_server tag carrying the host-configured endpoint.");
+            Assert.IsTrue(configureSpan.Tags.TryGetValue("data_server", out var data) && data == "https://data.example.test/fhir",
+                "Expected data_server tag carrying the host-configured endpoint.");
+            viewer.Dispose();
+        }
+
+        [TestMethod]
+        public async Task SetContextAsync_DoesNotEmitSdcConfigureTransaction_WhenEndpointsAreUnset()
+        {
+            // Mirror of the host-side suppression: with no endpoints to push, no
+            // sdc.configure is sent and no swm.send span is recorded for it.
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            // SdcEndpointAddress / DataEndpointAddress are null by default on the abstract
+            // base — TestableTiroFormViewer doesn't set them in its ctor.
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+            var setContextTask = viewer.SetContextAsync("http://example.org/my-form");
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContextTask.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+            var session = sink.Sessions[0];
+            Assert.IsFalse(session.Transactions.Any(t =>
+                t.Operation == "swm.send" && t.Name == "sdc.configure"),
+                "Expected no sdc.configure transaction when both endpoints are empty.");
+            viewer.Dispose();
+        }
+
+        [TestMethod]
         public async Task InboundFormSubmit_StartsReceiveTransaction_WithOutcomeAwareStatus()
         {
             var sink = new FakeTelemetrySink();
