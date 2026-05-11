@@ -10,28 +10,23 @@ These libraries ship as NuGet packages and are typically consumed from a WinForm
 
 ### 1. Reference the packages
 
-There is no umbrella `net-integration-harness` package — the harness ships as a handful of individual NuGet packages that you install separately. In Visual Studio, right-click your project → **Manage NuGet Packages...** and search for each one (swap `.Fhir.R5` → `.Fhir.R4` for an R4 consumer):
+There is no umbrella `net-integration-harness` package. In Visual Studio, right-click your project → **Manage NuGet Packages...** → **Browse** tab → install:
 
-- `Hl7.Fhir.Base`
-- `Hl7.Fhir.R5` (or `Hl7.Fhir.R4`)
-- `Tiro.Health.SmartWebMessaging`
-- `Tiro.Health.SmartWebMessaging.Fhir.R5` (or `.Fhir.R4`)
-- `Tiro.Health.FormFiller.WebView2`
-- `Tiro.Health.FormFiller.WebView2.Fhir.R5` (or `.Fhir.R4`)
-- *(optional)* `Tiro.Health.FormFiller.WebView2.Sentry` — only if you want Sentry telemetry; see [Telemetry](#telemetry)
+- **`Tiro.Health.FormFiller.WebView2.Fhir.R5`** (or `.Fhir.R4` for an R4 consumer) — the closed-binding control. Pulls in the messaging core, the WebView2 host, and `Hl7.Fhir.*` transitively.
+- *(optional)* **`Tiro.Health.FormFiller.WebView2.Sentry`** — Sentry-backed telemetry adapter. Only if you want telemetry; see [Telemetry](#telemetry).
 
-The resulting `<PackageReference>` block in your `.csproj` / `.vbproj` should look like:
+That's it — two top-level package references. Everything else (`Tiro.Health.SmartWebMessaging`, `Tiro.Health.SmartWebMessaging.Fhir.*`, `Tiro.Health.FormFiller.WebView2`, `Hl7.Fhir.Base`, `Hl7.Fhir.R5`/`R4`, `Hl7.Fhir.Conformance`, etc.) comes through transitively.
+
+The resulting `<PackageReference>` block in your `.csproj` / `.vbproj`:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Hl7.Fhir.Base" Version="5.13.2" />
-  <PackageReference Include="Hl7.Fhir.R5" Version="5.13.2" />
-  <PackageReference Include="Tiro.Health.SmartWebMessaging" Version="1.0.0" />
-  <PackageReference Include="Tiro.Health.SmartWebMessaging.Fhir.R5" Version="1.0.0" />
-  <PackageReference Include="Tiro.Health.FormFiller.WebView2" Version="1.0.0" />
-  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="1.0.0" />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="0.0.6" />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="0.0.6" />
 </ItemGroup>
 ```
+
+(Drop the Sentry line if you don't want telemetry.)
 
 Old-style `.vbproj` projects (the `<Project ToolsVersion="15.0">` format — anything that isn't SDK-style `<Project Sdk="...">`) need a few extra properties. There's no Properties UI for these, so edit the XML directly: in Visual Studio right-click the project → **Unload Project** → right-click again → **Edit `<ProjectName>.vbproj`** (or open the file in any text editor). Add these inside the first `<PropertyGroup>` — the one with `<Configuration>` / `<OutputType>` / `<TargetFrameworkVersion>` etc.:
 
