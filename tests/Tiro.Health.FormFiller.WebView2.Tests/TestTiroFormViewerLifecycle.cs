@@ -181,6 +181,27 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public void Dispose_ClearsPendingResponseListeners()
+        {
+            // Pending response listeners hold closures over caller-supplied handlers, the
+            // per-send telemetry-span sentinel CTS, and whatever state the caller's
+            // handler captured. After Dispose, the inbound-message guard prevents these
+            // from ever firing — clear the dictionary so the closures release for GC
+            // immediately rather than waiting on the handler itself to become unreachable.
+            _handler.RegisterResponseListener("msg-1", _ => Task.CompletedTask);
+            _handler.RegisterResponseListener("msg-2", _ => Task.CompletedTask);
+            Assert.IsTrue(_handler.HasPendingResponseListener("msg-1"), "Sanity: listener registered before Dispose.");
+            Assert.IsTrue(_handler.HasPendingResponseListener("msg-2"), "Sanity: listener registered before Dispose.");
+
+            _viewer.Dispose();
+
+            Assert.IsFalse(_handler.HasPendingResponseListener("msg-1"),
+                "Dispose should clear pending response listeners so caller closures can be GC'd.");
+            Assert.IsFalse(_handler.HasPendingResponseListener("msg-2"),
+                "Dispose should clear pending response listeners so caller closures can be GC'd.");
+        }
+
+        [TestMethod]
         public async Task MessageReceived_AfterDispose_IsIgnored()
         {
             await DelayUntilBrowserInitialized();
