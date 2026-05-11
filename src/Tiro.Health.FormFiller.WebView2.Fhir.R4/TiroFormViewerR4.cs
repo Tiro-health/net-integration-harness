@@ -9,9 +9,9 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R4
     /// Designer-friendly: sealed, parameterless ctor, bound to the R4
     /// <see cref="SmartWebMessaging.Fhir.R4.SmartMessageHandler"/>.
     /// Telemetry defaults to <see cref="NullTelemetrySink"/> (no-op). To enable Sentry
-    /// telemetry, install the <c>Tiro.Health.FormFiller.WebView2.Sentry</c> NuGet and assign
-    /// <c>New SentryTelemetrySink()</c> to <see cref="TiroFormViewer{T,Q,O}.TelemetrySink"/>
-    /// (typically in <c>Form_Load</c>, before <see cref="TiroFormViewer{T,Q,O}.SetContextAsync"/>).
+    /// telemetry, install the <c>Tiro.Health.FormFiller.WebView2.Sentry</c> NuGet and call
+    /// <c>TiroFormFillerSentry.UseSentry()</c> once at application startup (e.g. in
+    /// <c>Sub Main</c>, before any viewer is constructed).
     /// </summary>
     public sealed class TiroFormViewerR4 : TiroFormViewer<Resource, QuestionnaireResponse, OperationOutcome>
     {
@@ -27,10 +27,9 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R4
         public const string DefaultSdcEndpointAddress = "https://sdc.tiro.health/fhir/r5";
 
         /// <summary>
-        /// Designer-friendly parameterless ctor. Telemetry defaults to
-        /// <see cref="NullTelemetrySink"/>; override via the
-        /// <see cref="TiroFormViewer{T,Q,O}.TelemetrySink"/> property before
-        /// <see cref="TiroFormViewer{T,Q,O}.SetContextAsync"/>.
+        /// Designer-friendly parameterless ctor. Telemetry is resolved from
+        /// <see cref="TiroFormViewerDefaults.TelemetrySinkFactory"/> at construction —
+        /// defaults to <see cref="NullTelemetrySink"/> when no factory is registered.
         /// </summary>
         public TiroFormViewerR4()
         {

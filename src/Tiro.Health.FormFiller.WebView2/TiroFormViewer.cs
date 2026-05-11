@@ -52,37 +52,15 @@ namespace Tiro.Health.FormFiller.WebView2
         public string DataEndpointAddress { get; set; }
 
         /// <summary>
-        /// The telemetry sink the viewer uses for instrumentation. Defaults to
-        /// <see cref="CreateTelemetrySink"/> (which on the R5/R4 closed bindings is
-        /// <see cref="NullTelemetrySink"/>). Set this before <see cref="SetContextAsync"/>
-        /// to plug in a different sink — typically <c>New SentryTelemetrySink()</c> from
-        /// the <c>Tiro.Health.FormFiller.WebView2.Sentry</c> package — so a Designer-placed
-        /// viewer can opt into telemetry without having to be instantiated in code.
-        /// Setting it after the form session has begun (i.e. after the first
-        /// <see cref="SetContextAsync"/>) throws <see cref="InvalidOperationException"/>.
-        /// Pass <c>null</c> to fall back to <see cref="CreateTelemetrySink"/>.
+        /// The telemetry sink the viewer uses for instrumentation. Resolved at construction
+        /// time from <see cref="CreateTelemetrySink"/> — which on the base implementation
+        /// reads <see cref="TiroFormViewerDefaults.TelemetrySinkFactory"/>, defaulting to
+        /// <see cref="NullTelemetrySink"/> when no factory is registered. To enable Sentry
+        /// telemetry, install <c>Tiro.Health.FormFiller.WebView2.Sentry</c> and call
+        /// <c>TiroFormFillerSentry.UseSentry()</c> once at application startup, before any
+        /// viewer is constructed.
         /// </summary>
-        public ITelemetrySink TelemetrySink
-        {
-            get => _telemetry;
-            set
-            {
-                if (_session != null)
-                    throw new InvalidOperationException(
-                        "TelemetrySink cannot be changed after the form session has started. " +
-                        "Set it before SetContextAsync (e.g. in Form_Load).");
-                if (value != null)
-                {
-                    _telemetry = value;
-                    _ownsTelemetrySink = false;
-                }
-                else
-                {
-                    _telemetry = CreateTelemetrySink();
-                    _ownsTelemetrySink = true;
-                }
-            }
-        }
+        public ITelemetrySink TelemetrySink => _telemetry;
 
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandlerBase<TResource, TQR, TOO> _smartWebMessageHandler;
@@ -189,11 +167,11 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>
         /// Default ctor used by the WinForms designer and at runtime in closed subclasses.
         /// Construction-time dependencies (browser + handler) come from the <c>Create*</c> factory methods.
-        /// Telemetry sink defaults to <see cref="CreateTelemetrySink"/>; override it via the
-        /// <see cref="TelemetrySink"/> property before <see cref="SetContextAsync"/> to plug in
-        /// a custom sink (e.g. <c>SentryTelemetrySink</c>). The session begins lazily on the
-        /// first <see cref="SetContextAsync"/> call so a Designer-placed viewer has a chance
-        /// to be reconfigured in <c>Form_Load</c>.
+        /// The telemetry sink is resolved via <see cref="CreateTelemetrySink"/>, which on the base
+        /// reads <see cref="TiroFormViewerDefaults.TelemetrySinkFactory"/> — so applications opt
+        /// into telemetry once at startup (e.g. <c>TiroFormFillerSentry.UseSentry()</c>) and every
+        /// Designer-placed viewer picks it up. The session begins eagerly so init/handshake
+        /// telemetry is captured before the first <see cref="SetContextAsync"/>.
         /// </summary>
         protected TiroFormViewer()
         {
@@ -208,29 +186,25 @@ namespace Tiro.Health.FormFiller.WebView2
             _smartWebMessageHandler = CreateMessageHandler();
             _telemetry = CreateTelemetrySink();
             _ownsTelemetrySink = true;
+            // BeginSession must run BEFORE InitializeWiring: the latter kicks off
+            // InitializeBrowserAsync, whose synchronous prefix emits a "swm.lifecycle.init"
+            // span. The session has to be alive by then for that span to be recorded.
+            BeginSession();
             InitializeWiring();
-            // Note: BeginSession() is intentionally NOT called here. The session is started
-            // lazily by EnsureSession() on the first SetContextAsync call, so an integrator
-            // can swap in a different sink via the TelemetrySink property after the ctor
-            // has run (typically in Form_Load).
         }
 
         /// <summary>
         /// DI ctor for tests and advanced consumers. Bypasses the factory methods —
-        /// dependencies are injected directly. Not used by the designer. Begins the
-        /// telemetry session immediately by default (so DI consumers see the session
-        /// lifecycle deterministically); pass <paramref name="beginSession"/> = <c>false</c>
-        /// to opt into the parameterless-ctor's lazy-session behavior for tests that
-        /// exercise <see cref="TelemetrySink"/> swap semantics. The injected
+        /// dependencies are injected directly. Not used by the designer. The injected
         /// <paramref name="telemetry"/> sink (if any) is NOT disposed by this control;
         /// that ownership stays with the caller. Pass <c>null</c> to fall back to
-        /// <see cref="CreateTelemetrySink"/>.
+        /// <see cref="CreateTelemetrySink"/>. The session begins eagerly to match the
+        /// parameterless ctor's contract.
         /// </summary>
         protected TiroFormViewer(
             IEmbeddedBrowser browser,
             SmartMessageHandlerBase<TResource, TQR, TOO> handler,
-            ITelemetrySink telemetry = null,
-            bool beginSession = true)
+            ITelemetrySink telemetry = null)
         {
             InitializeComponent();
             _browser = browser ?? throw new ArgumentNullException(nameof(browser));
@@ -245,12 +219,7 @@ namespace Tiro.Health.FormFiller.WebView2
                 _telemetry = CreateTelemetrySink();
                 _ownsTelemetrySink = true;
             }
-            // When beginSession is true (default), start the session BEFORE InitializeWiring:
-            // the latter starts InitializeBrowserAsync, whose synchronous prefix tries to emit
-            // a "swm.lifecycle.init" span. The session must be alive by then for that span to
-            // be recorded. When beginSession is false, the session starts lazily on the first
-            // SetContextAsync call (matches the parameterless-ctor's contract).
-            if (beginSession) BeginSession();
+            BeginSession();
             InitializeWiring();
         }
 
@@ -272,23 +241,13 @@ namespace Tiro.Health.FormFiller.WebView2
         /// override this to plug in <c>SentryTelemetrySink</c> from the
         /// <c>Tiro.Health.FormFiller.WebView2.Sentry</c> package.
         /// </summary>
-        protected virtual ITelemetrySink CreateTelemetrySink() => NullTelemetrySink.Instance;
+        protected virtual ITelemetrySink CreateTelemetrySink()
+            => TiroFormViewerDefaults.TelemetrySinkFactory?.Invoke() ?? NullTelemetrySink.Instance;
 
         private void BeginSession()
         {
             _session = _telemetry.BeginSession(Guid.NewGuid().ToString());
             _session.AddBreadcrumb("lifecycle", "TiroFormViewer constructed");
-        }
-
-        /// <summary>
-        /// Lazy-starts the telemetry session if it hasn't been started yet. Called from
-        /// <see cref="SetContextAsync"/> so the session is alive by the time we emit the
-        /// first transaction; callers can swap <see cref="TelemetrySink"/> at any point
-        /// before this fires.
-        /// </summary>
-        private void EnsureSession()
-        {
-            if (_session == null) BeginSession();
         }
 
         private void InitializeWiring()
@@ -512,7 +471,6 @@ namespace Tiro.Health.FormFiller.WebView2
             CancellationToken cancellationToken = default)
         {
             GuardCanSetContext();
-            EnsureSession();
 
             var span = _session?.StartTransaction("sdc.displayQuestionnaire", "swm.send");
             span?.SetTag("messageType", "sdc.displayQuestionnaire");

@@ -42,6 +42,94 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             // No assertions — this is a "doesn't throw" test.
         }
 
+        // -----------------------------------------------------------------------------
+        // TiroFormViewerDefaults.TelemetrySinkFactory — application-wide opt-in hook
+        // (the Sentry adapter sets this in TiroFormFillerSentry.UseSentry)
+        // -----------------------------------------------------------------------------
+
+        [TestCleanup]
+        public void ResetFactory()
+        {
+            // Static state — wipe between tests so a failing test can't poison the next.
+            TiroFormViewerDefaults.TelemetrySinkFactory = null;
+        }
+
+        [TestMethod]
+        public void TelemetrySinkFactory_NullByDefault_FallsBackToNullTelemetrySink()
+        {
+            TiroFormViewerDefaults.TelemetrySinkFactory = null;
+
+            var browser = new FakeEmbeddedBrowser();
+            var handler = new R5.SmartMessageHandler();
+            // Pass null sink so the DI ctor falls back to CreateTelemetrySink → factory lookup.
+            using var viewer = new TestableTiroFormViewer(browser, handler, telemetry: null);
+            SynchronizationContext.SetSynchronizationContext(null);
+
+            Assert.AreSame(NullTelemetrySink.Instance, viewer.TelemetrySink);
+        }
+
+        [TestMethod]
+        public void TelemetrySinkFactory_WhenRegistered_IsUsedByViewer()
+        {
+            var sink = new FakeTelemetrySink();
+            TiroFormViewerDefaults.TelemetrySinkFactory = () => sink;
+
+            var browser = new FakeEmbeddedBrowser();
+            var handler = new R5.SmartMessageHandler();
+            using var viewer = new TestableTiroFormViewer(browser, handler, telemetry: null);
+            SynchronizationContext.SetSynchronizationContext(null);
+
+            Assert.AreSame(sink, viewer.TelemetrySink,
+                "Factory result should be the viewer's resolved TelemetrySink.");
+            Assert.AreEqual(1, sink.Sessions.Count,
+                "Eager-session ctor must open exactly one session on the factory-produced sink.");
+        }
+
+        [TestMethod]
+        public void TelemetrySinkFactory_IsInvokedPerViewer()
+        {
+            // Different viewers should each get their own sink instance when the factory
+            // returns a new one — matches the SentryTelemetrySink usage where each viewer
+            // gets a fresh embedded-page DSN injection.
+            var produced = new System.Collections.Generic.List<FakeTelemetrySink>();
+            TiroFormViewerDefaults.TelemetrySinkFactory = () =>
+            {
+                var s = new FakeTelemetrySink();
+                produced.Add(s);
+                return s;
+            };
+
+            var browser1 = new FakeEmbeddedBrowser();
+            var handler1 = new R5.SmartMessageHandler();
+            using var viewer1 = new TestableTiroFormViewer(browser1, handler1, telemetry: null);
+
+            var browser2 = new FakeEmbeddedBrowser();
+            var handler2 = new R5.SmartMessageHandler();
+            using var viewer2 = new TestableTiroFormViewer(browser2, handler2, telemetry: null);
+            SynchronizationContext.SetSynchronizationContext(null);
+
+            Assert.AreEqual(2, produced.Count, "Factory should be invoked once per viewer ctor.");
+            Assert.AreNotSame(produced[0], produced[1], "Sanity: factory produced distinct instances.");
+        }
+
+        [TestMethod]
+        public void TelemetrySinkFactory_ChangeAfterCtor_DoesNotAffectExistingViewer()
+        {
+            var first = new FakeTelemetrySink();
+            TiroFormViewerDefaults.TelemetrySinkFactory = () => first;
+
+            var browser = new FakeEmbeddedBrowser();
+            var handler = new R5.SmartMessageHandler();
+            using var viewer = new TestableTiroFormViewer(browser, handler, telemetry: null);
+            SynchronizationContext.SetSynchronizationContext(null);
+            Assert.AreSame(first, viewer.TelemetrySink, "Sanity: viewer captured the first sink.");
+
+            // Reassigning the factory afterwards must not retroactively re-resolve.
+            TiroFormViewerDefaults.TelemetrySinkFactory = () => new FakeTelemetrySink();
+            Assert.AreSame(first, viewer.TelemetrySink,
+                "Sink is captured at ctor time; later factory swaps don't propagate to existing viewers.");
+        }
+
         [TestMethod]
         public void Dispose_AddsDisposedBreadcrumb_AndFlushesSink()
         {
@@ -187,82 +275,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         // -----------------------------------------------------------------------------
-        // TelemetrySink property — Designer-friendly Sentry opt-in (the new public API)
-        // -----------------------------------------------------------------------------
-
-        [TestMethod]
-        public void TelemetrySink_Getter_ReturnsCurrentSink()
-        {
-            var sink = new FakeTelemetrySink();
-            using var viewer = NewViewer(sink);
-
-            Assert.AreSame(sink, viewer.TelemetrySink);
-        }
-
-        [TestMethod]
-        public void TelemetrySink_Setter_ThrowsAfterSessionStarted()
-        {
-            var sink = new FakeTelemetrySink();
-            using var viewer = NewViewer(sink); // eager-session ctor (default)
-            Assert.AreEqual(1, sink.Sessions.Count, "Sanity: eager ctor opened a session.");
-
-            var ex = Assert.ThrowsException<InvalidOperationException>(
-                () => viewer.TelemetrySink = new FakeTelemetrySink());
-            StringAssert.Contains(ex.Message, "cannot be changed after the form session has started");
-        }
-
-        [TestMethod]
-        public void TelemetrySink_Setter_SwapsBeforeSessionStarted()
-        {
-            var initial = new FakeTelemetrySink();
-            using var viewer = NewDeferredViewer(initial);
-            Assert.AreEqual(0, initial.Sessions.Count, "Sanity: deferred ctor must not open a session.");
-
-            var replacement = new FakeTelemetrySink();
-            viewer.TelemetrySink = replacement;
-
-            Assert.AreSame(replacement, viewer.TelemetrySink,
-                "Setter should swap the sink before the session starts.");
-            Assert.AreEqual(0, initial.Sessions.Count, "Initial sink should never see a session.");
-            Assert.AreEqual(0, replacement.Sessions.Count, "Replacement sink shouldn't see a session yet either.");
-        }
-
-        [TestMethod]
-        public void TelemetrySink_Setter_NullRevertsToDefault()
-        {
-            var custom = new FakeTelemetrySink();
-            using var viewer = NewDeferredViewer(custom);
-            Assert.AreSame(custom, viewer.TelemetrySink, "Sanity: custom sink is current.");
-
-            viewer.TelemetrySink = null;
-
-            Assert.AreSame(NullTelemetrySink.Instance, viewer.TelemetrySink,
-                "Null assignment should fall back to CreateTelemetrySink (NullTelemetrySink for the R5/R4 closed bindings).");
-        }
-
-        [TestMethod]
-        public async Task DeferredConstruction_OpensSessionLazilyOnFirstSetContext()
-        {
-            var sink = new FakeTelemetrySink();
-            var browser = new FakeEmbeddedBrowser();
-            var handler = new R5.SmartMessageHandler();
-            using var viewer = new TestableTiroFormViewer(browser, handler, sink, beginSession: false);
-            SynchronizationContext.SetSynchronizationContext(null);
-
-            Assert.AreEqual(0, sink.Sessions.Count, "No session should open at ctor when beginSession=false.");
-
-            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
-            var setContextTask = viewer.SetContextAsync("http://example.org/my-form");
-            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
-            await setContextTask.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
-
-            Assert.AreEqual(1, sink.Sessions.Count, "First SetContextAsync should trigger BeginSession.");
-            Assert.IsTrue(sink.Sessions[0].Breadcrumbs.Any(b =>
-                b.Category == "lifecycle" && b.Message.Contains("constructed")),
-                "Lazy-started session should still carry the construction breadcrumb.");
-        }
-
-        // -----------------------------------------------------------------------------
         // Helpers
         // -----------------------------------------------------------------------------
 
@@ -286,19 +298,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             browser = new FakeEmbeddedBrowser();
             handler = new R5.SmartMessageHandler();
             var viewer = new TestableTiroFormViewer(browser, handler, sink);
-            SynchronizationContext.SetSynchronizationContext(null);
-            return viewer;
-        }
-
-        // Mirrors the parameterless ctor's lazy-session contract: the viewer is
-        // wired up but no session opens until SetContextAsync triggers it. Used
-        // to test TelemetrySink swap semantics where the eager-session path
-        // would forbid the swap.
-        private static TestableTiroFormViewer NewDeferredViewer(FakeTelemetrySink sink)
-        {
-            var browser = new FakeEmbeddedBrowser();
-            var handler = new R5.SmartMessageHandler();
-            var viewer = new TestableTiroFormViewer(browser, handler, sink, beginSession: false);
             SynchronizationContext.SetSynchronizationContext(null);
             return viewer;
         }

@@ -199,22 +199,24 @@ End Interface
 
 The FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) default to `NullTelemetrySink` (no-op): the `.Sentry` adapter is **not** a transitive dependency, so by default no Sentry NuGet, no SDK init, no `Sentry.init` on the embedded page.
 
-To **opt in to Sentry telemetry**, add the adapter package and assign `New SentryTelemetrySink()` to the Designer-placed viewer's `TelemetrySink` property in `Form_Load`, before `SetContextAsync`:
+To **opt in to Sentry telemetry**, add the adapter package and call `TiroFormFillerSentry.UseSentry()` **once at application startup** — before any form containing a viewer is constructed:
 
 ```xml
 <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
 ```
 
 ```vb
-Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-    TiroFormViewer.TelemetrySink = New SentryTelemetrySink()
-    ' ... AddHandler / SetContextAsync ...
+' My.MyApplication.Startup handler (or Sub Main):
+Private Sub MyApplication_Startup(sender As Object, e As StartupEventArgs) Handles Me.Startup
+    TiroFormFillerSentry.UseSentry()
 End Sub
 ```
 
-The session is started lazily on the first `SetContextAsync` call, so as long as the property is set before then, the supplied sink is used. Setting `TelemetrySink` after the session has begun throws `InvalidOperationException`.
+That's it. Every Designer-placed `TiroFormViewerR5` / `TiroFormViewerR4` in your application — anywhere in the codebase — picks up the configured sink at construction. No `Form_Load` code, no per-form awareness.
 
-The parameterless ctor uses **Tiro's hosted DSNs** — host telemetry to `tirohealth/dotnet-winforms`, embedded-page telemetry to `tirohealth/javascript` (same Sentry org, unified trace view). This is the **recommended** path during integration: the Tiro team can see your form sessions and help diagnose issues quickly. The defaults are designed to be safe to ship — **no FHIR payloads are attached to spans**, so PHI does not flow to Sentry. What you do get:
+> ⚠ **Ordering matters.** `UseSentry` registers a process-global factory consulted by `TiroFormViewer` at construction time. Call it before the first form containing a viewer is shown. Viewers constructed before `UseSentry` runs do not retroactively pick it up.
+
+The zero-arg call uses **Tiro's hosted DSNs** — host telemetry to `tirohealth/dotnet-winforms`, embedded-page telemetry to `tirohealth/javascript` (same Sentry org, unified trace view). This is the **recommended** path during integration: the Tiro team can see your form sessions and help diagnose issues quickly. The defaults are designed to be safe to ship — **no FHIR payloads are attached to spans**, so PHI does not flow to Sentry. What you do get:
 
 - **One Sentry transaction per round-trip message** (e.g. `sdc.displayQuestionnaire`, `form.submitted`) — actual request/response latency, not just the `PostMessage` cost
 - **One unified trace per form session** spanning both .NET and JS Sentry projects (the host injects its `traceId` into the embedded page; the JS Sentry SDK continues that trace)
@@ -225,9 +227,19 @@ The parameterless ctor uses **Tiro's hosted DSNs** — host telemetry to `tirohe
 - **Exceptions** captured via `SentrySdk.CaptureException` — the .NET-side exception type, message, and stack trace (these typically don't carry PHI; if your application code surfaces patient identifiers in exception messages, you'd want to scrub them before they bubble up)
 - **Release tag** auto-derived from the FormFiller assembly's `AssemblyInformationalVersion` (`Tiro.Health.FormFiller.WebView2@<semver>+<commit>`)
 
-To **redirect to your own Sentry project(s)** instead, assign `New SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) to the same `TelemetrySink` property. The host owns both DSNs (one for the .NET process, one injected into the embedded page).
+To **redirect to your own Sentry project** instead, pass your DSN (and optionally environment/release, or a full `SentryOptions`):
 
-For any other backend, implement `ITelemetrySink` yourself and pass it the same way.
+```vb
+TiroFormFillerSentry.UseSentry(dsn:="https://...@your-org.ingest.sentry.io/...")
+' or:
+TiroFormFillerSentry.UseSentry(dsn:="...", environment:="staging", release:="myapp@1.2.3")
+```
+
+For any other backend, implement `ITelemetrySink` yourself and register it directly:
+
+```vb
+TiroFormViewerDefaults.TelemetrySinkFactory = Function() New MyCustomTelemetrySink()
+```
 
 ## Configuring FHIR endpoints from the host
 
@@ -334,13 +346,15 @@ Designer-friendly closed bindings of `TiroFormViewer<,,>`.
 
 - **Targets**: `net48`
 - **Key type**: `TiroFormViewerR5` / `TiroFormViewerR4` (sealed) — drop-in WinForms control
-- **Defaults**: telemetry → `NullTelemetrySink` (no-op). Opt in to Sentry by referencing `Tiro.Health.FormFiller.WebView2.Sentry` and assigning `New SentryTelemetrySink()` to the viewer's `TelemetrySink` property in `Form_Load` (before `SetContextAsync`) — see [Telemetry](#telemetry)
+- **Defaults**: telemetry → `NullTelemetrySink` (no-op). Opt in to Sentry by referencing `Tiro.Health.FormFiller.WebView2.Sentry` and calling `TiroFormFillerSentry.UseSentry()` once at application startup — see [Telemetry](#telemetry)
 
 ### `Tiro.Health.FormFiller.WebView2.Sentry`
 Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you want the Sentry behaviour.
 
 - **Targets**: `net48`
-- **Key type**: `SentryTelemetrySink` — owns two DSNs (one for the .NET host process, one injected into the embedded page) plus environment and release. Ctor overloads let consumers override either DSN, the Sentry options, or the entire SDK init.
+- **Key types**:
+  - `TiroFormFillerSentry.UseSentry(...)` — one-line startup hook. Initializes the Sentry SDK and registers the global telemetry factory consulted by every viewer. Overloads for zero-args (Tiro defaults), a custom DSN, DSN + environment + release, or a full `SentryOptions`.
+  - `SentryTelemetrySink` — the underlying `ITelemetrySink` implementation. Owns two DSNs (one for the .NET host process, one injected into the embedded page) plus environment and release. Use directly only when registering with `TiroFormViewerDefaults.TelemetrySinkFactory` by hand or implementing a custom adapter chain.
 - Auto-detects release as `Tiro.Health.FormFiller.WebView2@<version>+<commit>` from the FormFiller assembly's `AssemblyInformationalVersion` (so traces deep-link to source via Sentry's release pipeline if you upload symbols)
 
 ### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
