@@ -308,22 +308,9 @@ namespace Tiro.Health.FormFiller.WebView2
                     await _browser.AddInitializationScriptAsync(bootstrapScript);
                 }
 
-                // Inject host-supplied <tiro-form-filler> endpoint config as
-                // window.__tiroFormFillerConfig. The bridge applies these values to every
-                // <tiro-form-filler> on the page before tiro-web-sdk wires it, overriding
-                // any attribute baked into index.html. Only emitted when the host actually
-                // sets at least one endpoint — otherwise the bridge is a no-op and any
-                // attributes on the element apply unchanged.
-                if (!string.IsNullOrEmpty(SdcEndpointAddress) || !string.IsNullOrEmpty(DataEndpointAddress))
-                {
-                    var formFillerConfig = new System.Collections.Generic.Dictionary<string, string>();
-                    if (!string.IsNullOrEmpty(SdcEndpointAddress))
-                        formFillerConfig["sdcEndpointAddress"] = SdcEndpointAddress;
-                    if (!string.IsNullOrEmpty(DataEndpointAddress))
-                        formFillerConfig["dataEndpointAddress"] = DataEndpointAddress;
-                    var formFillerJson = System.Text.Json.JsonSerializer.Serialize(formFillerConfig);
-                    await _browser.AddInitializationScriptAsync("window.__tiroFormFillerConfig=" + formFillerJson + ";");
-                }
+                // Note: endpoint config (SdcEndpointAddress, DataEndpointAddress) is no
+                // longer pre-injected here. It now travels as a protocol-conformant
+                // sdc.configure message sent after handshake — see SetContextAsync.
 
                 // Inject the SMART Web Messaging bridge — owns protocol, transport,
                 // telemetry instrumentation, and <tiro-form-filler> auto-wiring on the
@@ -489,6 +476,25 @@ namespace Tiro.Health.FormFiller.WebView2
                     await _initializationTask.WaitAsync(linkedCts.Token);
                     await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
                         timeoutMessage: $"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
+
+                    // After handshake, send the protocol's sdc.configure message with the
+                    // endpoint addresses so the bridge can apply them to the form-filler
+                    // before it initializes. Only emit when at least one endpoint is set;
+                    // the SDC server lands on payload.configuration.sdcServer (the
+                    // protocol's renderer-specific extension point) since it isn't a
+                    // terminology server in the strict SDC SWM sense. The data server
+                    // maps cleanly to payload.dataServer.
+                    if (!string.IsNullOrEmpty(SdcEndpointAddress) || !string.IsNullOrEmpty(DataEndpointAddress))
+                    {
+                        object configuration = string.IsNullOrEmpty(SdcEndpointAddress)
+                            ? null
+                            : (object)new System.Collections.Generic.Dictionary<string, object> { ["sdcServer"] = SdcEndpointAddress };
+                        await _smartWebMessageHandler.SendSdcConfigureAsync(
+                            terminologyServer: null,
+                            dataServer: string.IsNullOrEmpty(DataEndpointAddress) ? null : DataEndpointAddress,
+                            configuration: configuration,
+                            cancellationToken: linkedCts.Token);
+                    }
 
                     var wrappedHandler = WrapForRoundTrip(span, cancellationToken, originalHandler: null);
 

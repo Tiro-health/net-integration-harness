@@ -251,24 +251,35 @@
     // ============================================================
 
     function wireFormFiller(formFiller) {
-        // Apply host-supplied endpoint overrides before tiro-web-sdk reads attributes.
-        // Host wins: if window.__tiroFormFillerConfig sets a value, it overrides whatever
-        // is baked into the HTML so the .NET host and embedded form always agree on which
-        // FHIR servers to hit. The host injects this object via WebView2's
-        // AddScriptToExecuteOnDocumentCreatedAsync, so it lands before any page script runs.
-        const endpointConfig = window.__tiroFormFillerConfig;
-        if (endpointConfig) {
-            if (endpointConfig.sdcEndpointAddress)
-                formFiller.setAttribute("sdc-endpoint-address", endpointConfig.sdcEndpointAddress);
-            if (endpointConfig.dataEndpointAddress)
-                formFiller.setAttribute("data-endpoint-address", endpointConfig.dataEndpointAddress);
-        }
+        // Endpoint config is driven by the protocol's sdc.configure message (per the SDC
+        // SMART Web Messaging dialect — see github.com/brianpos/sdc-smart-web-messaging).
+        // The host sends sdc.configure after handshake; we stash the payload here and
+        // apply the contained server addresses to the form-filler element's attributes
+        // immediately before flipping the `questionnaire` attribute on, since tiro-web-sdk
+        // reads its endpoint attributes once at init time (= when `questionnaire` is set).
+        let pendingFormFillerConfig = null;
+
+        SmartWebMessaging.on("sdc.configure", payload => {
+            pendingFormFillerConfig = payload || null;
+        });
 
         // Render the questionnaire when the host says so.
         SmartWebMessaging.on("sdc.displayQuestionnaire", payload => {
             const { questionnaire, questionnaireResponse, context } = payload || {};
             if (context) SmartWebMessaging.context = { ...SmartWebMessaging.context, ...context };
             if (!questionnaire) return;
+
+            // Apply the most recent sdc.configure payload to the form-filler's endpoint
+            // attributes before init. Field mapping: the SDC server isn't a terminology
+            // server, so we carry it on `payload.configuration.sdcServer` (the protocol's
+            // renderer-specific extension point) rather than overloading `terminologyServer`.
+            // `payload.dataServer` maps cleanly to `data-endpoint-address`.
+            if (pendingFormFillerConfig) {
+                const sdcServer = pendingFormFillerConfig.configuration && pendingFormFillerConfig.configuration.sdcServer;
+                const dataServer = pendingFormFillerConfig.dataServer;
+                if (sdcServer) formFiller.setAttribute("sdc-endpoint-address", sdcServer);
+                if (dataServer) formFiller.setAttribute("data-endpoint-address", dataServer);
+            }
 
             if (SmartWebMessaging.context && Array.isArray(SmartWebMessaging.context.launchContext)) {
                 const launchContext = {};
@@ -299,9 +310,8 @@
             if (formFiller.questionnaire) formFiller.submit();
         });
 
-        // No-op handlers for protocol messages we don't act on (so they get a base ack
+        // No-op handler for the protocol message we don't act on (so it gets a base ack
         // instead of an UnknownMessageTypeException).
-        SmartWebMessaging.on("sdc.configure", () => { /* no-op */ });
         SmartWebMessaging.on("ui.form.persist", () => { /* no-op */ });
 
         // User submitted via the form-filler (button click or programmatic submit) →
