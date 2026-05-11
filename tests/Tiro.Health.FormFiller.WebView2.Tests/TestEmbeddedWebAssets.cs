@@ -54,18 +54,27 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 "index.html must not hardcode data-endpoint-address; let the .NET host configure it.");
         }
 
-        // The bridge applies window.__tiroFormFillerConfig to every <tiro-form-filler>
-        // it wires. The .NET host's TiroFormViewer.SdcEndpointAddress / DataEndpointAddress
-        // pipeline injects that object via AddScriptToExecuteOnDocumentCreatedAsync.
+        // The bridge handles the protocol's sdc.configure message: it stashes the
+        // payload and applies payload.configuration.sdcServer / payload.dataServer
+        // to the <tiro-form-filler> element's endpoint attributes right before the
+        // form-filler initializes (i.e. when the `questionnaire` attribute is set
+        // from the sdc.displayQuestionnaire handler). The .NET host's
+        // TiroFormViewer.SdcEndpointAddress / DataEndpointAddress pipeline drives
+        // this by calling SendSdcConfigureAsync after handshake.
         // Pinning the contract here keeps the JS and C# halves from drifting apart.
         [TestMethod]
-        public void BridgeJs_ReadsTiroFormFillerConfig()
+        public void BridgeJs_HandlesSdcConfigureMessage()
         {
             var js = ReadEmbeddedString("Tiro.Health.FormFiller.WebView2.WebAssets.tiro-swm-bridge.js");
 
-            StringAssert.Contains(js, "window.__tiroFormFillerConfig");
+            StringAssert.Contains(js, "SmartWebMessaging.on(\"sdc.configure\"");
+            StringAssert.Contains(js, "configuration.sdcServer");
+            StringAssert.Contains(js, "dataServer");
             StringAssert.Contains(js, "sdc-endpoint-address");
             StringAssert.Contains(js, "data-endpoint-address");
+            // The deprecated pre-injection path is gone; assert no regression.
+            Assert.IsFalse(js.Contains("__tiroFormFillerConfig"),
+                "Bridge must not read window.__tiroFormFillerConfig — endpoints come via sdc.configure now.");
         }
 
         private static string ReadEmbeddedString(string resourceName)

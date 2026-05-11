@@ -1,6 +1,6 @@
 # net-integration-harness
 
-A .NET library for integrating [SMART Web Messaging](https://hl7.org/fhir/smart-app-launch/smart-web-messaging.html) and [FHIR Structured Data Capture (SDC)](https://hl7.org/fhir/uv/sdc/) into Windows desktop applications using WebView2.
+A .NET library for integrating [SMART Web Messaging](https://hl7.org/fhir/smart-app-launch/smart-web-messaging.html) and [FHIR Structured Data Capture (SDC)](https://hl7.org/fhir/uv/sdc/) into Windows desktop applications using WebView2. Specifically targets the [SDC SMART Web Messaging protocol](https://github.com/brianpos/sdc-smart-web-messaging) — the dialect of SMART Web Messaging that defines `sdc.configure`, `sdc.configureContext`, `sdc.displayQuestionnaire`, and `form.submitted` for embedding SDC questionnaire renderers in EHR shells.
 
 Embed FHIR-based questionnaire forms in a WebView2 control and exchange `QuestionnaireResponse` data with them over the SMART Web Messaging protocol. The host control owns the protocol, transport, and (optional) telemetry; the embedded HTML page is purely UI — it does not need to know about SMART Web Messaging, Sentry, or WebView2 at all. The bridge JS that drives the page is bundled with the host library and auto-injected before any page script runs.
 
@@ -231,7 +231,7 @@ A `<tiro-form-filler>` typically talks to **two** FHIR servers:
 - **SDC server** — Tiro's Form SDK backend (see [docs.tiro.health → SDC Backend](https://docs.tiro.health/form-sdk/sdc-backend)). Serves the `Questionnaire` definitions, expands ValueSets for choice fields, and runs `$populate` (prefill), `$validate`, and `$generate-narrative`.
 - **Data server** — the FHIR endpoint that holds the **prepopulation data** the form fills itself from (`Patient`, `Observation`, `Condition`, etc.). The SDC backend's `$populate` operation reads from this server (via the `X-Data-Endpoint` header) to seed initial values.
 
-Configure both from the .NET host so the host process and the embedded JS hit the same servers; the host injects them via `AddScriptToExecuteOnDocumentCreatedAsync`, and the bridge applies them to every `<tiro-form-filler>` on the page before `tiro-web-sdk` reads attributes — overwriting any value baked into `index.html`.
+Configure both from the .NET host so the host process and the embedded JS hit the same servers. After the SMART Web Messaging handshake, the host sends an [`sdc.configure`](https://github.com/brianpos/sdc-smart-web-messaging) message carrying the endpoint addresses; the bridge stashes the payload and applies it to every `<tiro-form-filler>` on the page right before flipping the `questionnaire` attribute on — overwriting any value baked into `index.html`. (The SDC server lands on `payload.configuration.sdcServer`, not `payload.terminologyServer`: an SDC backend isn't a terminology server in the strict SDC SWM sense, so we use the protocol's renderer-specific extension point.)
 
 ```vb
 ' SDC backend — fetches the Questionnaire by canonical URL, expands ValueSets,
