@@ -9,8 +9,9 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R5
     /// Designer-friendly: sealed, parameterless ctor, bound to the R5
     /// <see cref="SmartWebMessaging.Fhir.R5.SmartMessageHandler"/>.
     /// Telemetry defaults to <see cref="NullTelemetrySink"/> (no-op). To enable Sentry
-    /// telemetry, install the <c>Tiro.Health.FormFiller.WebView2.Sentry</c> NuGet and pass
-    /// <c>new SentryTelemetrySink()</c> via the <see cref="TiroFormViewerR5(ITelemetrySink)"/> ctor.
+    /// telemetry, install the <c>Tiro.Health.FormFiller.WebView2.Sentry</c> NuGet and assign
+    /// <c>New SentryTelemetrySink()</c> to <see cref="TiroFormViewer{T,Q,O}.TelemetrySink"/>
+    /// (typically in <c>Form_Load</c>, before <see cref="TiroFormViewer{T,Q,O}.SetContextAsync"/>).
     /// </summary>
     public sealed class TiroFormViewerR5 : TiroFormViewer<Resource, QuestionnaireResponse, OperationOutcome>
     {
@@ -23,16 +24,12 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R5
         public const string DefaultSdcEndpointAddress = "https://sdc.tiro.health/fhir/r5";
 
         /// <summary>
-        /// Designer-friendly parameterless ctor. Telemetry is <see cref="NullTelemetrySink"/>.
+        /// Designer-friendly parameterless ctor. Telemetry defaults to
+        /// <see cref="NullTelemetrySink"/>; override via the
+        /// <see cref="TiroFormViewer{T,Q,O}.TelemetrySink"/> property before
+        /// <see cref="TiroFormViewer{T,Q,O}.SetContextAsync"/>.
         /// </summary>
-        public TiroFormViewerR5() : this(null) { }
-
-        /// <summary>
-        /// Opt-in telemetry ctor. Pass <c>new SentryTelemetrySink()</c> (from the
-        /// <c>Tiro.Health.FormFiller.WebView2.Sentry</c> NuGet) to enable Sentry, or any other
-        /// <see cref="ITelemetrySink"/> implementation. Pass <c>null</c> for no-op telemetry.
-        /// </summary>
-        public TiroFormViewerR5(ITelemetrySink telemetry) : base(telemetry)
+        public TiroFormViewerR5()
         {
             // Default the embedded form-filler to Tiro's R5 SDC server so out-of-the-box use
             // works without explicit configuration. Hosts that need to point the form at a

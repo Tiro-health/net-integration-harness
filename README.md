@@ -199,15 +199,20 @@ End Interface
 
 The FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) default to `NullTelemetrySink` (no-op): the `.Sentry` adapter is **not** a transitive dependency, so by default no Sentry NuGet, no SDK init, no `Sentry.init` on the embedded page.
 
-To **opt in to Sentry telemetry**, add the adapter package and pass `New SentryTelemetrySink()` to the viewer's ctor:
+To **opt in to Sentry telemetry**, add the adapter package and assign `New SentryTelemetrySink()` to the Designer-placed viewer's `TelemetrySink` property in `Form_Load`, before `SetContextAsync`:
 
 ```xml
 <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
 ```
 
 ```vb
-Dim viewer As New TiroFormViewerR5(New SentryTelemetrySink())
+Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+    TiroFormViewer.TelemetrySink = New SentryTelemetrySink()
+    ' ... AddHandler / SetContextAsync ...
+End Sub
 ```
+
+The session is started lazily on the first `SetContextAsync` call, so as long as the property is set before then, the supplied sink is used. Setting `TelemetrySink` after the session has begun throws `InvalidOperationException`.
 
 The parameterless ctor uses **Tiro's hosted DSNs** — host telemetry to `tirohealth/dotnet-winforms`, embedded-page telemetry to `tirohealth/javascript` (same Sentry org, unified trace view). This is the **recommended** path during integration: the Tiro team can see your form sessions and help diagnose issues quickly. The defaults are designed to be safe to ship — **no FHIR payloads are attached to spans**, so PHI does not flow to Sentry. What you do get:
 
@@ -220,7 +225,7 @@ The parameterless ctor uses **Tiro's hosted DSNs** — host telemetry to `tirohe
 - **Exceptions** captured via `SentrySdk.CaptureException` — the .NET-side exception type, message, and stack trace (these typically don't carry PHI; if your application code surfaces patient identifiers in exception messages, you'd want to scrub them before they bubble up)
 - **Release tag** auto-derived from the FormFiller assembly's `AssemblyInformationalVersion` (`Tiro.Health.FormFiller.WebView2@<semver>+<commit>`)
 
-To **redirect to your own Sentry project(s)** instead, construct `New SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) and feed it to the same ctor. The host owns both DSNs (one for the .NET process, one injected into the embedded page).
+To **redirect to your own Sentry project(s)** instead, assign `New SentryTelemetrySink(dsn, embeddedDsn, environment, release)` (or pass a `SentryOptions`) to the same `TelemetrySink` property. The host owns both DSNs (one for the .NET process, one injected into the embedded page).
 
 For any other backend, implement `ITelemetrySink` yourself and pass it the same way.
 
