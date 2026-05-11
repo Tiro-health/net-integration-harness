@@ -212,6 +212,51 @@ Private Sub MyApplication_Startup(sender As Object, e As StartupEventArgs) Handl
 End Sub
 ```
 
+#### Where this code lives
+
+VB.NET WinForms apps come in two flavors. Pick the one that matches your project:
+
+**1. `My.MyApplication` framework (the default Visual Studio WinForms template)**
+
+Your `.vbproj` has `<MyType>WindowsForms</MyType>` and `<StartupObject>YourApp.My.MyApplication</StartupObject>`. There's no `Sub Main` — the framework calls `Application.Run` for you. The `Startup` event fires after `My.MyApplication` is constructed but before `Application.Run`, which is before any form (and therefore any `TiroFormViewer`) exists. Drop the handler into `My Project\ApplicationEvents.vb`:
+
+```vb
+Imports Microsoft.VisualBasic.ApplicationServices
+Imports Tiro.Health.FormFiller.WebView2.Sentry
+
+Namespace My
+    Partial Friend Class MyApplication
+        Private Sub MyApplication_Startup(sender As Object, e As StartupEventArgs) Handles Me.Startup
+            TiroFormFillerSentry.UseSentry()
+        End Sub
+    End Class
+End Namespace
+```
+
+The quickest way to create this file: right-click the project → **Properties** → **Application** tab → **View Application Events** button. Visual Studio creates `ApplicationEvents.vb` under `My Project\` and adds the `<Compile>` entry to your `.vbproj` for you. If you hand-create the file, also add this to the project's `<Compile>` group:
+
+```xml
+<Compile Include="My Project\ApplicationEvents.vb" />
+```
+
+**2. Explicit `Sub Main` (used by the `EhrShellSample`)**
+
+Your `.vbproj` has `<StartupObject>YourApp.Program</StartupObject>` (or similar) pointing at a module with `<STAThread> Sub Main()`. Call `UseSentry()` at the top of `Sub Main`, before `Application.Run`:
+
+```vb
+Module Program
+    <STAThread>
+    Public Sub Main()
+        TiroFormFillerSentry.UseSentry()
+        Application.EnableVisualStyles()
+        Application.SetCompatibleTextRenderingDefault(False)
+        Application.Run(New MainForm())
+    End Sub
+End Module
+```
+
+---
+
 That's it. Every Designer-placed `TiroFormViewerR5` / `TiroFormViewerR4` in your application — anywhere in the codebase — picks up the configured sink at construction. No `Form_Load` code, no per-form awareness.
 
 > ⚠ **Ordering matters.** `UseSentry` registers a process-global factory consulted by `TiroFormViewer` at construction time. Call it before the first form containing a viewer is shown. Viewers constructed before `UseSentry` runs do not retroactively pick it up.
