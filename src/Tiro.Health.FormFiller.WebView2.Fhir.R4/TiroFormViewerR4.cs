@@ -16,14 +16,20 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R4
     public sealed class TiroFormViewerR4 : TiroFormViewer<Resource, QuestionnaireResponse, OperationOutcome>
     {
         /// <summary>
-        /// The Tiro-hosted SDC server for FHIR R4. Used as the default for
-        /// <see cref="TiroFormViewer{T,Q,O}.SdcEndpointAddress"/>. Best-effort shared instance —
-        /// no SLA, no uptime guarantees, not suitable for clinical workflows. Production
-        /// integrators should host their own SDC server and override <c>SdcEndpointAddress</c>.
+        /// Default SDC endpoint applied to <see cref="TiroFormViewer{T,Q,O}.SdcEndpointAddress"/>
+        /// so out-of-the-box R4 demos work without explicit configuration.
+        /// <para>
+        /// Currently points at Tiro's <c>/fhir/r5</c> endpoint — Tiro does not yet host a
+        /// dedicated R4 SDC server. The R5 endpoint accepts and round-trips most R4 questionnaire
+        /// content fine for development and demos, but resource shapes that diverge between
+        /// versions (cardinalities, enum sets, slot fields) may be coerced silently. For
+        /// production R4 workloads, override this with your own R4-hosting SDC server.
+        /// </para>
+        /// <para>
+        /// Best-effort shared instance — no SLA, no uptime guarantees, not suitable for
+        /// clinical workflows.
+        /// </para>
         /// </summary>
-        // Temporary: the dedicated R4 endpoint (`/fhir/r4`) is offline, so we point the R4
-        // default at the R5 endpoint to keep the demo working. Revert to `/fhir/r4` once
-        // the R4 SDC server is back online.
         public const string DefaultSdcEndpointAddress = "https://sdc.tiro.health/fhir/r5";
 
         /// <summary>
@@ -33,11 +39,11 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R4
         /// </summary>
         public TiroFormViewerR4()
         {
-            // Default the embedded form-filler to Tiro's R4 SDC server so out-of-the-box use
-            // works without explicit configuration. Hosts that need to point the form at a
-            // different SDC server overwrite this property before the WinForms Form.Load
-            // handler awaits SetContextAsync; the WebView2 init yields well before the
-            // bridge reads SdcEndpointAddress, so a Form.Load assignment wins.
+            // Seed SdcEndpointAddress with the default (currently the R5 endpoint — see the
+            // XML doc on DefaultSdcEndpointAddress for the version-routing nuance). Hosts that
+            // need to point the form at a different SDC server overwrite this property before
+            // the WinForms Form.Load handler awaits SetContextAsync; the WebView2 init yields
+            // well before the bridge reads SdcEndpointAddress, so a Form.Load assignment wins.
             SdcEndpointAddress = DefaultSdcEndpointAddress;
         }
 

@@ -263,7 +263,9 @@ TiroFormViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5"
 ' then Await TiroFormViewer.SetContextAsync(...)
 ```
 
-`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`; the R4 binding mirrors this for R4) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
+`SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
+
+> **R4 routes to the R5 endpoint today.** `TiroFormViewerR4.DefaultSdcEndpointAddress` also points at `/fhir/r5` — Tiro doesn't yet host a dedicated R4 SDC server. The R5 endpoint round-trips most R4 questionnaire content fine for development and demos, but resource shapes that diverge between versions can be coerced silently. R4 consumers running anything beyond exploration should override `SdcEndpointAddress` with their own R4-hosting SDC server.
 
 > **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
 
@@ -304,7 +306,7 @@ net-integration-harness/
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
 │   └── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
 ├── samples/
-│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form, single-patient demo (R4)
+│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form, single-patient demo (R5)
 │   └── Tiro.Health.FormFiller.WebView2.EhrShellSample/ # Dummy EHR shell — patient/encounter/template selection,
 │                                                       # tabbed viewer, in-memory QR persistence, custom index.html (R5)
 └── tests/
@@ -360,7 +362,7 @@ Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you wan
 ### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
 WinForms demos.
 
-- **`Sample`** — single-form, single-patient demo bound to FHIR **R4**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
+- **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
   - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
