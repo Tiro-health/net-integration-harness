@@ -51,6 +51,17 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         public string DataEndpointAddress { get; set; }
 
+        /// <summary>
+        /// The telemetry sink the viewer uses for instrumentation. Resolved at construction
+        /// time from <see cref="CreateTelemetrySink"/> — which on the base implementation
+        /// reads <see cref="TiroFormViewerDefaults.TelemetrySinkFactory"/>, defaulting to
+        /// <see cref="NullTelemetrySink"/> when no factory is registered. To enable Sentry
+        /// telemetry, install <c>Tiro.Health.FormFiller.WebView2.Sentry</c> and call
+        /// <c>TiroFormFillerSentry.UseSentry()</c> once at application startup, before any
+        /// viewer is constructed.
+        /// </summary>
+        public ITelemetrySink TelemetrySink => _telemetry;
+
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandlerBase<TResource, TQR, TOO> _smartWebMessageHandler;
         private IEmbeddedBrowser _browser;
@@ -156,12 +167,17 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>
         /// Default ctor used by the WinForms designer and at runtime in closed subclasses.
         /// Construction-time dependencies (browser + handler) come from the <c>Create*</c> factory methods.
+        /// The telemetry sink is resolved via <see cref="CreateTelemetrySink"/>, which on the base
+        /// reads <see cref="TiroFormViewerDefaults.TelemetrySinkFactory"/> — so applications opt
+        /// into telemetry once at startup (e.g. <c>TiroFormFillerSentry.UseSentry()</c>) and every
+        /// Designer-placed viewer picks it up. The session begins eagerly so init/handshake
+        /// telemetry is captured before the first <see cref="SetContextAsync"/>.
         /// </summary>
         protected TiroFormViewer()
         {
             InitializeComponent();
             // Skip all runtime initialization at design time.
-            // IMPORTANT: all FHIR/telemetry references must stay in InitializeRuntime(), NOT here.
+            // IMPORTANT: all FHIR/telemetry references must stay in InitializeWiring(), NOT here.
             // The JIT resolves every type referenced in this method body before executing any code,
             // so even an early return cannot guard against types referenced further down in this method.
             if (System.ComponentModel.LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
@@ -170,25 +186,11 @@ namespace Tiro.Health.FormFiller.WebView2
             _smartWebMessageHandler = CreateMessageHandler();
             _telemetry = CreateTelemetrySink();
             _ownsTelemetrySink = true;
-            InitializeRuntime();
-        }
-
-        /// <summary>
-        /// Opt-in telemetry ctor: uses <see cref="CreateBrowser"/> and <see cref="CreateMessageHandler"/>
-        /// like the parameterless ctor, but plugs in the supplied <paramref name="telemetry"/> sink
-        /// instead of <see cref="CreateTelemetrySink"/>. Pass <c>null</c> to fall back to
-        /// <see cref="CreateTelemetrySink"/>. The viewer takes ownership of the sink and disposes it.
-        /// </summary>
-        protected TiroFormViewer(ITelemetrySink telemetry)
-        {
-            InitializeComponent();
-            if (System.ComponentModel.LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
-                return;
-            _browser = CreateBrowser();
-            _smartWebMessageHandler = CreateMessageHandler();
-            _telemetry = telemetry ?? CreateTelemetrySink();
-            _ownsTelemetrySink = true;
-            InitializeRuntime();
+            // BeginSession must run BEFORE InitializeWiring: the latter kicks off
+            // InitializeBrowserAsync, whose synchronous prefix emits a "swm.lifecycle.init"
+            // span. The session has to be alive by then for that span to be recorded.
+            BeginSession();
+            InitializeWiring();
         }
 
         /// <summary>
@@ -196,7 +198,8 @@ namespace Tiro.Health.FormFiller.WebView2
         /// dependencies are injected directly. Not used by the designer. The injected
         /// <paramref name="telemetry"/> sink (if any) is NOT disposed by this control;
         /// that ownership stays with the caller. Pass <c>null</c> to fall back to
-        /// <see cref="CreateTelemetrySink"/>.
+        /// <see cref="CreateTelemetrySink"/>. The session begins eagerly to match the
+        /// parameterless ctor's contract.
         /// </summary>
         protected TiroFormViewer(
             IEmbeddedBrowser browser,
@@ -216,7 +219,8 @@ namespace Tiro.Health.FormFiller.WebView2
                 _telemetry = CreateTelemetrySink();
                 _ownsTelemetrySink = true;
             }
-            InitializeRuntime();
+            BeginSession();
+            InitializeWiring();
         }
 
         /// <summary>
@@ -237,13 +241,17 @@ namespace Tiro.Health.FormFiller.WebView2
         /// override this to plug in <c>SentryTelemetrySink</c> from the
         /// <c>Tiro.Health.FormFiller.WebView2.Sentry</c> package.
         /// </summary>
-        protected virtual ITelemetrySink CreateTelemetrySink() => NullTelemetrySink.Instance;
+        protected virtual ITelemetrySink CreateTelemetrySink()
+            => TiroFormViewerDefaults.TelemetrySinkFactory?.Invoke() ?? NullTelemetrySink.Instance;
 
-        private void InitializeRuntime()
+        private void BeginSession()
         {
             _session = _telemetry.BeginSession(Guid.NewGuid().ToString());
             _session.AddBreadcrumb("lifecycle", "TiroFormViewer constructed");
+        }
 
+        private void InitializeWiring()
+        {
             // Propagate the session's Sentry trace header into every outbound SMART
             // Web Messaging envelope as _meta.sentry.trace, so the JS Sentry SDK in the
             // embedded page can continue the trace and its spans land alongside the .NET
@@ -489,11 +497,34 @@ namespace Tiro.Health.FormFiller.WebView2
                         object configuration = string.IsNullOrEmpty(SdcEndpointAddress)
                             ? null
                             : (object)new System.Collections.Generic.Dictionary<string, object> { ["sdcServer"] = SdcEndpointAddress };
-                        await _smartWebMessageHandler.SendSdcConfigureAsync(
-                            terminologyServer: null,
-                            dataServer: string.IsNullOrEmpty(DataEndpointAddress) ? null : DataEndpointAddress,
-                            configuration: configuration,
-                            cancellationToken: linkedCts.Token);
+
+                        // sdc.configure is fire-and-forget — no response message — so the
+                        // span finishes synchronously on send completion. Mirrors the JS
+                        // bridge's swm.receive span so the trace shows both halves.
+                        var configureSpan = _session?.StartTransaction("sdc.configure", "swm.send");
+                        configureSpan?.SetTag("messageType", "sdc.configure");
+                        if (!string.IsNullOrEmpty(SdcEndpointAddress)) configureSpan?.SetTag("sdc_server", SdcEndpointAddress);
+                        if (!string.IsNullOrEmpty(DataEndpointAddress)) configureSpan?.SetTag("data_server", DataEndpointAddress);
+
+                        try
+                        {
+                            await _smartWebMessageHandler.SendSdcConfigureAsync(
+                                terminologyServer: null,
+                                dataServer: string.IsNullOrEmpty(DataEndpointAddress) ? null : DataEndpointAddress,
+                                configuration: configuration,
+                                cancellationToken: linkedCts.Token);
+                            configureSpan?.Finish(TelemetrySpanStatus.Ok);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            configureSpan?.Finish(TelemetrySpanStatus.Cancelled);
+                            throw;
+                        }
+                        catch
+                        {
+                            configureSpan?.Finish(TelemetrySpanStatus.InternalError);
+                            throw;
+                        }
                     }
 
                     var wrappedHandler = WrapForRoundTrip(span, cancellationToken, originalHandler: null);

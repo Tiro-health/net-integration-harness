@@ -9,8 +9,9 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R5
     /// Designer-friendly: sealed, parameterless ctor, bound to the R5
     /// <see cref="SmartWebMessaging.Fhir.R5.SmartMessageHandler"/>.
     /// Telemetry defaults to <see cref="NullTelemetrySink"/> (no-op). To enable Sentry
-    /// telemetry, install the <c>Tiro.Health.FormFiller.WebView2.Sentry</c> NuGet and pass
-    /// <c>new SentryTelemetrySink()</c> via the <see cref="TiroFormViewerR5(ITelemetrySink)"/> ctor.
+    /// telemetry, install the <c>Tiro.Health.FormFiller.WebView2.Sentry</c> NuGet and call
+    /// <c>TiroFormFillerSentry.UseSentry()</c> once at application startup (e.g. in
+    /// <c>Sub Main</c>, before any viewer is constructed).
     /// </summary>
     public sealed class TiroFormViewerR5 : TiroFormViewer<Resource, QuestionnaireResponse, OperationOutcome>
     {
@@ -23,16 +24,11 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R5
         public const string DefaultSdcEndpointAddress = "https://sdc.tiro.health/fhir/r5";
 
         /// <summary>
-        /// Designer-friendly parameterless ctor. Telemetry is <see cref="NullTelemetrySink"/>.
+        /// Designer-friendly parameterless ctor. Telemetry is resolved from
+        /// <see cref="TiroFormViewerDefaults.TelemetrySinkFactory"/> at construction —
+        /// defaults to <see cref="NullTelemetrySink"/> when no factory is registered.
         /// </summary>
-        public TiroFormViewerR5() : this(null) { }
-
-        /// <summary>
-        /// Opt-in telemetry ctor. Pass <c>new SentryTelemetrySink()</c> (from the
-        /// <c>Tiro.Health.FormFiller.WebView2.Sentry</c> NuGet) to enable Sentry, or any other
-        /// <see cref="ITelemetrySink"/> implementation. Pass <c>null</c> for no-op telemetry.
-        /// </summary>
-        public TiroFormViewerR5(ITelemetrySink telemetry) : base(telemetry)
+        public TiroFormViewerR5()
         {
             // Default the embedded form-filler to Tiro's R5 SDC server so out-of-the-box use
             // works without explicit configuration. Hosts that need to point the form at a

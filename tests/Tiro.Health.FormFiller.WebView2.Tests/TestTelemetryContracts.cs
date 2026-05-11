@@ -42,6 +42,94 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             // No assertions — this is a "doesn't throw" test.
         }
 
+        // -----------------------------------------------------------------------------
+        // TiroFormViewerDefaults.TelemetrySinkFactory — application-wide opt-in hook
+        // (the Sentry adapter sets this in TiroFormFillerSentry.UseSentry)
+        // -----------------------------------------------------------------------------
+
+        [TestCleanup]
+        public void ResetFactory()
+        {
+            // Static state — wipe between tests so a failing test can't poison the next.
+            TiroFormViewerDefaults.TelemetrySinkFactory = null;
+        }
+
+        [TestMethod]
+        public void TelemetrySinkFactory_NullByDefault_FallsBackToNullTelemetrySink()
+        {
+            TiroFormViewerDefaults.TelemetrySinkFactory = null;
+
+            var browser = new FakeEmbeddedBrowser();
+            var handler = new R5.SmartMessageHandler();
+            // Pass null sink so the DI ctor falls back to CreateTelemetrySink → factory lookup.
+            using var viewer = new TestableTiroFormViewer(browser, handler, telemetry: null);
+            SynchronizationContext.SetSynchronizationContext(null);
+
+            Assert.AreSame(NullTelemetrySink.Instance, viewer.TelemetrySink);
+        }
+
+        [TestMethod]
+        public void TelemetrySinkFactory_WhenRegistered_IsUsedByViewer()
+        {
+            var sink = new FakeTelemetrySink();
+            TiroFormViewerDefaults.TelemetrySinkFactory = () => sink;
+
+            var browser = new FakeEmbeddedBrowser();
+            var handler = new R5.SmartMessageHandler();
+            using var viewer = new TestableTiroFormViewer(browser, handler, telemetry: null);
+            SynchronizationContext.SetSynchronizationContext(null);
+
+            Assert.AreSame(sink, viewer.TelemetrySink,
+                "Factory result should be the viewer's resolved TelemetrySink.");
+            Assert.AreEqual(1, sink.Sessions.Count,
+                "Eager-session ctor must open exactly one session on the factory-produced sink.");
+        }
+
+        [TestMethod]
+        public void TelemetrySinkFactory_IsInvokedPerViewer()
+        {
+            // Different viewers should each get their own sink instance when the factory
+            // returns a new one — matches the SentryTelemetrySink usage where each viewer
+            // gets a fresh embedded-page DSN injection.
+            var produced = new System.Collections.Generic.List<FakeTelemetrySink>();
+            TiroFormViewerDefaults.TelemetrySinkFactory = () =>
+            {
+                var s = new FakeTelemetrySink();
+                produced.Add(s);
+                return s;
+            };
+
+            var browser1 = new FakeEmbeddedBrowser();
+            var handler1 = new R5.SmartMessageHandler();
+            using var viewer1 = new TestableTiroFormViewer(browser1, handler1, telemetry: null);
+
+            var browser2 = new FakeEmbeddedBrowser();
+            var handler2 = new R5.SmartMessageHandler();
+            using var viewer2 = new TestableTiroFormViewer(browser2, handler2, telemetry: null);
+            SynchronizationContext.SetSynchronizationContext(null);
+
+            Assert.AreEqual(2, produced.Count, "Factory should be invoked once per viewer ctor.");
+            Assert.AreNotSame(produced[0], produced[1], "Sanity: factory produced distinct instances.");
+        }
+
+        [TestMethod]
+        public void TelemetrySinkFactory_ChangeAfterCtor_DoesNotAffectExistingViewer()
+        {
+            var first = new FakeTelemetrySink();
+            TiroFormViewerDefaults.TelemetrySinkFactory = () => first;
+
+            var browser = new FakeEmbeddedBrowser();
+            var handler = new R5.SmartMessageHandler();
+            using var viewer = new TestableTiroFormViewer(browser, handler, telemetry: null);
+            SynchronizationContext.SetSynchronizationContext(null);
+            Assert.AreSame(first, viewer.TelemetrySink, "Sanity: viewer captured the first sink.");
+
+            // Reassigning the factory afterwards must not retroactively re-resolve.
+            TiroFormViewerDefaults.TelemetrySinkFactory = () => new FakeTelemetrySink();
+            Assert.AreSame(first, viewer.TelemetrySink,
+                "Sink is captured at ctor time; later factory swaps don't propagate to existing viewers.");
+        }
+
         [TestMethod]
         public void Dispose_AddsDisposedBreadcrumb_AndFlushesSink()
         {
@@ -122,6 +210,60 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.IsTrue(sendSpan.Tags.TryGetValue("questionnaire_url", out var qu)
                 && qu == "http://example.org/my-form",
                 "Expected questionnaire_url tag on the send transaction.");
+            viewer.Dispose();
+        }
+
+        [TestMethod]
+        public async Task SetContextAsync_StartsSdcConfigureTransaction_WhenEndpointsAreSet()
+        {
+            // PR #14 introduced sdc.configure as the protocol-conformant way to push
+            // endpoints into the page. The JS bridge already records a swm.receive span
+            // for it; this asserts the .NET sender side now mirrors that with its own
+            // swm.send span — so a unified trace shows both halves and Sentry users
+            // can see configure activity in the .NET project, not only in JS.
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            viewer.SdcEndpointAddress = "https://sdc.example.test/fhir/r5";
+            viewer.DataEndpointAddress = "https://data.example.test/fhir";
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+            var setContextTask = viewer.SetContextAsync("http://example.org/my-form");
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContextTask.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+            var session = sink.Sessions[0];
+            var configureSpan = session.Transactions.FirstOrDefault(t =>
+                t.Operation == "swm.send" && t.Name == "sdc.configure");
+            Assert.IsNotNull(configureSpan, "Expected an swm.send transaction named sdc.configure.");
+            Assert.IsTrue(configureSpan.Finished, "sdc.configure is fire-and-forget; the span should finish synchronously.");
+            Assert.AreEqual(TelemetrySpanStatus.Ok, configureSpan.FinalStatus);
+            Assert.IsTrue(configureSpan.Tags.TryGetValue("messageType", out var mt) && mt == "sdc.configure");
+            Assert.IsTrue(configureSpan.Tags.TryGetValue("sdc_server", out var sdc) && sdc == "https://sdc.example.test/fhir/r5",
+                "Expected sdc_server tag carrying the host-configured endpoint.");
+            Assert.IsTrue(configureSpan.Tags.TryGetValue("data_server", out var data) && data == "https://data.example.test/fhir",
+                "Expected data_server tag carrying the host-configured endpoint.");
+            viewer.Dispose();
+        }
+
+        [TestMethod]
+        public async Task SetContextAsync_DoesNotEmitSdcConfigureTransaction_WhenEndpointsAreUnset()
+        {
+            // Mirror of the host-side suppression: with no endpoints to push, no
+            // sdc.configure is sent and no swm.send span is recorded for it.
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            // SdcEndpointAddress / DataEndpointAddress are null by default on the abstract
+            // base — TestableTiroFormViewer doesn't set them in its ctor.
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+            var setContextTask = viewer.SetContextAsync("http://example.org/my-form");
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContextTask.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+            var session = sink.Sessions[0];
+            Assert.IsFalse(session.Transactions.Any(t =>
+                t.Operation == "swm.send" && t.Name == "sdc.configure"),
+                "Expected no sdc.configure transaction when both endpoints are empty.");
             viewer.Dispose();
         }
 
