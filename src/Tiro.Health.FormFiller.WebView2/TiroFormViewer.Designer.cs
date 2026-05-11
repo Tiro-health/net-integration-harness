@@ -29,6 +29,14 @@ namespace Tiro.Health.FormFiller.WebView2
                         _smartWebMessageHandler.FormSubmitted -= OnFormSubmitted;
                         _smartWebMessageHandler.HandshakeReceived -= OnHandshakeReceived;
                         _smartWebMessageHandler.CloseApplication -= OnCloseApplication;
+
+                        // Pending response listeners hold closures over caller-supplied handlers,
+                        // their captured state, and the per-send telemetry-span sentinel CTS.
+                        // The dispatch-side OnBrowserMessageReceived guard already drops inbound
+                        // messages on State == Disposed, so these listeners can never fire again —
+                        // clearing the dictionary releases the closures for GC right away rather
+                        // than waiting on the handler itself to become unreachable.
+                        _smartWebMessageHandler.ClearAllResponseListeners();
                     }
 
                     // 4. Close the telemetry session (final breadcrumb + flush pending events)
