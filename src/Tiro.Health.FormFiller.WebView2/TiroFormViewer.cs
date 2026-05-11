@@ -218,16 +218,19 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>
         /// DI ctor for tests and advanced consumers. Bypasses the factory methods —
         /// dependencies are injected directly. Not used by the designer. Begins the
-        /// telemetry session immediately (unlike the parameterless ctor, which defers
-        /// it to first <see cref="SetContextAsync"/>) so DI consumers see the session
-        /// lifecycle deterministically. The injected <paramref name="telemetry"/> sink
-        /// (if any) is NOT disposed by this control; that ownership stays with the
-        /// caller. Pass <c>null</c> to fall back to <see cref="CreateTelemetrySink"/>.
+        /// telemetry session immediately by default (so DI consumers see the session
+        /// lifecycle deterministically); pass <paramref name="beginSession"/> = <c>false</c>
+        /// to opt into the parameterless-ctor's lazy-session behavior for tests that
+        /// exercise <see cref="TelemetrySink"/> swap semantics. The injected
+        /// <paramref name="telemetry"/> sink (if any) is NOT disposed by this control;
+        /// that ownership stays with the caller. Pass <c>null</c> to fall back to
+        /// <see cref="CreateTelemetrySink"/>.
         /// </summary>
         protected TiroFormViewer(
             IEmbeddedBrowser browser,
             SmartMessageHandlerBase<TResource, TQR, TOO> handler,
-            ITelemetrySink telemetry = null)
+            ITelemetrySink telemetry = null,
+            bool beginSession = true)
         {
             InitializeComponent();
             _browser = browser ?? throw new ArgumentNullException(nameof(browser));
@@ -242,10 +245,12 @@ namespace Tiro.Health.FormFiller.WebView2
                 _telemetry = CreateTelemetrySink();
                 _ownsTelemetrySink = true;
             }
-            // BeginSession before InitializeWiring: the latter starts InitializeBrowserAsync,
-            // whose synchronous prefix tries to emit a "swm.lifecycle.init" span. The session
-            // must be alive by then for that span to be recorded.
-            BeginSession();
+            // When beginSession is true (default), start the session BEFORE InitializeWiring:
+            // the latter starts InitializeBrowserAsync, whose synchronous prefix tries to emit
+            // a "swm.lifecycle.init" span. The session must be alive by then for that span to
+            // be recorded. When beginSession is false, the session starts lazily on the first
+            // SetContextAsync call (matches the parameterless-ctor's contract).
+            if (beginSession) BeginSession();
             InitializeWiring();
         }
 

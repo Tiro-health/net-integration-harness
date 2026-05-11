@@ -15,8 +15,9 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public TestableTiroFormViewer(
             IEmbeddedBrowser browser,
             SmartMessageHandlerBase<Resource, QuestionnaireResponse, OperationOutcome> handler,
-            ITelemetrySink telemetry)
-            : base(browser, handler, telemetry)
+            ITelemetrySink telemetry,
+            bool beginSession = true)
+            : base(browser, handler, telemetry, beginSession)
         {
         }
 

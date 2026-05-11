@@ -334,7 +334,7 @@ Designer-friendly closed bindings of `TiroFormViewer<,,>`.
 
 - **Targets**: `net48`
 - **Key type**: `TiroFormViewerR5` / `TiroFormViewerR4` (sealed) — drop-in WinForms control
-- **Defaults**: telemetry → `NullTelemetrySink` (no-op). Opt in to Sentry by referencing `Tiro.Health.FormFiller.WebView2.Sentry` and passing `New SentryTelemetrySink()` to the ctor — see [Telemetry](#telemetry)
+- **Defaults**: telemetry → `NullTelemetrySink` (no-op). Opt in to Sentry by referencing `Tiro.Health.FormFiller.WebView2.Sentry` and assigning `New SentryTelemetrySink()` to the viewer's `TelemetrySink` property in `Form_Load` (before `SetContextAsync`) — see [Telemetry](#telemetry)
 
 ### `Tiro.Health.FormFiller.WebView2.Sentry`
 Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you want the Sentry behaviour.
