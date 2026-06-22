@@ -335,12 +335,20 @@ namespace Tiro.Health.SmartWebMessaging
         }
 
         public Task SendFormRequestSubmitAsync(
+            string intent = null,
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
         {
-            return SendMessageAsync("ui.form.requestSubmit", new RequestPayload(), responseHandler, cancellationToken);
+            // null intent keeps the backward-compatible empty payload, so the form
+            // defaults to "finalize". Only carry a FormRequestSubmit when the host
+            // explicitly expresses an intent (e.g. "save-draft").
+            RequestPayload payload = intent == null
+                ? new RequestPayload()
+                : new FormRequestSubmit(intent);
+            return SendMessageAsync("ui.form.requestSubmit", payload, responseHandler, cancellationToken);
         }
 
+        [Obsolete("ui.form.persist is a no-op in every bridge. Use SendFormRequestSubmitAsync(intent: \"save-draft\") to persist a draft through the form's submit pipeline.")]
         public Task SendFormPersistAsync(
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)

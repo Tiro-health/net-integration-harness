@@ -557,6 +557,7 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         public async Task SendFormRequestSubmitAsync(
+            string intent = null,
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
         {
@@ -564,6 +565,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
             var span = _session?.StartTransaction("ui.form.requestSubmit", "swm.send");
             span?.SetTag("messageType", "ui.form.requestSubmit");
+            span?.SetTag("intent", intent ?? "finalize");
 
             using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
             {
@@ -576,7 +578,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
                     var wrappedHandler = WrapForRoundTrip(span, cancellationToken, originalHandler: responseHandler);
 
-                    await _smartWebMessageHandler.SendFormRequestSubmitAsync(wrappedHandler, linkedCts.Token);
+                    await _smartWebMessageHandler.SendFormRequestSubmitAsync(intent, wrappedHandler, linkedCts.Token);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
                 {

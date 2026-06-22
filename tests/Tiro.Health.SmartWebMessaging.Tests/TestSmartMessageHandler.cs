@@ -397,8 +397,8 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
       messageHandler.SendMessage = mockSender.Object;
 
-      // Send form request submit with response handler
-      await messageHandler.SendFormRequestSubmitAsync(response =>
+      // Send form request submit with response handler (default intent)
+      await messageHandler.SendFormRequestSubmitAsync(responseHandler: response =>
       {
         // Response handler callback
         return System.Threading.Tasks.Task.CompletedTask;
@@ -412,8 +412,36 @@ namespace Tiro.Health.SmartWebMessaging.Tests
       Assert.IsTrue(sentMessage.Contains("\"messageType\":\"ui.form.requestSubmit\""));
       Assert.IsTrue(sentMessage.Contains("\"messagingHandle\":\"smart-web-messaging\""));
 
+      // Backward-compatible: no intent expressed → empty payload, no "intent" field.
+      Assert.IsFalse(sentMessage.Contains("\"intent\""));
+
       // Verify response listener was registered (we can't easily test the callback without more setup)
       // The existence of the response handler in the call indicates it was registered
+    }
+
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestSendFormRequestSubmitAsync_SaveDraftIntent()
+    {
+      var messageHandler = new SmartMessageHandler();
+      var mockSender = new Mock<SmartMessageHandler.MessageSender>();
+      string sentMessage = null!;
+
+      mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
+               .Callback<string>(msg => sentMessage = msg)
+               .Returns(System.Threading.Tasks.Task.CompletedTask);
+
+      messageHandler.SendMessage = mockSender.Object;
+
+      // Send form request submit with an explicit save-draft intent
+      await messageHandler.SendFormRequestSubmitAsync("save-draft");
+
+      mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
+
+      // Verify the message structure carries the intent and the polymorphic discriminator
+      Assert.IsNotNull(sentMessage);
+      Assert.IsTrue(sentMessage.Contains("\"messageType\":\"ui.form.requestSubmit\""));
+      Assert.IsTrue(sentMessage.Contains("\"intent\":\"save-draft\""));
+      Assert.IsTrue(sentMessage.Contains("\"$type\":\"formRequestSubmit\""));
     }
 
     [TestMethod]
@@ -430,8 +458,11 @@ namespace Tiro.Health.SmartWebMessaging.Tests
 
       messageHandler.SendMessage = mockSender.Object;
 
-      // Send form persist without response handler
+      // Send form persist without response handler. SendFormPersistAsync is deprecated
+      // (ui.form.persist is a no-op bridge-side) but still exercised until removed.
+#pragma warning disable CS0618
       await messageHandler.SendFormPersistAsync();
+#pragma warning restore CS0618
 
       // Verify the request was sent
       mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
