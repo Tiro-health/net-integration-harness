@@ -9,6 +9,11 @@ jobs:
   publish:
     runs-on: windows-latest
 
+    # The trusted-publisher policy on nuget.org is scoped to the 'production'
+    # environment; the OIDC token must carry that claim or the token exchange
+    # is rejected (HTTP 401, "Environment mismatch").
+    environment: production
+
     # OIDC trusted publishing to nuget.org: id-token mints the short-lived
     # token NuGet/login exchanges for a temporary API key. No long-lived secret.
     permissions:
