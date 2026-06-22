@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <title>Tiro Form Filler</title>
-    <!-- Sample pins a specific version. Note: save-draft (intent="save-draft") needs tiro-web-sdk >= 0.3.0. -->
-    <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer></script>
+    <!-- Sample tracks the floating `latest` SDK channel; integrators may pin a version
+         (e.g. sdk/v0.3.0/) for production reproducibility. Save-draft (intent="save-draft")
+         needs tiro-web-sdk >= 0.3.0. -->
+    <script src="https://cdn.tiro.health/sdk/latest/tiro-web-sdk.iife.js" defer></script>
     <style>
         html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; display: flex; flex-direction: column; }
         tiro-form-filler { display: block; flex: 1; }
@@ -49,7 +51,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Tiro Form Filler</title>
-    <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer><\/script>
+    <!-- Tracks the latest SDK; pin a version (e.g. sdk/v0.3.0/) for production. Save-draft needs >= 0.3.0. -->
+    <script src="https://cdn.tiro.health/sdk/latest/tiro-web-sdk.iife.js" defer><\/script>
     <style>
         html, body { margin: 0; height: 100%; }
         tiro-form-filler { display: block; height: 100%; }
