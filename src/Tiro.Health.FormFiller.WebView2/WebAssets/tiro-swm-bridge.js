@@ -306,12 +306,16 @@
 
         // Host-initiated submit: trigger the form-filler's own submit flow. The form-filler
         // validates and either fires tiro-submit (which we forward below) or tiro-error.
-        // The optional intent ("finalize" | "save-draft") tells the form which action the
-        // host requested; the form remains the authority on the resulting status.
+        // The optional intent ("finalize" | "save-draft") maps to the form-filler's target
+        // status. The form still owns the completed → amended promotion (via originate
+        // provenance) and the required-field validation skip for in-progress drafts.
         SmartWebMessaging.on("ui.form.requestSubmit", payload => {
-            if (formFiller.questionnaire) {
-                const intent = payload && payload.intent;
-                formFiller.submit(intent ? { intent } : undefined);
+            if (!formFiller.questionnaire) return;
+            const intent = payload && payload.intent;
+            if (intent === "save-draft") {
+                formFiller.submit({ status: "in-progress" });
+            } else {
+                formFiller.submit();
             }
         });
 
