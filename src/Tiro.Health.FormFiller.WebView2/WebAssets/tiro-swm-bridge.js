@@ -306,8 +306,13 @@
 
         // Host-initiated submit: trigger the form-filler's own submit flow. The form-filler
         // validates and either fires tiro-submit (which we forward below) or tiro-error.
-        SmartWebMessaging.on("ui.form.requestSubmit", () => {
-            if (formFiller.questionnaire) formFiller.submit();
+        // The optional intent ("finalize" | "save-draft") tells the form which action the
+        // host requested; the form remains the authority on the resulting status.
+        SmartWebMessaging.on("ui.form.requestSubmit", payload => {
+            if (formFiller.questionnaire) {
+                const intent = payload && payload.intent;
+                formFiller.submit(intent ? { intent } : undefined);
+            }
         });
 
         // No-op handler for the protocol message we don't act on (so it gets a base ack
@@ -318,7 +323,9 @@
         // build the form.submitted message and send it to the host. Page never sees this.
         formFiller.addEventListener("tiro-submit", async e => {
             let response = sanitize(e.detail.response);
-            response.status = "completed";
+            // The form component owns the resulting status (completed / amended / in-progress).
+            // Keep a defensive fallback only if it somehow arrives unset.
+            if (!response.status) response.status = "completed";
             try {
                 if (formFiller.sdcClient && typeof formFiller.sdcClient.generateNarrative === "function") {
                     response.text = await formFiller.sdcClient.generateNarrative(response);
