@@ -1,0 +1,11 @@
+{
+  "name": "bridge-contract-tests",
+  "private": true,
+  "description": "Static type-check of the shipped tiro-swm-bridge.js against the @tiro-health/web-sdk (<tiro-form-filler>) frontend contract. The SDK is intentionally NOT a pinned dependency here: CI installs @tiro-health/web-sdk@latest fresh so the check tracks the floating CDN 'latest' channel the harness actually loads.",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

@@ -250,6 +250,12 @@
     // 4. Auto-wire <tiro-form-filler>
     // ============================================================
 
+    // The handle is intersected with HTMLElement because the published web-sdk .d.ts
+    // imports its base class (LitElement) from `lit`, which a type-only consumer doesn't
+    // install — without the intersection the element would lose setAttribute/addEventListener.
+    // The element-specific members we care about (submit, questionnaire, sdcClient) are
+    // declared directly on TiroFormFiller, so the submit() contract is still checked.
+    /** @param {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement} formFiller */
     function wireFormFiller(formFiller) {
         // Endpoint config is driven by the protocol's sdc.configure message (per the SDC
         // SMART Web Messaging dialect — see github.com/brianpos/sdc-smart-web-messaging).
@@ -325,7 +331,7 @@
 
         // User submitted via the form-filler (button click or programmatic submit) →
         // build the form.submitted message and send it to the host. Page never sees this.
-        formFiller.addEventListener("tiro-submit", async e => {
+        formFiller.addEventListener("tiro-submit", /** @param {CustomEvent} e */ async e => {
             let response = sanitize(e.detail.response);
             // The form component owns the resulting status (completed / amended / in-progress).
             // Keep a defensive fallback only if it somehow arrives unset.
@@ -356,7 +362,8 @@
     }
 
     function wireAllFormFillers() {
-        document.querySelectorAll("tiro-form-filler").forEach(wireFormFiller);
+        document.querySelectorAll("tiro-form-filler").forEach(el =>
+            wireFormFiller(/** @type {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement} */ (el)));
     }
 
     // ============================================================

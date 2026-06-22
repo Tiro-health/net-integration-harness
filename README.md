@@ -451,6 +451,14 @@ Reference for integrators customizing their `index.html`. The auto-injected brid
 
 The integrator owns the `tiro-web-sdk.iife.js` `<script>` tag in their `index.html`.
 
+### Frontend version compatibility
+
+The harness is version-agnostic about `tiro-web-sdk` — you choose the `<script>` version. One floor to know:
+
+- **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) requires **`tiro-web-sdk` >= 0.3.0**. It maps to the frontend's `submit({ status: "in-progress" })`, an option added in 0.3.0. On older versions the option is ignored and the form **finalizes** instead of saving a draft. Plain finalize (`SendFormRequestSubmitAsync()`) works on all versions.
+
+The `tests/bridge-contract/` type-check guards this contract against the live `tiro-web-sdk@latest`; see its README.
+
 ## Troubleshooting
 
 ### WinForms Designer can't load `TiroFormViewerR5/R4`
