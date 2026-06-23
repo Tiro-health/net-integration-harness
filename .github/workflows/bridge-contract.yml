@@ -3,13 +3,13 @@ name: Bridge contract
 # Static type-check of the shipped tiro-swm-bridge.js against the live
 # @tiro-health/web-sdk (<tiro-form-filler>) types. Catches bridge<->frontend
 # drift such as the submit({ intent }) vs submit({ status }) bug. See
-# tests/bridge-contract/README.md.
+# build/bridge-contract/README.md.
 on:
   pull_request:
     branches: [master]
     paths:
       - 'src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js'
-      - 'tests/bridge-contract/**'
+      - 'build/bridge-contract/**'
       - '.github/workflows/bridge-contract.yml'
   push:
     branches: [master]
@@ -38,7 +38,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: tests/bridge-contract
+        working-directory: build/bridge-contract
 
     # The project .npmrc references ${NODE_AUTH_TOKEN}; set it for every step so npm
     # never trips on an unset var. It's the ephemeral job token — no stored secret.

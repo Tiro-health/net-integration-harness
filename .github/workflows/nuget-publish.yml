@@ -13,7 +13,7 @@ jobs:
   # This is intentionally BLOCKING. While the save-draft submit({ status }) API is only
   # on web-sdk >= 0.3.0 (not yet on the `latest` dist-tag), this gate fails and blocks
   # releases by design — until 0.3.0 is promoted to `latest`, or the bridge stops calling
-  # an API absent from stable. See tests/bridge-contract/README.md.
+  # an API absent from stable. See build/bridge-contract/README.md.
   contract-check:
     runs-on: ubuntu-latest
     permissions:
@@ -21,7 +21,7 @@ jobs:
       packages: read
     defaults:
       run:
-        working-directory: tests/bridge-contract
+        working-directory: build/bridge-contract
     env:
       NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

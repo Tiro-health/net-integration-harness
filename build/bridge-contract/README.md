@@ -43,7 +43,7 @@ The package is on **GitHub Packages**, so npm needs a token with `read:packages`
 
 ```sh
 gh auth refresh -h github.com -s read:packages    # one-time, adds the scope
-cd tests/bridge-contract
+cd build/bridge-contract
 export NODE_AUTH_TOKEN=$(gh auth token)
 npm ci
 npm install --no-save @tiro-health/web-sdk@latest  # or @next to see it green

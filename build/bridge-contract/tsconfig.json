@@ -22,7 +22,7 @@
     "baseUrl": ".",
     // The bridge lives outside this test dir, so a bare `import('@tiro-health/web-sdk')`
     // isn't found by the normal node_modules walk (the bridge's ancestor dirs don't include
-    // tests/bridge-contract/node_modules). Map the specifier to the installed package
+    // build/bridge-contract/node_modules). Map the specifier to the installed package
     // DIRECTORY — not a specific .d.ts — so TS reads its package.json and follows whatever
     // `exports`/`types` entry the SDK publishes. Resolves correctly today and stays robust
     // if a future SDK release relayouts its dist (the types entry could move).
