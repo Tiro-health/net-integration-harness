@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net48</TargetFrameworks>
+    <AssemblyName>Tiro.Health.FormSdk.Client</AssemblyName>
+    <RootNamespace>Tiro.Health.FormSdk.Client</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Version>1.0.0</Version>
+    <Authors>Thibault Mahieu</Authors>
+    <Company>Tiro.health</Company>
+    <Description>Typed SDC FHIR client — version-agnostic core for the stateless SDC server operations ($validate, $extract). Use a closed-binding package (e.g. Tiro.Health.FormSdk.Client.Fhir.R5).</Description>
+    <AutoGenerateBindingRedirects>True</AutoGenerateBindingRedirects>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Hl7.Fhir.Base" Version="5.13.2" />
+    <PackageReference Include="System.Text.Json" Version="9.0.2" />
+  </ItemGroup>
+
+  <!-- On .NET Framework, HttpClient lives in the framework System.Net.Http assembly,
+       which SDK-style net48 projects don't reference by default. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+</Project>

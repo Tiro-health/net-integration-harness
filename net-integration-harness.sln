@@ -1,4 +1,4 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36414.22
 MinimumVisualStudioVersion = 10.0.40219.1
@@ -23,6 +23,16 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.SmartWebMessaging.Tests", "tests\Tiro.Health.SmartWebMessaging.Tests\Tiro.Health.SmartWebMessaging.Tests.csproj", "{C1A2B3C4-D5E6-F789-ABCD-000000000006}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.FormFiller.WebView2.Tests", "tests\Tiro.Health.FormFiller.WebView2.Tests\Tiro.Health.FormFiller.WebView2.Tests.csproj", "{C1A2B3C4-D5E6-F789-ABCD-000000000007}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{F68978BC-B40C-4A91-9575-8183F111EFFE}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.FormSdk.Client", "src\Tiro.Health.FormSdk.Client\Tiro.Health.FormSdk.Client.csproj", "{531A2384-680D-4EA6-9D50-35EDAE45BBFD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.FormSdk.Client.Fhir.R5", "src\Tiro.Health.FormSdk.Client.Fhir.R5\Tiro.Health.FormSdk.Client.Fhir.R5.csproj", "{99AD7864-89B2-4D78-9DAA-D691997F06EB}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{3CDEF491-5EF2-4B91-8E2A-133BE48B786E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.FormSdk.Client.Tests", "tests\Tiro.Health.FormSdk.Client.Tests\Tiro.Health.FormSdk.Client.Tests.csproj", "{D51AFB98-8311-4757-9D52-1BD1EFE34900}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -74,11 +84,28 @@ Global
 		{C1A2B3C4-D5E6-F789-ABCD-000000000007}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C1A2B3C4-D5E6-F789-ABCD-000000000007}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C1A2B3C4-D5E6-F789-ABCD-000000000007}.Release|Any CPU.Build.0 = Release|Any CPU
+		{531A2384-680D-4EA6-9D50-35EDAE45BBFD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{531A2384-680D-4EA6-9D50-35EDAE45BBFD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{531A2384-680D-4EA6-9D50-35EDAE45BBFD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{531A2384-680D-4EA6-9D50-35EDAE45BBFD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{99AD7864-89B2-4D78-9DAA-D691997F06EB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{99AD7864-89B2-4D78-9DAA-D691997F06EB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{99AD7864-89B2-4D78-9DAA-D691997F06EB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{99AD7864-89B2-4D78-9DAA-D691997F06EB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D51AFB98-8311-4757-9D52-1BD1EFE34900}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D51AFB98-8311-4757-9D52-1BD1EFE34900}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D51AFB98-8311-4757-9D52-1BD1EFE34900}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D51AFB98-8311-4757-9D52-1BD1EFE34900}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {C890632F-1B27-4085-ADCF-D64BB7693A30}
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{531A2384-680D-4EA6-9D50-35EDAE45BBFD} = {F68978BC-B40C-4A91-9575-8183F111EFFE}
+		{99AD7864-89B2-4D78-9DAA-D691997F06EB} = {F68978BC-B40C-4A91-9575-8183F111EFFE}
+		{D51AFB98-8311-4757-9D52-1BD1EFE34900} = {3CDEF491-5EF2-4B91-8E2A-133BE48B786E}
 	EndGlobalSection
 EndGlobal

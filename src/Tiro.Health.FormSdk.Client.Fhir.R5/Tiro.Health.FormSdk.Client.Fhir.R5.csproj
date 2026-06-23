@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net48</TargetFrameworks>
+    <AssemblyName>Tiro.Health.FormSdk.Client.Fhir.R5</AssemblyName>
+    <RootNamespace>Tiro.Health.FormSdk.Client.Fhir.R5</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Version>1.0.0</Version>
+    <Authors>Thibault Mahieu</Authors>
+    <Company>Tiro.health</Company>
+    <Description>Typed SDC FHIR client — FHIR R5 closed binding ($validate, $extract).</Description>
+    <AutoGenerateBindingRedirects>True</AutoGenerateBindingRedirects>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Hl7.Fhir.R5" Version="5.13.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tiro.Health.FormSdk.Client\Tiro.Health.FormSdk.Client.csproj" />
+  </ItemGroup>
+
+  <!-- HttpClient is referenced in the public ctor signature; net48 needs the framework assembly. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+</Project>
