@@ -3,9 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <title>Tiro Form Filler</title>
-    <!-- Sample tracks the floating `latest` SDK channel; integrators may pin a version
-         (e.g. sdk/v0.3.0/) for production reproducibility. Save-draft (intent="save-draft")
-         needs tiro-web-sdk >= 0.3.0. -->
+    <!-- This sample tracks the floating `latest` SDK channel.
+         Recommendation: if you pin the .NET integration harness (NuGet) to a fixed version,
+         pin a matching tiro-web-sdk version here too (e.g. sdk/vX.Y.Z/) instead of `latest`.
+         A pinned harness ships a fixed bridge validated against a specific frontend, and a
+         future `latest` could drift the contract out from under it. Track `latest` only if
+         you also track the latest harness. Save-draft (intent="save-draft") needs >= 0.3.0. -->
     <script src="https://cdn.tiro.health/sdk/latest/tiro-web-sdk.iife.js" defer></script>
     <style>
         html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; display: flex; flex-direction: column; }
@@ -51,7 +54,10 @@
 <head>
     <meta charset="UTF-8">
     <title>Tiro Form Filler</title>
-    <!-- Tracks the latest SDK; pin a version (e.g. sdk/v0.3.0/) for production. Save-draft needs >= 0.3.0. -->
+    <!-- Tracks the latest SDK. If you pin the .NET integration harness (NuGet) to a fixed
+         version, pin a matching tiro-web-sdk version here too (e.g. sdk/vX.Y.Z/) instead of
+         `latest`, so a future frontend release can't drift the bridge contract. Save-draft
+         needs tiro-web-sdk >= 0.3.0. -->
     <script src="https://cdn.tiro.health/sdk/latest/tiro-web-sdk.iife.js" defer><\/script>
     <style>
         html, body { margin: 0; height: 100%; }

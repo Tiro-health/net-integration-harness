@@ -453,7 +453,11 @@ The integrator owns the `tiro-web-sdk.iife.js` `<script>` tag in their `index.ht
 
 ### Frontend version compatibility
 
-The harness is version-agnostic about `tiro-web-sdk` — you choose the `<script>` version. One floor to know:
+The harness is version-agnostic about `tiro-web-sdk` — you choose the `<script>` version.
+
+**Pinning recommendation:** if you pin the .NET integration harness (NuGet package) to a fixed version, pin a matching `tiro-web-sdk` version in your `index.html` too (`sdk/vX.Y.Z/`) rather than tracking floating `sdk/latest`. A pinned harness ships a fixed bridge that was validated against a specific frontend (each harness release records the version it validated against); tracking `latest` lets a future frontend release drift the bridge contract out from under your pinned bridge. Track `latest` only if you also track the latest harness.
+
+One floor to know:
 
 - **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) requires **`tiro-web-sdk` >= 0.3.0**. It maps to the frontend's `submit({ status: "in-progress" })`, an option added in 0.3.0. On older versions the option is ignored and the form **finalizes** instead of saving a draft. Plain finalize (`SendFormRequestSubmitAsync()`) works on all versions.
 
