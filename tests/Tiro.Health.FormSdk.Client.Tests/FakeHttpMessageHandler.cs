@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http;
 using System.Text;
 
 namespace Tiro.Health.FormSdk.Client.Tests
@@ -26,7 +27,8 @@ namespace Tiro.Health.FormSdk.Client.Tests
         {
             LastRequest = request;
             LastContentType = request.Content?.Headers.ContentType?.MediaType;
-            LastRequestBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            // No ct overload of ReadAsStringAsync on net48; the body is tiny canned JSON anyway.
+            LastRequestBody = request.Content is null ? null : await request.Content.ReadAsStringAsync();
 
             return new HttpResponseMessage(_status)
             {

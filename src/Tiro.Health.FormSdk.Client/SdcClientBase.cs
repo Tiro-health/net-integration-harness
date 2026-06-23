@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Hl7.Fhir.Model;
+using Hl7.Fhir.Serialization;
 
 namespace Tiro.Health.FormSdk.Client
 {
@@ -50,11 +51,13 @@ namespace Tiro.Health.FormSdk.Client
             if (baseAddress == null) throw new ArgumentNullException(nameof(baseAddress));
             _fhirJson = fhirJson ?? throw new ArgumentNullException(nameof(fhirJson));
 
-            // Trailing slash is required so relative operation paths resolve against the full base
-            // (e.g. ".../fhir/r5/" + "QuestionnaireResponse/$validate") instead of dropping the last segment.
-            _baseAddress = baseAddress.AbsoluteUri.EndsWith("/", StringComparison.Ordinal)
+            // A trailing slash on the PATH is required so relative operation paths resolve against
+            // the full base (".../fhir/r5/" + "QuestionnaireResponse/$validate") instead of dropping
+            // the last segment. Normalize on AbsolutePath, not AbsoluteUri, so a base that carries a
+            // query/fragment isn't corrupted (e.g. ".../r5?x" + "/" -> ".../r5?x/").
+            _baseAddress = baseAddress.AbsolutePath.EndsWith("/", StringComparison.Ordinal)
                 ? baseAddress
-                : new Uri(baseAddress.AbsoluteUri + "/");
+                : new Uri(baseAddress, baseAddress.AbsolutePath + "/");
 
             // We resolve absolute request URIs ourselves (see PostResourceAsync), so we never touch
             // the client's BaseAddress — leaving an injected/shared client untouched.
@@ -111,7 +114,18 @@ namespace Tiro.Health.FormSdk.Client
                     }
 
                     Resource parsed;
-                    try { parsed = JsonSerializer.Deserialize<Resource>(responseBody, _fhirJson); }
+                    try
+                    {
+                        parsed = JsonSerializer.Deserialize<Resource>(responseBody, _fhirJson);
+                    }
+                    catch (DeserializationFailedException ex) when (ex.PartialResult is Resource recovered)
+                    {
+                        // Honor the binding's Recoverable mode: the body parsed into a usable POCO
+                        // despite issues the server's (possibly newer) FHIR introduced — e.g. an
+                        // unrecognized element or code. JsonSerializer.Deserialize still throws in
+                        // Recoverable mode, carrying the partial result on the exception.
+                        parsed = recovered;
+                    }
                     catch (Exception ex)
                     {
                         throw new SdcOperationException(relativePath, response.StatusCode, null,
@@ -120,8 +134,14 @@ namespace Tiro.Health.FormSdk.Client
 
                     if (parsed is TOut typed) return typed;
 
-                    throw new SdcOperationException(relativePath, response.StatusCode, parsed as OperationOutcome,
-                        $"SDC operation '{relativePath}' returned '{parsed?.TypeName ?? "null"}', expected '{typeof(TOut).Name}'.");
+                    // Wrong resource type on a success status. If it's an OperationOutcome, surface its
+                    // diagnostics in the message (not just on the exception's Outcome) so the failure is legible.
+                    var asOutcome = parsed as OperationOutcome;
+                    var detail = asOutcome?.Issue?.Count > 0
+                        ? $" Server OperationOutcome: {asOutcome.Issue[0].Severity} — {asOutcome.Issue[0].Diagnostics ?? asOutcome.Issue[0].Details?.Text}"
+                        : string.Empty;
+                    throw new SdcOperationException(relativePath, response.StatusCode, asOutcome,
+                        $"SDC operation '{relativePath}' returned '{parsed?.TypeName ?? "null"}', expected '{typeof(TOut).Name}'.{detail}");
                 }
             }
         }

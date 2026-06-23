@@ -17,16 +17,19 @@ namespace Tiro.Health.FormSdk.Client.Fhir.R5
     /// </remarks>
     public sealed class SdcClient : SdcClientBase<QuestionnaireResponse, OperationOutcome, Bundle>
     {
+        // Built once and shared: the R5 FHIR converter set (~150 resource types) is identical for
+        // every instance, and JsonSerializerOptions is thread-safe once used. Rebuilding it per
+        // construction wastes CPU/allocations on the hot IHttpClientFactory per-request path.
+        private static readonly JsonSerializerOptions FhirJson =
+            new JsonSerializerOptions()
+                .ForFhir(ModelInfo.ModelInspector)
+                .UsingMode(DeserializerModes.Recoverable);
+
         /// <param name="baseAddress">The SDC server FHIR R5 base, e.g. <c>https://host/fhir/r5</c>.</param>
         /// <param name="httpClient">Optional pre-configured client for custom TLS/proxy/timeouts.</param>
         public SdcClient(Uri baseAddress, HttpClient httpClient = null)
-            : base(baseAddress, CreateFhirJson(), httpClient)
+            : base(baseAddress, FhirJson, httpClient)
         {
         }
-
-        private static JsonSerializerOptions CreateFhirJson()
-            => new JsonSerializerOptions()
-                .ForFhir(ModelInfo.ModelInspector)
-                .UsingMode(DeserializerModes.Recoverable);
     }
 }

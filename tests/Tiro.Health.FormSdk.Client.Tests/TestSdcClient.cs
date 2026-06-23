@@ -84,6 +84,21 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
+        public async Task ValidateAsync_RecoverableBody_ReturnsPartialResult_WithoutThrowing()
+        {
+            // A 200 whose OperationOutcome carries an element this Firely version doesn't recognize
+            // (as a newer server would emit). Recoverable mode should yield the partial POCO, not throw.
+            const string outcomeJson =
+                """{"resourceType":"OperationOutcome","issue":[{"severity":"information","code":"informational","diagnostics":"ok"}],"madeUpFutureElement":"x"}""";
+            var (client, _) = ClientReturning(HttpStatusCode.OK, outcomeJson);
+
+            var outcome = await client.ValidateAsync(SampleResponse());
+
+            Assert.IsNotNull(outcome);
+            Assert.AreEqual(OperationOutcome.IssueSeverity.Information, outcome.Issue[0].Severity);
+        }
+
+        [TestMethod]
         public async Task SharedHttpClient_IsNotMutated_AndEachClientTargetsItsOwnBase()
         {
             const string outcomeJson =
