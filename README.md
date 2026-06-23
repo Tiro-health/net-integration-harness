@@ -409,7 +409,7 @@ Thin, strongly-typed client over the **stateless SDC server** FHIR operations �
 - **Key types**: `SdcClientBase<TQuestionnaireResponse, TOperationOutcome, TBundle>` (core, FHIR-version-agnostic) and `SdcClient` (R5 closed binding)
 - **Operations**: `ValidateAsync(qr)` → `OperationOutcome` (`QuestionnaireResponse/$validate`); `ExtractAsync(qr)` → transaction `Bundle` (`QuestionnaireResponse/$extract`)
 - **Construction**: `new SdcClient(new Uri("https://host/fhir/r5"), httpClient?)` — inject a pre-configured `HttpClient` for custom TLS/proxy/timeouts
-- **Behaviour**: thin over Firely's serializer + `HttpClient` (POSTs a bare `QuestionnaireResponse`, the shape the SDC server expects). A validation failure comes back as `OperationOutcome` issues; transport/server errors (non-2xx) throw `SdcOperationException`
+- **Behaviour**: thin over Firely's serializer + `HttpClient` (POSTs a bare `QuestionnaireResponse`, the shape the SDC server expects). A validation failure comes back as `OperationOutcome` issues; transport/server errors (non-2xx) throw `SdcOperationException`. Responses are parsed in Firely's *recoverable* mode, so a `200` carrying an element/code a newer server emits that this Firely version doesn't recognize is still returned (partial POCO) rather than failing
 - **R5-only**: these SDC operations exist only on `/fhir/r5`, so there is no R4/R5 split — a future R4 server would be one new `.Fhir.R4` binding. `$populate` is tracked separately (#29)
 
 ### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
@@ -427,7 +427,7 @@ WinForms demos.
 - Both: `.NET 4.8` (VB.NET, old-style project format).
 
 ### `Tiro.Health.SmartWebMessaging.Tests` / `Tiro.Health.FormFiller.WebView2.Tests` / `Tiro.Health.FormSdk.Client.Tests`
-- **Targets**: `net8.0` (SmartWebMessaging, FormSdk.Client) / `net48` (FormFiller — needs WinForms + WebView2)
+- **Targets**: `net8.0` (SmartWebMessaging) / `net48;net8.0` (FormSdk.Client — multi-targeted so the net48 build the libraries ship is also exercised) / `net48` (FormFiller — needs WinForms + WebView2)
 - **Framework**: MSTest + Moq
 - **Coverage**:
   - `SmartWebMessaging.Tests` — protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), event firing, JSON probe, async-task extensions
