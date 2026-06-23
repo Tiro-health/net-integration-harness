@@ -33,36 +33,33 @@ namespace Tiro.Health.FormSdk.Client
         private readonly HttpClient _http;
         private readonly bool _ownsHttpClient;
         private readonly JsonSerializerOptions _fhirJson;
+        private readonly Uri _baseAddress;
 
         /// <param name="baseAddress">The SDC server FHIR base, e.g. <c>https://host/fhir/r5</c>.</param>
         /// <param name="fhirJson">FHIR-configured serializer options (built with <c>.ForFhir(...)</c> by the binding).</param>
         /// <param name="httpClient">
-        /// Optional pre-configured client (for custom TLS/proxy/timeouts). When supplied, its
-        /// <see cref="HttpClient.BaseAddress"/> is set only if unset, leaving handler control to the caller.
-        /// When omitted, an internally-owned client is created and disposed with this instance.
+        /// Optional pre-configured client (for custom TLS/proxy/timeouts, or an
+        /// <c>IHttpClientFactory</c>-managed instance). When omitted, an internally-owned client is
+        /// created and disposed with this instance. The injected client is never mutated: requests
+        /// are sent to absolute URIs resolved from <paramref name="baseAddress"/>, so its
+        /// <see cref="HttpClient.BaseAddress"/> is irrelevant and a client shared across several
+        /// <see cref="SdcClientBase{TQuestionnaireResponse, TOperationOutcome, TBundle}"/> instances is safe.
         /// </param>
         protected SdcClientBase(Uri baseAddress, JsonSerializerOptions fhirJson, HttpClient httpClient = null)
         {
             if (baseAddress == null) throw new ArgumentNullException(nameof(baseAddress));
             _fhirJson = fhirJson ?? throw new ArgumentNullException(nameof(fhirJson));
 
-            // Trailing slash is required for relative-URI resolution to keep the full base path
-            // (e.g. ".../fhir/r5/") instead of dropping the last segment.
-            var normalized = baseAddress.AbsoluteUri.EndsWith("/", StringComparison.Ordinal)
+            // Trailing slash is required so relative operation paths resolve against the full base
+            // (e.g. ".../fhir/r5/" + "QuestionnaireResponse/$validate") instead of dropping the last segment.
+            _baseAddress = baseAddress.AbsoluteUri.EndsWith("/", StringComparison.Ordinal)
                 ? baseAddress
                 : new Uri(baseAddress.AbsoluteUri + "/");
 
-            if (httpClient == null)
-            {
-                _http = new HttpClient { BaseAddress = normalized };
-                _ownsHttpClient = true;
-            }
-            else
-            {
-                _http = httpClient;
-                if (_http.BaseAddress == null) _http.BaseAddress = normalized;
-                _ownsHttpClient = false;
-            }
+            // We resolve absolute request URIs ourselves (see PostResourceAsync), so we never touch
+            // the client's BaseAddress — leaving an injected/shared client untouched.
+            _http = httpClient ?? new HttpClient();
+            _ownsHttpClient = httpClient == null;
         }
 
         /// <summary>
@@ -87,7 +84,8 @@ namespace Tiro.Health.FormSdk.Client
 
             var json = JsonSerializer.Serialize(body, _fhirJson);
 
-            using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(relativePath, UriKind.Relative)))
+            // Absolute URI from our stored base, so HttpClient.BaseAddress is never consulted or mutated.
+            using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_baseAddress, relativePath)))
             {
                 request.Content = new StringContent(json, Encoding.UTF8, FhirJsonMediaType);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(FhirJsonMediaType));

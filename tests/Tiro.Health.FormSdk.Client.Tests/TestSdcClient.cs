@@ -84,6 +84,28 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
+        public async Task SharedHttpClient_IsNotMutated_AndEachClientTargetsItsOwnBase()
+        {
+            const string outcomeJson =
+                """{"resourceType":"OperationOutcome","issue":[{"severity":"information","code":"informational"}]}""";
+            var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, outcomeJson);
+            var shared = new HttpClient(handler);
+
+            // Same HttpClient instance, two different SDC bases.
+            var clientA = new SdcClient(new Uri("https://a.test/fhir/r5"), shared);
+            var clientB = new SdcClient(new Uri("https://b.test/fhir/r5"), shared);
+
+            await clientA.ValidateAsync(SampleResponse());
+            Assert.AreEqual("https://a.test/fhir/r5/QuestionnaireResponse/$validate", handler.LastRequest!.RequestUri!.AbsoluteUri);
+
+            await clientB.ValidateAsync(SampleResponse());
+            Assert.AreEqual("https://b.test/fhir/r5/QuestionnaireResponse/$validate", handler.LastRequest!.RequestUri!.AbsoluteUri);
+
+            // The injected/shared client was never mutated — no first-base-wins footgun.
+            Assert.IsNull(shared.BaseAddress);
+        }
+
+        [TestMethod]
         public async Task NonSuccessStatus_ThrowsSdcOperationException_CarryingOutcome()
         {
             const string errorJson =
