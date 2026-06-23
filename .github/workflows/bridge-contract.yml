@@ -1,0 +1,66 @@
+name: Bridge contract
+
+# Static type-check of the shipped tiro-swm-bridge.js against the live
+# @tiro-health/web-sdk (<tiro-form-filler>) types. Catches bridge<->frontend
+# drift such as the submit({ intent }) vs submit({ status }) bug. See
+# build/bridge-contract/README.md.
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js'
+      - 'build/bridge-contract/**'
+      - '.github/workflows/bridge-contract.yml'
+  push:
+    branches: [master]
+  # Nightly drift alarm against whatever @tiro-health/web-sdk@latest currently is.
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+
+    # Ephemeral GITHUB_TOKEN reads the package from GitHub Packages — no stored
+    # secret, no WIF. Requires the @tiro-health/web-sdk package to grant this repo
+    # Actions read access (Package settings -> Manage Actions access).
+    permissions:
+      contents: read
+      packages: read
+
+    # TEMPORARY: the bridge's save-draft uses submit({ status }), added in web-sdk
+    # 0.3.0, which is not yet on the `latest` dist-tag (stable is 0.2.3). Until 0.3.0
+    # is promoted to `latest` this check is expectedly red; allow it to fail so it
+    # doesn't block PRs. When 0.3.0 is `latest`: remove this line and make the job a
+    # required status check. (Nightly runs still surface the real status in logs.)
+    continue-on-error: true
+
+    defaults:
+      run:
+        working-directory: build/bridge-contract
+
+    # The project .npmrc references ${NODE_AUTH_TOKEN}; set it for every step so npm
+    # never trips on an unset var. It's the ephemeral job token — no stored secret.
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@tiro-health'
+
+      - name: Install tooling
+        run: npm ci
+
+      # Floating: always check against the current published `latest`, so a frontend
+      # release that moves the contract turns this red.
+      - name: Install @tiro-health/web-sdk@latest
+        run: npm install --no-save @tiro-health/web-sdk@latest
+
+      - name: Type-check bridge against frontend contract
+        run: npm run typecheck

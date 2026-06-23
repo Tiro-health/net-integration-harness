@@ -6,7 +6,51 @@ on:
       - 'v*.*.*'
 
 jobs:
+  # Release gate: the bridge must match the current stable frontend
+  # (@tiro-health/web-sdk@latest) before we publish. If it doesn't, this job fails and
+  # `publish` (which needs it) is skipped — the release is blocked.
+  #
+  # This is intentionally BLOCKING. While the save-draft submit({ status }) API is only
+  # on web-sdk >= 0.3.0 (not yet on the `latest` dist-tag), this gate fails and blocks
+  # releases by design — until 0.3.0 is promoted to `latest`, or the bridge stops calling
+  # an API absent from stable. See build/bridge-contract/README.md.
+  contract-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    defaults:
+      run:
+        working-directory: build/bridge-contract
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@tiro-health'
+
+      - name: Install tooling
+        run: npm ci
+
+      - name: Install @tiro-health/web-sdk@latest
+        run: npm install --no-save @tiro-health/web-sdk@latest
+
+      # Record the concrete version this release is validated against, for the run summary.
+      - name: Record validated SDK version
+        run: |
+          VER=$(npm view @tiro-health/web-sdk version)
+          echo "Validating bridge against tiro-web-sdk@$VER (latest dist-tag)"
+          echo "Bridge contract validated against **tiro-web-sdk v$VER** (this version or higher, same major, supported)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Type-check bridge against frontend contract
+        run: npm run typecheck
+
   publish:
+    needs: contract-check
     runs-on: windows-latest
 
     # The trusted-publisher policy on nuget.org is scoped to the 'production'

@@ -1,0 +1,37 @@
+{
+  // Type-checks the ACTUAL shipped tiro-swm-bridge.js (included by relative path
+  // below, never copied) against @tiro-health/web-sdk's published .d.ts. A call
+  // shape the frontend element doesn't accept — e.g. submit({ intent }) or, against
+  // a frontend that lacks the API, submit({ status }) — fails `tsc --noEmit`.
+  //
+  // strict is intentionally OFF: we are not type-checking the bridge's internals,
+  // only its calls into <tiro-form-filler>. Object-literal excess-property checking
+  // (which catches the {intent}/{status} mismatch) is on regardless of strict.
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": [],
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    // The bridge lives outside this test dir, so a bare `import('@tiro-health/web-sdk')`
+    // isn't found by the normal node_modules walk (the bridge's ancestor dirs don't include
+    // build/bridge-contract/node_modules). Map the specifier to the installed package
+    // DIRECTORY — not a specific .d.ts — so TS reads its package.json and follows whatever
+    // `exports`/`types` entry the SDK publishes. Resolves correctly today and stays robust
+    // if a future SDK release relayouts its dist (the types entry could move).
+    "paths": {
+      "@tiro-health/web-sdk": ["./node_modules/@tiro-health/web-sdk"]
+    }
+  },
+  "include": [
+    "globals.d.ts",
+    "../../src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js"
+  ]
+}
