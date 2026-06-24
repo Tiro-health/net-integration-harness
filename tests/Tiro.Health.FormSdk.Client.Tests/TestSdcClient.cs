@@ -133,5 +133,30 @@ namespace Tiro.Health.FormSdk.Client.Tests
             Assert.IsNotNull(ex.Outcome);
             Assert.AreEqual(OperationOutcome.IssueSeverity.Fatal, ex.Outcome!.Issue[0].Severity);
         }
+
+        [TestMethod]
+        public async Task NonSuccessStatus_RecoverableErrorBody_StillSurfacesOutcome()
+        {
+            // A 4xx whose OperationOutcome carries an element this Firely version doesn't recognize
+            // (a newer server). The error path must recover the partial outcome, not drop it.
+            const string errorJson =
+                """{"resourceType":"OperationOutcome","issue":[{"severity":"fatal","code":"processing","diagnostics":"boom"}],"madeUpFutureElement":"x"}""";
+            var (client, _) = ClientReturning(HttpStatusCode.BadRequest, errorJson);
+
+            var ex = await Assert.ThrowsExceptionAsync<SdcOperationException>(() => client.ValidateAsync(SampleResponse()));
+
+            Assert.IsNotNull(ex.Outcome, "server diagnostics from a recoverable error body must not be dropped");
+            Assert.AreEqual(OperationOutcome.IssueSeverity.Fatal, ex.Outcome!.Issue[0].Severity);
+            Assert.AreEqual("boom", ex.Outcome!.Issue[0].Diagnostics);
+        }
+
+        [TestMethod]
+        public void Constructor_RejectsBaseAddressWithQueryOrFragment()
+        {
+            // A query/fragment can't survive relative-URI resolution, so it must fail fast rather
+            // than be silently dropped (which would send auth/routing params nowhere).
+            Assert.ThrowsException<ArgumentException>(
+                () => new SdcClient(new Uri("https://sdc.test.local/fhir/r5?key=abc")));
+        }
     }
 }

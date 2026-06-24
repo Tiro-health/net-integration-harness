@@ -51,10 +51,17 @@ namespace Tiro.Health.FormSdk.Client
             if (baseAddress == null) throw new ArgumentNullException(nameof(baseAddress));
             _fhirJson = fhirJson ?? throw new ArgumentNullException(nameof(fhirJson));
 
+            // A query/fragment on the base can't survive relative-URI resolution
+            // (new Uri(base, "QuestionnaireResponse/$validate") drops them per RFC 3986), so they'd
+            // be silently lost — fail fast instead. FHIR bases are plain path URLs.
+            if (!string.IsNullOrEmpty(baseAddress.Query) || !string.IsNullOrEmpty(baseAddress.Fragment))
+                throw new ArgumentException(
+                    "baseAddress must be a plain path URL with no query or fragment (e.g. https://host/fhir/r5).",
+                    nameof(baseAddress));
+
             // A trailing slash on the PATH is required so relative operation paths resolve against
             // the full base (".../fhir/r5/" + "QuestionnaireResponse/$validate") instead of dropping
-            // the last segment. Normalize on AbsolutePath, not AbsoluteUri, so a base that carries a
-            // query/fragment isn't corrupted (e.g. ".../r5?x" + "/" -> ".../r5?x/").
+            // the last segment.
             _baseAddress = baseAddress.AbsolutePath.EndsWith("/", StringComparison.Ordinal)
                 ? baseAddress
                 : new Uri(baseAddress, baseAddress.AbsolutePath + "/");
@@ -102,8 +109,11 @@ namespace Tiro.Health.FormSdk.Client
                     if (!response.IsSuccessStatusCode)
                     {
                         // Best-effort: surface a server OperationOutcome if the error body carried one.
+                        // Symmetric with the success path — recover the partial result so a newer
+                        // server's diagnostics aren't lost when the body has an unrecognized element/code.
                         OperationOutcome outcome = null;
                         try { outcome = JsonSerializer.Deserialize<Resource>(responseBody, _fhirJson) as OperationOutcome; }
+                        catch (DeserializationFailedException ex) { outcome = ex.PartialResult as OperationOutcome; }
                         catch { /* non-FHIR error body; leave outcome null */ }
 
                         throw new SdcOperationException(
@@ -137,9 +147,12 @@ namespace Tiro.Health.FormSdk.Client
                     // Wrong resource type on a success status. If it's an OperationOutcome, surface its
                     // diagnostics in the message (not just on the exception's Outcome) so the failure is legible.
                     var asOutcome = parsed as OperationOutcome;
-                    var detail = asOutcome?.Issue?.Count > 0
-                        ? $" Server OperationOutcome: {asOutcome.Issue[0].Severity} — {asOutcome.Issue[0].Diagnostics ?? asOutcome.Issue[0].Details?.Text}"
-                        : string.Empty;
+                    var diagnostic = asOutcome?.Issue?.Count > 0
+                        ? asOutcome.Issue[0].Diagnostics ?? asOutcome.Issue[0].Details?.Text
+                        : null;
+                    var detail = string.IsNullOrEmpty(diagnostic)
+                        ? string.Empty
+                        : $" Server OperationOutcome: {asOutcome.Issue[0].Severity} — {diagnostic}";
                     throw new SdcOperationException(relativePath, response.StatusCode, asOutcome,
                         $"SDC operation '{relativePath}' returned '{parsed?.TypeName ?? "null"}', expected '{typeof(TOut).Name}'.{detail}");
                 }
