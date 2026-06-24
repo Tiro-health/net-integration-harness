@@ -344,14 +344,17 @@ net-integration-harness/
 │   ├── Tiro.Health.FormFiller.WebView2/            # WinForms UserControl + bridge JS (FHIR-agnostic)
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R5/    # Designer-friendly R5 viewer
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
-│   └── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
+│   ├── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
+│   ├── Tiro.Health.FormSdk.Client/                 # Typed SDC FHIR client core ($validate/$extract)
+│   └── Tiro.Health.FormSdk.Client.Fhir.R5/         # SDC client — FHIR R5 closed binding
 ├── samples/
 │   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form, single-patient demo (R5)
 │   └── Tiro.Health.FormFiller.WebView2.EhrShellSample/ # Dummy EHR shell — patient/encounter/template selection,
 │                                                       # tabbed viewer, in-memory QR persistence, custom index.html (R5)
 └── tests/
     ├── Tiro.Health.SmartWebMessaging.Tests/        # MSTest, protocol/handler coverage
-    └── Tiro.Health.FormFiller.WebView2.Tests/      # MSTest, viewer lifecycle + telemetry contracts + embedded assets
+    ├── Tiro.Health.FormFiller.WebView2.Tests/      # MSTest, viewer lifecycle + telemetry contracts + embedded assets
+    └── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract over a fake HttpMessageHandler
 ```
 
 ### `Tiro.Health.SmartWebMessaging` (core)
@@ -399,6 +402,18 @@ Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you wan
   - `SentryTelemetrySink` — the underlying `ITelemetrySink` implementation. Owns two DSNs (one for the .NET host process, one injected into the embedded page) plus environment and release. Use directly only when registering with `TiroFormViewerDefaults.TelemetrySinkFactory` by hand or implementing a custom adapter chain.
 - Auto-detects release as `Tiro.Health.FormFiller.WebView2@<version>+<commit>` from the FormFiller assembly's `AssemblyInformationalVersion` (so traces deep-link to source via Sentry's release pipeline if you upload symbols)
 
+### `Tiro.Health.FormSdk.Client` (core) / `Tiro.Health.FormSdk.Client.Fhir.R5`
+Thin, strongly-typed client over the **stateless SDC server** FHIR operations — call them directly instead of hand-building request bodies and parsing raw responses. A separate concern from the messaging/viewer packages (an HTTP/FHIR client, not an embedded-UI bridge); depend on it only if your host calls the SDC server itself.
+
+- **Targets**: `netstandard2.0`, `net48`
+- **Key types**: `SdcClientBase<TQuestionnaireResponse, TOperationOutcome, TBundle>` (core, FHIR-version-agnostic) and `SdcClient` (R5 closed binding)
+- **Operations**: `ValidateAsync(qr)` → `OperationOutcome` (`QuestionnaireResponse/$validate`); `ExtractAsync(qr)` → transaction `Bundle` (`QuestionnaireResponse/$extract`)
+  - `$extract` runs the questionnaire's SDC extraction over a completed `QuestionnaireResponse` and returns a transaction `Bundle` — the resources the answers produce, plus the source QR and a `Provenance` linking them. What's extracted depends on the questionnaire: Tiro's **template-based** questionnaires yield a `Composition` whose sections carry the rendered narrative, while **definition-based** questionnaires yield structured resources (e.g. `Observation`). The stateless endpoint computes the Bundle without persisting it.
+- **Construction**: `new SdcClient(new Uri("https://host/fhir/r5"), httpClient?)` — inject a pre-configured `HttpClient` for custom TLS/proxy/timeouts
+- **Use one SDC base for both the form and the client.** `baseAddress` here and the viewer's `SdcEndpointAddress` ([`TiroFormViewer`](#tirohealthformfillerwebview2)) are the *same* concept — the SDC server. If a host embeds the form **and** calls `$validate`/`$extract` directly, configure the SDC address once and pass that single value to both, so the rendered form and the client never end up pointing at different servers. The client deliberately has no default base (you must pass one) to avoid silently diverging from a viewer you've already configured
+- **Behaviour**: thin over Firely's serializer + `HttpClient` (POSTs a bare `QuestionnaireResponse`, the shape the SDC server expects). A validation failure comes back as `OperationOutcome` issues; transport/server errors (non-2xx) throw `SdcOperationException`. Responses are parsed in Firely's *recoverable* mode, so a `200` carrying an element/code a newer server emits that this Firely version doesn't recognize is still returned (partial POCO) rather than failing
+- **R5-only**: these SDC operations exist only on `/fhir/r5`, so there is no R4/R5 split — a future R4 server would be one new `.Fhir.R4` binding. `$populate` is tracked separately (#29)
+
 ### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
 WinForms demos.
 
@@ -413,12 +428,13 @@ WinForms demos.
   - **Custom `index.html` per role** — bundles `WebContent/Form/index.html` (editable) and `WebContent/Consultation/index.html` (read-only). The integrator picks which page to load by setting `WebContentFolder`, not by passing UI flags through the host API — UI concerns stay in the page. See [Shipping your own index.html](#shipping-your-own-indexhtml).
 - Both: `.NET 4.8` (VB.NET, old-style project format).
 
-### `Tiro.Health.SmartWebMessaging.Tests` / `Tiro.Health.FormFiller.WebView2.Tests`
-- **Targets**: `net8.0` (SmartWebMessaging) / `net48` (FormFiller — needs WinForms + WebView2)
+### `Tiro.Health.SmartWebMessaging.Tests` / `Tiro.Health.FormFiller.WebView2.Tests` / `Tiro.Health.FormSdk.Client.Tests`
+- **Targets**: `net8.0` (SmartWebMessaging) / `net48;net8.0` (FormSdk.Client — multi-targeted so the net48 build the libraries ship is also exercised) / `net48` (FormFiller — needs WinForms + WebView2)
 - **Framework**: MSTest + Moq
-- **Coverage** (~79 test methods across both projects):
+- **Coverage**:
   - `SmartWebMessaging.Tests` — protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), event firing, JSON probe, async-task extensions
   - `FormFiller.WebView2.Tests` — viewer lifecycle (state machine transitions, dispose semantics), telemetry sink contracts (`NullTelemetrySink` no-ops, span ordering, session tagging), embedded `WebAssets/` resource integrity
+  - `FormSdk.Client.Tests` — SDC `$validate`/`$extract` over a fake `HttpMessageHandler`: typed result parsing, validation-issues-without-throw, non-2xx → `SdcOperationException`, and a guard that the request body is a bare `QuestionnaireResponse`
 
 ## Architecture notes
 
