@@ -1,8 +1,8 @@
-namespace Tiro.Health.FormFiller.WebView2.Telemetry
+namespace Tiro.Health.Telemetry
 {
     /// <summary>
     /// Outcome of a finished span. Mirrors the Sentry <c>SpanStatus</c> values that
-    /// <see cref="TiroFormViewer{TResource,TQR,TOO}"/> actually emits.
+    /// consumers actually emit.
     /// </summary>
     public enum TelemetrySpanStatus
     {

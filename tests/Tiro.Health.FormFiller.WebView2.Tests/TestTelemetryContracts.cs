@@ -3,7 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Tiro.Health.FormFiller.WebView2.Telemetry;
+using Tiro.Health.Telemetry;
 using Tiro.Health.FormFiller.WebView2.Tests.Fakes;
 using Tiro.Health.SmartWebMessaging;
 using R5 = Tiro.Health.SmartWebMessaging.Fhir.R5;
