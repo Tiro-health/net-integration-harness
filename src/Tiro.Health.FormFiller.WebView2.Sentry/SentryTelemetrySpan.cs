@@ -1,6 +1,6 @@
 using System;
 using global::Sentry;
-using Tiro.Health.FormFiller.WebView2.Telemetry;
+using Tiro.Health.Telemetry;
 
 namespace Tiro.Health.FormFiller.WebView2.Sentry
 {
@@ -27,6 +27,15 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         public void Finish(TelemetrySpanStatus status) => _span.Finish(Map(status));
 
         public void Finish(Exception ex) => _span.Finish(ex);
+
+        /// <summary>
+        /// Scope-exit finish: completes the span with <see cref="SpanStatus.Ok"/> only if it
+        /// hasn't already been finished, so an explicit <c>Finish</c> on a failure path wins.
+        /// </summary>
+        public void Dispose()
+        {
+            if (!_span.IsFinished) _span.Finish(SpanStatus.Ok);
+        }
 
         private static SpanStatus Map(TelemetrySpanStatus status)
         {

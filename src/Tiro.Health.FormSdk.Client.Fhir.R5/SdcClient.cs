@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text.Json;
 using Hl7.Fhir.Model;
 using Hl7.Fhir.Serialization;
+using Tiro.Health.Telemetry;
 
 namespace Tiro.Health.FormSdk.Client.Fhir.R5
 {
@@ -27,8 +28,12 @@ namespace Tiro.Health.FormSdk.Client.Fhir.R5
 
         /// <param name="baseAddress">The SDC server FHIR R5 base, e.g. <c>https://host/fhir/r5</c>.</param>
         /// <param name="httpClient">Optional pre-configured client for custom TLS/proxy/timeouts.</param>
-        public SdcClient(Uri baseAddress, HttpClient httpClient = null)
-            : base(baseAddress, FhirJson, httpClient)
+        /// <param name="telemetry">
+        /// Optional telemetry session; when supplied, each <c>$validate</c>/<c>$extract</c> round-trip
+        /// is recorded as a transaction in its trace. Omit for no telemetry.
+        /// </param>
+        public SdcClient(Uri baseAddress, HttpClient httpClient = null, ITelemetrySession telemetry = null)
+            : base(baseAddress, FhirJson, httpClient, telemetry)
         {
         }
     }

@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 
-namespace Tiro.Health.FormFiller.WebView2.Telemetry
+namespace Tiro.Health.Telemetry
 {
     /// <summary>
-    /// No-op <see cref="ITelemetrySink"/>. Default for the core library, which does not
-    /// depend on any specific telemetry backend.
+    /// No-op <see cref="ITelemetrySink"/>. Default for libraries that do not depend on any
+    /// specific telemetry backend.
     /// </summary>
     public sealed class NullTelemetrySink : ITelemetrySink
     {
@@ -37,6 +37,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             public ITelemetrySpan StartChild(string operation, string description) => Instance;
             public void Finish(TelemetrySpanStatus status) { }
             public void Finish(Exception ex) { }
+            public void Dispose() { }
         }
     }
 }

@@ -1,13 +1,13 @@
 using System;
 using System.Collections.Generic;
 
-namespace Tiro.Health.FormFiller.WebView2.Telemetry
+namespace Tiro.Health.Telemetry
 {
     /// <summary>
     /// A telemetry session — a logical grouping of related transactions and breadcrumbs that
-    /// share a common trace and a stable correlation tag (e.g. one <see cref="TiroFormViewer{TResource,TQR,TOO}"/>
-    /// lifetime). All transactions started via <see cref="StartTransaction"/> within this
-    /// session share the same trace id, so Sentry's trace view renders them together.
+    /// share a common trace and a stable correlation tag. All transactions started via
+    /// <see cref="StartTransaction"/> within this session share the same trace id, so a
+    /// backend's trace view renders them together.
     /// </summary>
     public interface ITelemetrySession : IDisposable
     {
@@ -26,17 +26,16 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// <summary>
         /// Returns a <c>sentry-trace</c> header value (<c>"&lt;traceId&gt;-&lt;spanId&gt;-&lt;sampled&gt;"</c>)
         /// for the current session, or <c>null</c> when telemetry is disabled / the session
-        /// is no-op. Used by <see cref="TiroFormViewer{TResource,TQR,TOO}"/> to propagate the
-        /// trace into outbound SMART Web Messaging envelopes via <c>_meta.sentry.trace</c>.
+        /// is no-op. Used to propagate the trace into outbound messages or HTTP headers.
         /// </summary>
         string GetSentryTraceHeader();
 
         /// <summary>
         /// Returns a JSON-serializable key/value config for an embedded browser to bootstrap
         /// its own telemetry SDK (DSN, environment, release) and inherit the current trace
-        /// (sentryTrace, baggage). The host injects this as <c>window.__tiroSentryConfig</c>
-        /// before page scripts run, so the embedded <c>index.html</c> doesn't have to know
-        /// any DSN or trace context. Returns null when telemetry is disabled.
+        /// (sentryTrace, baggage). A host can inject this as <c>window.__tiroSentryConfig</c>
+        /// before page scripts run, so the embedded page doesn't have to know any DSN or
+        /// trace context. Returns null when telemetry is disabled.
         /// </summary>
         IReadOnlyDictionary<string, string> GetEmbeddedBootstrapConfig();
     }

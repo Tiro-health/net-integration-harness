@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using Tiro.Health.FormFiller.WebView2.Telemetry;
+using Tiro.Health.Telemetry;
 
 namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 {
@@ -100,6 +100,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
             if (Finished) return;
             Finished = true;
             FinalException = ex;
+        }
+
+        // Mirrors the production contract: Dispose finishes with Ok unless already finished,
+        // and records that the span was disposed (for `using`-scope assertions).
+        public bool Disposed { get; private set; }
+
+        public void Dispose()
+        {
+            Disposed = true;
+            Finish(TelemetrySpanStatus.Ok);
         }
     }
 }
