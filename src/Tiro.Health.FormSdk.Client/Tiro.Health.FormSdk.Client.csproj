@@ -20,10 +20,6 @@
     <PackageReference Include="System.Text.Json" Version="9.0.2" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Tiro.Health.Telemetry.Abstractions\Tiro.Health.Telemetry.Abstractions.csproj" />
-  </ItemGroup>
-
   <!-- On .NET Framework, HttpClient lives in the framework System.Net.Http assembly,
        which SDK-style net48 projects don't reference by default. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">

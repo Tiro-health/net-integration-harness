@@ -21,12 +21,12 @@ The resulting `<PackageReference>` block in your `.csproj` / `.vbproj`:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="0.0.6" />
-  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="0.0.6" />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="..." />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="..." />
 </ItemGroup>
 ```
 
-(Drop the Sentry line if you don't want telemetry.)
+(Drop the Sentry line if you don't want telemetry.) Pin to the latest published version — the **Manage NuGet Packages** UI fills the `Version` in for you on install.
 
 Old-style `.vbproj` projects (the `<Project ToolsVersion="15.0">` format — anything that isn't SDK-style `<Project Sdk="...">`) need a few extra properties. There's no Properties UI for these, so edit the XML directly: in Visual Studio right-click the project → **Unload Project** → right-click again → **Edit `<ProjectName>.vbproj`** (or open the file in any text editor). Add these inside the first `<PropertyGroup>` — the one with `<Configuration>` / `<OutputType>` / `<TargetFrameworkVersion>` etc.:
 
@@ -180,7 +180,7 @@ The library ships a working default `index.html` so the samples run out-of-the-b
 
 ## Telemetry
 
-The telemetry abstraction lives in its own backend-agnostic package, **`Tiro.Health.Telemetry.Abstractions`** (namespace `Tiro.Health.Telemetry`), shared by the form-filler and the SDC client. Neither carries a telemetry *backend* dependency. Telemetry is plugged in via `ITelemetrySink`:
+The telemetry abstraction ships **inside `Tiro.Health.FormFiller.WebView2`** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`) and carries no telemetry *backend* dependency — so a consumer that wants no telemetry pulls no Sentry NuGet. Telemetry is plugged in via `ITelemetrySink`:
 
 ```vb
 Public Interface ITelemetrySink
@@ -199,7 +199,7 @@ The FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) default to `NullTelem
 To **opt in to Sentry telemetry**, add the adapter package and call `TiroFormFillerSentry.UseSentry()` **once at application startup** — before any form containing a viewer is constructed:
 
 ```xml
-<PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
+<PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="..." />
 ```
 
 ```vb
@@ -343,8 +343,7 @@ net-integration-harness/
 │   ├── Tiro.Health.SmartWebMessaging/              # Core protocol handler (FHIR-version-agnostic)
 │   ├── Tiro.Health.SmartWebMessaging.Fhir.R5/      # FHIR R5 closed bindings
 │   ├── Tiro.Health.SmartWebMessaging.Fhir.R4/      # FHIR R4 closed bindings
-│   ├── Tiro.Health.Telemetry.Abstractions/         # Backend-agnostic telemetry seam (ITelemetrySink/Session/Span)
-│   ├── Tiro.Health.FormFiller.WebView2/            # WinForms UserControl + bridge JS (FHIR-agnostic)
+│   ├── Tiro.Health.FormFiller.WebView2/            # WinForms UserControl + bridge JS + telemetry seam (FHIR-agnostic)
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R5/    # Designer-friendly R5 viewer
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
 │   ├── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
@@ -357,7 +356,7 @@ net-integration-harness/
 └── tests/
     ├── Tiro.Health.SmartWebMessaging.Tests/        # MSTest, protocol/handler coverage
     ├── Tiro.Health.FormFiller.WebView2.Tests/      # MSTest, viewer lifecycle + telemetry contracts + embedded assets
-    └── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract + telemetry over a fake HttpMessageHandler
+    └── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract over a fake HttpMessageHandler
 ```
 
 ### `Tiro.Health.SmartWebMessaging` (core)
@@ -375,18 +374,12 @@ Concrete bindings on top of the core library.
 - **Key type**: `SmartMessageHandler` — binds the base handler to `Resource`, `QuestionnaireResponse`, `OperationOutcome` from the corresponding `Hl7.Fhir.*` package
 - **Adds**: strongly-typed `FormSubmitted` events, version-specific FHIR-resource convenience overloads on `SendSdcConfigureContextAsync` and `SendSdcDisplayQuestionnaireAsync`
 
-### `Tiro.Health.Telemetry.Abstractions`
-Backend-agnostic telemetry seam shared by the form-filler and SDC-client packages, so neither takes a dependency on a telemetry backend (or on each other) to be instrumentable.
-
-- **Targets**: `netstandard2.0`, `net48`
-- **Key types**: `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, and `NullTelemetrySink` (the no-op default)
-- **No backend dependency**: the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend
-
 ### `Tiro.Health.FormFiller.WebView2`
 Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to the messaging handler. FHIR-version-agnostic: derive `TiroFormViewerR4`/`R5` (or your own closed binding) to use it.
 
 - **Targets**: `net48` (C# SDK-style, WinForms + WebView2)
 - **Key type**: `TiroFormViewer<TResource, TQR, TOO>` — abstract generic UserControl
+- **Telemetry seam** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`): `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, and `NullTelemetrySink` (the no-op default). No backend dependency — the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend.
 - **Features**:
   - Explicit lifecycle state machine (`TiroFormViewerState`: Initializing → Ready → ContextSet → Submitted → Disposed)
   - Async API with `CancellationToken` end-to-end; in-flight operations cancel cleanly on disposal
@@ -419,22 +412,69 @@ Thin, strongly-typed client over the **stateless SDC server** FHIR operations �
 - **Key types**: `SdcClientBase<TQuestionnaireResponse, TOperationOutcome, TBundle>` (core, FHIR-version-agnostic) and `SdcClient` (R5 closed binding)
 - **Operations**: `ValidateAsync(qr)` → `OperationOutcome` (`QuestionnaireResponse/$validate`); `ExtractAsync(qr)` → transaction `Bundle` (`QuestionnaireResponse/$extract`)
   - `$extract` runs the questionnaire's SDC extraction over a completed `QuestionnaireResponse` and returns a transaction `Bundle` — the resources the answers produce, plus the source QR and a `Provenance` linking them. What's extracted depends on the questionnaire: Tiro's **template-based** questionnaires yield a `Composition` whose sections carry the rendered narrative, while **definition-based** questionnaires yield structured resources (e.g. `Observation`). The stateless endpoint computes the Bundle without persisting it.
-- **Construction**: `new SdcClient(new Uri("https://host/fhir/r5"), httpClient?, telemetry?)` — inject a pre-configured `HttpClient` for custom TLS/proxy/timeouts, and optionally an `ITelemetrySession`
-- **Use one SDC base for both the form and the client.** `baseAddress` here and the viewer's `SdcEndpointAddress` ([`TiroFormViewer`](#tirohealthformfillerwebview2)) are the *same* concept — the SDC server. If a host embeds the form **and** calls `$validate`/`$extract` directly, configure the SDC address once and pass that single value to both, so the rendered form and the client never end up pointing at different servers. The client deliberately has no default base (you must pass one) to avoid silently diverging from a viewer you've already configured
+- **Construction**: `new SdcClient(new Uri("https://host/fhir/r5"), httpClient?)` — inject a pre-configured `HttpClient` for custom TLS/proxy/timeouts. The client deliberately has **no default base** — you must pass one.
+- **Point the client at the same SDC server as the form.** `baseAddress` here and the viewer's `SdcEndpointAddress` ([`TiroFormViewer`](#tirohealthformfillerwebview2)) are the *same* concept — the SDC server. A host that embeds the form **and** calls `$validate`/`$extract` directly should **construct the client from `viewer.SdcEndpointAddress`** (see [Extracting after a form submit](#extracting-after-a-form-submit)) so the two can't drift apart. Note this is a **convention, not an enforced guarantee** — nothing in the API stops you from pointing the form and the client at different servers, so derive the client's address from the viewer rather than configuring it separately.
 - **Behaviour**: thin over Firely's serializer + `HttpClient` (POSTs a bare `QuestionnaireResponse`, the shape the SDC server expects). A validation failure comes back as `OperationOutcome` issues; transport/server errors (non-2xx) throw `SdcOperationException`. Responses are parsed in Firely's *recoverable* mode, so a `200` carrying an element/code a newer server emits that this Firely version doesn't recognize is still returned (partial POCO) rather than failing
-- **Telemetry** *(optional)*: pass an `ITelemetrySession` (from `Tiro.Health.Telemetry.Abstractions`) to record each `$validate`/`$extract` round-trip as a transaction in that session's trace — named `sdc.validate` / `sdc.extract`, tagged with the operation, target URL, and HTTP status, finished `Ok` on success or with the exception on failure (and `Cancelled` on cancellation). Pass the same session the host uses for the viewer to correlate SDC calls with the surrounding form-session trace. Omitted ⇒ a complete no-op (no allocations, no behavioral change). No FHIR payloads are attached to spans, so no PHI flows to telemetry
+- **Telemetry-free** — the client takes no telemetry seam; it's a pure HTTP/FHIR client. If you want a span around a call, wrap it at the call site with a session you own — `Using session.StartTransaction("sdc.extract", "http.client") : Await client.ExtractAsync(qr) : End Using` — where `session` is any `ITelemetrySession` you create (e.g. from a sink via `BeginSession`). Keeping telemetry out of the client avoids coupling its lifetime to a session's
 - **R5-only**: these SDC operations exist only on `/fhir/r5`, so there is no R4/R5 split — a future R4 server would be one new `.Fhir.R4` binding. `$populate` is tracked separately (#29)
+
+#### Extracting after a form submit
+
+A host that embeds a viewer **and** wants the extraction `Bundle` constructs the client from the viewer's own `SdcEndpointAddress`, so the extract targets the same SDC server as the rendered form. (Deriving the address from the viewer this way is the convention that keeps them in sync — see the note above.) Foreground — `await`, then close:
+
+```vb
+Imports Tiro.Health.FormSdk.Client            ' SdcOperationException
+Imports Tiro.Health.FormSdk.Client.Fhir.R5    ' SdcClient
+
+Private Async Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
+    Try
+        Using client As New SdcClient(New Uri(TiroFormViewer.SdcEndpointAddress))
+            Dim bundle As Bundle = Await client.ExtractAsync(e.Response)
+            ' persist / inspect bundle ...
+        End Using
+    Catch ex As SdcOperationException
+        MessageBox.Show($"Extraction failed: {ex.Message}")
+    End Try
+    Me.Close()
+End Sub
+```
+
+To extract in the **background** and let the form close immediately, build the client in the synchronous part (before `Me.Close()`), then await it in a tracked task you drain on shutdown:
+
+```vb
+Private ReadOnly _pending As New List(Of Task)()
+
+Private Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
+    Dim client As New SdcClient(New Uri(TiroFormViewer.SdcEndpointAddress))   ' synchronous — capture before close
+    _pending.Add(ExtractInBackground(client, e.Response))
+    Me.Close()
+End Sub
+
+Private Async Function ExtractInBackground(client As SdcClient, qr As QuestionnaireResponse) As Task
+    Try
+        Using client
+            Dim bundle As Bundle = Await client.ExtractAsync(qr)
+            ' persist bundle ...
+        End Using
+    Catch ex As Exception
+        ' nobody awaits this Task — log/report here
+    End Try
+End Function
+```
+
+Drain `_pending` on app exit (`Await Task.WhenAll(_pending)` with a timeout) so an in-flight extract isn't lost. `e.Response` is fully self-contained, so the viewer closing doesn't affect either path.
 
 ### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
 WinForms demos.
 
-- **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
+- **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`. Also demonstrates the **SDC `$extract` client**: on submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` and shows the resulting transaction `Bundle`'s entry count.
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
   - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
-  - **Reports list per patient** — every submitted `QuestionnaireResponse` is saved in an in-memory `ResponseStore` keyed by `(patient, encounter, template)` and shown newest-first in the Patient details tab. Relaunching the same combination passes the saved QR as `initialResponse` so the user resumes where they left off.
+  - **Reports list per patient** — every saved `QuestionnaireResponse` (finalized or draft) is stored in an in-memory `ResponseStore` keyed by a stable **report id** and shown newest-first in the Patient details tab. **+ New report** mints a fresh id, so it's always a distinct report; reopening one to edit reuses its id, so resubmitting updates that report in place rather than creating a duplicate.
+  - **Save in progress** — a footer button alongside **Submit** that calls `SendFormRequestSubmitAsync(intent:="save-draft")` (maps to the frontend's `submit({ status: "in-progress" })`; requires `tiro-web-sdk >= 0.3.0`). The draft round-trips back with status `in-progress`; the shell persists it (so it's resumable from the reports list) but **keeps the session alive** so the doctor can keep filling — distinguished from a finalized Submit (status `completed`, which ends the session) by inspecting `e.Response.Status` in the `FormSubmitted` handler.
   - **Read-only narrative preview** — single-clicking a saved report renders its narrative in a `RichTextBox` (RTF when the SDC's `$generate-narrative` produced one, plain-text fallback otherwise — both via `QuestionnaireResponseHelper`). The preview is decoupled from session state, so the doctor can peek at older reports while a form is in progress.
-  - **Consultation window** — clicking **Open this report** spawns a separate top-level `ReportConsultationForm` with its own `TiroFormViewerR5`. The main shell's session is left alive (showcasing that multiple viewer instances coexist), and the consultation viewer loads a different `WebContent/Consultation/index.html` that bakes `<tiro-form-filler read-only>` into the page so the form is view-only.
+  - **Reopen a report — edit or read-only** — double-clicking a report (or **Open this report**) prompts how to open it. **Edit** resumes filling it in the main shell's Form tab with the saved QR as `initialResponse`, reusing its report id (blocked while another session is live, to avoid orphaning the active viewer). **Read-only** spawns a separate top-level `ReportConsultationForm` with its own `TiroFormViewerR5` — leaving any live session untouched (showcasing that multiple viewer instances coexist) — loading a different `WebContent/Consultation/index.html` that bakes `<tiro-form-filler read-only>` into the page so the form is view-only.
   - **Tabbed embedding with dynamic Form tab** — the Form tab only exists while a session is alive (added to / removed from `TabControl.TabPages` on launch / dispose). A context banner above the form viewer shows what's being filled. Switching tabs while filling *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit **Close session** button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
   - **Custom `index.html` per role** — bundles `WebContent/Form/index.html` (editable) and `WebContent/Consultation/index.html` (read-only). The integrator picks which page to load by setting `WebContentFolder`, not by passing UI flags through the host API — UI concerns stay in the page. See [Shipping your own index.html](#shipping-your-own-indexhtml).
 - Both: `.NET 4.8` (VB.NET, old-style project format).

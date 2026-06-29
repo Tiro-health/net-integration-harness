@@ -1,4 +1,4 @@
-namespace Tiro.Health.Telemetry
+namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
     /// <summary>
     /// Outcome of a finished span. Mirrors the Sentry <c>SpanStatus</c> values that

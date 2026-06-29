@@ -1,5 +1,5 @@
 using System;
-using Tiro.Health.Telemetry;
+using Tiro.Health.FormFiller.WebView2.Telemetry;
 
 namespace Tiro.Health.FormFiller.WebView2
 {

@@ -1,5 +1,9 @@
+Imports System.Diagnostics
 Imports Hl7.Fhir.Model
+Imports Hl7.Fhir.Serialization
 Imports Tiro.Health.SmartWebMessaging.Events
+Imports Tiro.Health.FormSdk.Client
+Imports Tiro.Health.FormSdk.Client.Fhir.R5
 
 Public Class Form1
 
@@ -34,7 +38,7 @@ Public Class Form1
         Await TiroFormViewer.SendFormRequestSubmitAsync()
     End Sub
 
-    Private Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
+    Private Async Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
         If e.Outcome IsNot Nothing AndAlso e.Outcome.Success = False Then
             Dim result As DialogResult = MessageBox.Show(
                 "There are validation errors. Close anyway?",
@@ -53,6 +57,32 @@ Public Class Form1
         If Not String.IsNullOrEmpty(narrativeHtml) Then
             MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
         End If
+
+        ' Demonstrate the SDC $extract operation: run the questionnaire's extraction
+        ' over the completed QR to get the transaction Bundle of resources it produces
+        ' (for a template questionnaire, a Composition; for definition-based ones,
+        ' structured resources like Observation). The client is constructed from the
+        ' viewer's own SdcEndpointAddress, so it targets the same SDC server the form
+        ' rendered against (deriving the address from the viewer is what keeps them in
+        ' sync — the API doesn't enforce it). Foreground: we await before closing.
+        Try
+            Using client As New SdcClient(New Uri(TiroFormViewer.SdcEndpointAddress))
+                Dim bundle As Bundle = Await client.ExtractAsync(e.Response)
+
+                ' Showcase the extracted Bundle by rendering it as pretty FHIR JSON.
+                ' In a real EHR you would walk bundle.Entry and persist each resource;
+                ' here we just serialize the whole transaction Bundle to the debug output
+                ' so the demo shows exactly what $extract produced (Composition /
+                ' Observation / Provenance / ...). Watch the Output window in Visual Studio.
+                Dim json As String =
+                    New FhirJsonSerializer(New SerializerSettings With {.Pretty = True}).SerializeToString(bundle)
+
+                Debug.WriteLine($"$extract produced a '{bundle.Type}' Bundle with {bundle.Entry.Count} entries:")
+                Debug.WriteLine(json)
+            End Using
+        Catch ex As SdcOperationException
+            MessageBox.Show($"Extraction failed: {ex.Message}", "Extract error", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
 
         Me.Close()
     End Sub

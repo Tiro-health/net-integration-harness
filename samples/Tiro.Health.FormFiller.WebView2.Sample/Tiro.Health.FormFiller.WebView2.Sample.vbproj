@@ -70,6 +70,14 @@
       <Project>{C1A2B3C4-D5E6-F789-ABCD-000000000002}</Project>
       <Name>Tiro.Health.SmartWebMessaging.Fhir.R5</Name>
     </ProjectReference>
+    <ProjectReference Include="..\..\src\Tiro.Health.FormSdk.Client\Tiro.Health.FormSdk.Client.csproj">
+      <Project>{531A2384-680D-4EA6-9D50-35EDAE45BBFD}</Project>
+      <Name>Tiro.Health.FormSdk.Client</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\Tiro.Health.FormSdk.Client.Fhir.R5\Tiro.Health.FormSdk.Client.Fhir.R5.csproj">
+      <Project>{99AD7864-89B2-4D78-9DAA-D691997F06EB}</Project>
+      <Name>Tiro.Health.FormSdk.Client.Fhir.R5</Name>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <Reference Include="System" />

@@ -22,7 +22,10 @@ Public Class EhrShell
 
     ' Active session context — captured at LaunchSession time so we know what
     ' to save against when form.submitted fires (the user may have navigated
-    ' the patient/encounter selectors mid-fill).
+    ' the patient/encounter selectors mid-fill). _activeReportId identifies the
+    ' report being written: a fresh id for a "+ New report", the existing id when
+    ' reopening one for editing — so a new report never overwrites an old one.
+    Private _activeReportId As String
     Private _activePatient As Patient
     Private _activeEncounter As Encounter
     Private _activeEncounterLabel As String
@@ -145,7 +148,9 @@ Public Class EhrShell
 
         Using picker As New TemplatePickerDialog(_templates)
             If picker.ShowDialog(Me) <> DialogResult.OK OrElse picker.SelectedTemplate Is Nothing Then Return
-            LaunchSession(pr.Patient, encRec, picker.SelectedTemplate, initialResponse:=Nothing)
+            ' A new report gets a fresh id so it's always stored as a distinct report.
+            LaunchSession(Guid.NewGuid().ToString(), pr.Patient, encRec.Encounter, encRec.Label,
+                          picker.SelectedTemplate, initialResponse:=Nothing)
         End Using
     End Sub
 
@@ -163,25 +168,67 @@ Public Class EhrShell
 
     Private Sub OpenSelectedReport()
         If ReportsList.SelectedIndex < 0 OrElse ReportsList.SelectedIndex >= _reportsBacking.Count Then Return
+        Dim entry = _reportsBacking(ReportsList.SelectedIndex)
 
+        ' Ask how to open the report. The same saved QR can be reopened two ways,
+        ' each backed by a different WebContent page:
+        '   Edit      → resume filling it in the main Form tab (editable page).
+        '   Read-only → open it in a separate consultation window (view-only page),
+        '               which leaves any live editing session untouched.
+        Dim choice = MessageBox.Show(
+            "Open this report in edit mode?" & vbCrLf & vbCrLf &
+            "Yes — Edit: resume filling it in the main form." & vbCrLf &
+            "No — Read-only: open it in a separate consultation window." & vbCrLf &
+            "Cancel — don't open.",
+            "Open report",
+            MessageBoxButtons.YesNoCancel,
+            MessageBoxIcon.Question)
+
+        Select Case choice
+            Case DialogResult.Yes
+                EditReport(entry)
+            Case DialogResult.No
+                OpenReadOnly(entry)
+        End Select
+    End Sub
+
+    Private Sub OpenReadOnly(entry As ResponseEntry)
         ' Spawn a separate top-level window with its own TiroFormViewerR5 so the
         ' main shell's in-progress session (if any) stays alive. The doctor can
         ' position the consultation window next to the EHR shell, read the
         ' previous report, then continue filling out the current one.
-        Dim entry = _reportsBacking(ReportsList.SelectedIndex)
         Dim consultation As New ReportConsultationForm(entry, _practitioner)
         consultation.Show(Me)
+    End Sub
+
+    Private Sub EditReport(entry As ResponseEntry)
+        ' Editing reuses the main shell's single Form tab. If a session is already
+        ' live we'd orphan its viewer (and lose unsaved edits), so block until the
+        ' current session is submitted, saved, or closed.
+        If _viewer IsNot Nothing Then
+            MessageBox.Show(
+                "A form session is already open. Submit, save, or close it before editing another report.",
+                "Session in progress", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            Return
+        End If
+
+        ' Relaunch with the saved QR as the initial response so the doctor picks up
+        ' exactly where they left off. Reusing entry.ReportId means submitting
+        ' updates this same report in place instead of creating a duplicate.
+        LaunchSession(entry.ReportId, entry.Patient, entry.Encounter, entry.EncounterLabel, entry.Template,
+                      initialResponse:=entry.Response)
     End Sub
 
     ' ------------------------------------------------------------
     ' Form session lifecycle
     ' ------------------------------------------------------------
 
-    Private Async Sub LaunchSession(patient As Patient, encRec As EncounterRecord,
+    Private Async Sub LaunchSession(reportId As String, patient As Patient, encounter As Encounter, encounterLabel As String,
                                     template As TemplateOption, initialResponse As QuestionnaireResponse)
+        _activeReportId = reportId
         _activePatient = patient
-        _activeEncounter = encRec.Encounter
-        _activeEncounterLabel = encRec.Label
+        _activeEncounter = encounter
+        _activeEncounterLabel = encounterLabel
         _activeTemplate = template
 
         _viewer = New TiroFormViewerR5() With {.Dock = DockStyle.Fill}
@@ -197,12 +244,13 @@ Public Class EhrShell
 
         ' Show the Form tab (it lives unparented when no session is alive) and
         ' set the context banner so the user sees what they're filling out.
-        ContextLabel.Text = $"Filling: {template.Label}    ·    {patient.Name.First.Text}    ·    {encRec.Label}"
+        ContextLabel.Text = $"Filling: {template.Label}    ·    {patient.Name.First.Text}    ·    {encounterLabel}"
         FormTab.Controls.Add(_viewer)
         If Not MainTabs.TabPages.Contains(FormTab) Then MainTabs.TabPages.Add(FormTab)
         MainTabs.SelectedTab = FormTab
 
         SubmitFormButton.Enabled = True
+        SaveDraftButton.Enabled = True
         CloseSessionButton.Enabled = True
         UpdateNewReportButton()
 
@@ -210,7 +258,7 @@ Public Class EhrShell
             Await _viewer.SetContextAsync(
                 questionnaireCanonicalUrl:=template.CanonicalUrl,
                 patient:=patient,
-                encounter:=encRec.Encounter,
+                encounter:=encounter,
                 author:=_practitioner,
                 initialResponse:=initialResponse)
         Catch ex As Exception
@@ -225,15 +273,47 @@ Public Class EhrShell
         Await _viewer.SendFormRequestSubmitAsync()
     End Sub
 
+    ' Save the form as a draft without finalizing. The "save-draft" intent maps to
+    ' the frontend's submit({ status: "in-progress" }) (requires tiro-web-sdk >= 0.3.0;
+    ' older versions ignore the option and finalize instead). The QR round-trips back
+    ' through OnFormSubmitted with status In-progress, where we persist it but keep the
+    ' session alive so the doctor can keep filling.
+    Private Async Sub SaveDraftButton_Click(sender As Object, e As EventArgs) Handles SaveDraftButton.Click
+        If _viewer Is Nothing Then Return
+        Await _viewer.SendFormRequestSubmitAsync(intent:="save-draft")
+    End Sub
+
     Private Sub CloseSessionButton_Click(sender As Object, e As EventArgs) Handles CloseSessionButton.Click
+        If _viewer Is Nothing Then Return
+
+        ' Closing tears the viewer down without persisting. Confirm first, since any
+        ' edits made since the last Submit / Save in progress are lost.
+        If MessageBox.Show(
+            "Close this form without saving? Any unsaved changes will be lost.",
+            "Close form", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) <> DialogResult.Yes Then Return
+
         DisposeViewer()
         UpdateNewReportButton()
     End Sub
 
     Private Sub OnFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
-        If _activePatient IsNot Nothing AndAlso _activeEncounter IsNot Nothing AndAlso _activeTemplate IsNot Nothing Then
-            _store.SaveResponse(_activePatient, _activeEncounter, _activeEncounterLabel, _activeTemplate, e.Response)
+        If _activeReportId IsNot Nothing AndAlso _activePatient IsNot Nothing AndAlso _activeEncounter IsNot Nothing AndAlso _activeTemplate IsNot Nothing Then
+            _store.SaveResponse(_activeReportId, _activePatient, _activeEncounter, _activeEncounterLabel, _activeTemplate, e.Response)
         End If
+
+        ' A "Save in progress" round-trips a QR with status In-progress: persist it so
+        ' the doctor can resume later (it shows up in the reports list, and relaunching
+        ' the same patient/encounter/template reopens it), but keep the live session
+        ' alive so they can carry on filling. A finalized Submit (status Completed)
+        ' ends the session and tears the viewer down.
+        Dim isDraft = e.Response IsNot Nothing AndAlso
+                      e.Response.Status = QuestionnaireResponse.QuestionnaireResponseStatus.InProgress
+        If isDraft Then
+            ContextLabel.Text = $"Draft saved · {_activeTemplate.Label} · {_activePatient.Name.First.Text} · {_activeEncounterLabel}"
+            ReloadReports()
+            Return
+        End If
+
         DisposeViewer()
         ReloadReports()
         UpdateNewReportButton()
@@ -255,7 +335,9 @@ Public Class EhrShell
         MainTabs.SelectedTab = DetailsTab
 
         SubmitFormButton.Enabled = False
+        SaveDraftButton.Enabled = False
         CloseSessionButton.Enabled = False
+        _activeReportId = Nothing
         _activePatient = Nothing
         _activeEncounter = Nothing
         _activeEncounterLabel = Nothing

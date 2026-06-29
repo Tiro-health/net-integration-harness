@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using Tiro.Health.Telemetry;
+using Tiro.Health.FormFiller.WebView2.Telemetry;
 
 namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 {

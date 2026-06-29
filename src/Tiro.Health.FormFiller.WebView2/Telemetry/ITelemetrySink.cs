@@ -1,6 +1,6 @@
 using System;
 
-namespace Tiro.Health.Telemetry
+namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
     /// <summary>
     /// Pluggable telemetry surface for session-scoped traces and exception capture. Default

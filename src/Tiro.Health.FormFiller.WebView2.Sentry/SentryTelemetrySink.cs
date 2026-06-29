@@ -1,7 +1,7 @@
 using System;
 using System.Reflection;
 using global::Sentry;
-using Tiro.Health.Telemetry;
+using Tiro.Health.FormFiller.WebView2.Telemetry;
 
 namespace Tiro.Health.FormFiller.WebView2.Sentry
 {
@@ -103,6 +103,8 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
 
         private static string ComputeDefaultRelease()
         {
+            // ITelemetrySink lives in the Tiro.Health.FormFiller.WebView2 assembly, so this reads
+            // that assembly's version — matching the "Tiro.Health.FormFiller.WebView2@" label below.
             var asm = typeof(ITelemetrySink).Assembly;
             var version = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
                        ?? asm.GetName().Version?.ToString()

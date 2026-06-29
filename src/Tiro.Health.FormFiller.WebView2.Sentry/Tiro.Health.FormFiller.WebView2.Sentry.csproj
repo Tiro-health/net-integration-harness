@@ -24,7 +24,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj" />
-    <ProjectReference Include="..\Tiro.Health.Telemetry.Abstractions\Tiro.Health.Telemetry.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>
