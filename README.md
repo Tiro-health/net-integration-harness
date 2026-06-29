@@ -311,6 +311,51 @@ TiroFormViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5"
 
 > **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
 
+## Authentication
+
+**The harness ships no credentials and adds no auth headers of its own.** Authentication is between your host and the SDC server it talks to — the harness just moves FHIR payloads. This section explains the model and where you plug credentials in.
+
+### The access model: credentials → service-account user → project access → template
+
+Tiro.health uses **OAuth2 client-credentials** (machine-to-machine): a `client_id` + `client_secret` pair identifies your integration and resolves to a **service-account user**. Questionnaire templates live in **projects**, and a user can read/render a template only if it has **project access** to that template's project. So:
+
+> A form (and a `$validate`/`$extract` call against it) resolves **iff the service-account user behind the credentials has project access to the template's project.** No project access ⇒ the template won't resolve, regardless of the harness being wired correctly.
+
+When your SDC server is self-hosted (the production path), that service account is configured in the server's own environment (e.g. `TIRO_SERVICE_ACCOUNT_KEY` / `TIRO_PROJECT_ID` — see [docs.tiro.health → Form SDK getting started](https://docs.tiro.health/form-sdk/getting-started)). The shared demo instance `sdc.tiro.health` is open for getting-started and needs no credentials.
+
+Canonical reference for the auth mechanics (token endpoint, Basic vs. Bearer, `X-User-Id`): **[docs.tiro.health → API Authentication](https://docs.tiro.health/api/authentication)** and **[FHIR Authentication](https://docs.tiro.health/fhir/authentication)**. The harness does not re-implement any of this — it consumes an already-authenticated transport.
+
+### Two surfaces, two places credentials live
+
+A host has up to two independent conversations with the SDC server, and each authenticates separately:
+
+**1. The SDC client (`$validate` / `$extract`) — you inject an authenticated `HttpClient`.** This is the concrete seam in the harness. Build an `HttpClient` carrying the `Authorization` header (HTTP Basic with base64 `client_id:client_secret`, or an OAuth2 `Bearer` token from `https://auth.tiro.health/oauth/token`), plus `X-User-Id` when the operation must act as a specific practitioner, and hand it to the client via `SdcConnection`:
+
+```vb
+Imports System.Net.Http
+Imports System.Net.Http.Headers
+Imports System.Text
+Imports Tiro.Health.FormSdk.Client
+Imports Tiro.Health.FormSdk.Client.Fhir.R5
+
+Dim http As New HttpClient()
+Dim basic = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"))
+http.DefaultRequestHeaders.Authorization = New AuthenticationHeaderValue("Basic", basic)
+' Optional: identify the acting practitioner (identifier token "system|value").
+http.DefaultRequestHeaders.Add("X-User-Id", "http://myhospital.org/staff|123")
+
+' Same SDC base + (optionally) the viewer's trace; the authenticated client is yours.
+Dim conn As New SdcConnection(New Uri("https://sdc.hospital.example/fhir/r5"), http, telemetry:=TiroFormViewer.TelemetrySession)
+Dim client As New SdcClient(conn)
+Dim bundle = Await client.ExtractAsync(qr)
+```
+
+Reuse one long-lived authenticated `HttpClient` (or an `IHttpClientFactory` instance); don't build one per call.
+
+> ⚠ **The `TiroFormViewerR5.ExtractAsync(qr)` convenience builds its own bare `HttpClient` with no auth headers.** It's meant for the open demo server and unsecured setups. **Against a secured SDC server it will fail to authenticate** — use `SdcClient` / `SdcConnection` directly with your authenticated `HttpClient`, as above. (This is the deliberate trade-off behind the convenience having no `HttpClient` parameter — see [the glue package](#tirohealthformfillerwebview2sdcfhirr5-opt-in-glue).)
+
+**2. The embedded form (the rendered `<tiro-form-filler>`) — governed by the SDC server it points at.** The bridge configures *which* SDC server the page talks to (`SdcEndpointAddress`, above) but does **not** inject credentials into the page. Against the open demo server that's fine. Against a secured SDC server, the page's traffic must be authenticated by your `index.html` / `tiro-web-sdk` setup (or a server fronted with your own auth); the template a user sees is still bounded by the service account's project access. Wiring page-side credentials is outside what the bridge does today.
+
 ## Building
 
 ### C# projects (core libraries, FormFiller, Sentry adapter, tests)
