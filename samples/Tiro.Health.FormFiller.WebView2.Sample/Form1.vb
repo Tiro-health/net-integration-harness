@@ -1,5 +1,7 @@
 Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
+Imports Tiro.Health.FormSdk.Client
+Imports Tiro.Health.FormSdk.Client.Fhir.R5
 
 Public Class Form1
 
@@ -34,7 +36,7 @@ Public Class Form1
         Await TiroFormViewer.SendFormRequestSubmitAsync()
     End Sub
 
-    Private Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
+    Private Async Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
         If e.Outcome IsNot Nothing AndAlso e.Outcome.Success = False Then
             Dim result As DialogResult = MessageBox.Show(
                 "There are validation errors. Close anyway?",
@@ -53,6 +55,22 @@ Public Class Form1
         If Not String.IsNullOrEmpty(narrativeHtml) Then
             MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
         End If
+
+        ' Demonstrate the SDC $extract operation: run the questionnaire's extraction
+        ' over the completed QR to get the transaction Bundle of resources it produces
+        ' (for a template questionnaire, a Composition; for definition-based ones,
+        ' structured resources like Observation). The client is constructed from the
+        ' viewer's own SdcEndpointAddress so it can't hit a different server than the
+        ' form rendered against. Foreground: we await before closing.
+        Try
+            Using client As New SdcClient(New Uri(TiroFormViewer.SdcEndpointAddress))
+                Dim bundle As Bundle = Await client.ExtractAsync(e.Response)
+                MessageBox.Show($"$extract produced a '{bundle.Type}' Bundle with {bundle.Entry.Count} entries.",
+                                "Extraction Bundle", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            End Using
+        Catch ex As SdcOperationException
+            MessageBox.Show($"Extraction failed: {ex.Message}", "Extract error", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        End Try
 
         Me.Close()
     End Sub

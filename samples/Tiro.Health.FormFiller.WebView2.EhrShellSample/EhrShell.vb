@@ -203,6 +203,7 @@ Public Class EhrShell
         MainTabs.SelectedTab = FormTab
 
         SubmitFormButton.Enabled = True
+        SaveDraftButton.Enabled = True
         CloseSessionButton.Enabled = True
         UpdateNewReportButton()
 
@@ -225,6 +226,16 @@ Public Class EhrShell
         Await _viewer.SendFormRequestSubmitAsync()
     End Sub
 
+    ' Save the form as a draft without finalizing. The "save-draft" intent maps to
+    ' the frontend's submit({ status: "in-progress" }) (requires tiro-web-sdk >= 0.3.0;
+    ' older versions ignore the option and finalize instead). The QR round-trips back
+    ' through OnFormSubmitted with status In-progress, where we persist it but keep the
+    ' session alive so the doctor can keep filling.
+    Private Async Sub SaveDraftButton_Click(sender As Object, e As EventArgs) Handles SaveDraftButton.Click
+        If _viewer Is Nothing Then Return
+        Await _viewer.SendFormRequestSubmitAsync(intent:="save-draft")
+    End Sub
+
     Private Sub CloseSessionButton_Click(sender As Object, e As EventArgs) Handles CloseSessionButton.Click
         DisposeViewer()
         UpdateNewReportButton()
@@ -234,6 +245,20 @@ Public Class EhrShell
         If _activePatient IsNot Nothing AndAlso _activeEncounter IsNot Nothing AndAlso _activeTemplate IsNot Nothing Then
             _store.SaveResponse(_activePatient, _activeEncounter, _activeEncounterLabel, _activeTemplate, e.Response)
         End If
+
+        ' A "Save in progress" round-trips a QR with status In-progress: persist it so
+        ' the doctor can resume later (it shows up in the reports list, and relaunching
+        ' the same patient/encounter/template reopens it), but keep the live session
+        ' alive so they can carry on filling. A finalized Submit (status Completed)
+        ' ends the session and tears the viewer down.
+        Dim isDraft = e.Response IsNot Nothing AndAlso
+                      e.Response.Status = QuestionnaireResponse.QuestionnaireResponseStatus.InProgress
+        If isDraft Then
+            ContextLabel.Text = $"Draft saved · {_activeTemplate.Label} · {_activePatient.Name.First.Text} · {_activeEncounterLabel}"
+            ReloadReports()
+            Return
+        End If
+
         DisposeViewer()
         ReloadReports()
         UpdateNewReportButton()
@@ -255,6 +280,7 @@ Public Class EhrShell
         MainTabs.SelectedTab = DetailsTab
 
         SubmitFormButton.Enabled = False
+        SaveDraftButton.Enabled = False
         CloseSessionButton.Enabled = False
         _activePatient = Nothing
         _activeEncounter = Nothing

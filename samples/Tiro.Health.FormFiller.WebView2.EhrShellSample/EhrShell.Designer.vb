@@ -44,6 +44,7 @@ Partial Class EhrShell
         ContextLabel = New Label()
         FormFooterPanel = New Panel()
         SubmitFormButton = New Button()
+        SaveDraftButton = New Button()
         CloseSessionButton = New Button()
         TopStrip.SuspendLayout()
         LeftPanel.SuspendLayout()
@@ -343,6 +344,7 @@ Partial Class EhrShell
         ' Dock=Bottom claims a 46px footer; the TiroFormViewer added at runtime
         ' with Dock=Fill lands above it (and below ContextLabel).
         FormFooterPanel.Controls.Add(SubmitFormButton)
+        FormFooterPanel.Controls.Add(SaveDraftButton)
         FormFooterPanel.Controls.Add(CloseSessionButton)
         FormFooterPanel.Dock = DockStyle.Bottom
         FormFooterPanel.Location = New Point(0, 624)
@@ -359,6 +361,16 @@ Partial Class EhrShell
         SubmitFormButton.TabIndex = 1
         SubmitFormButton.Text = "Submit"
         SubmitFormButton.UseVisualStyleBackColor = True
+        '
+        ' SaveDraftButton
+        '
+        SaveDraftButton.Anchor = AnchorStyles.Top Or AnchorStyles.Right
+        SaveDraftButton.Location = New Point(411, 8)
+        SaveDraftButton.Name = "SaveDraftButton"
+        SaveDraftButton.Size = New Size(130, 30)
+        SaveDraftButton.TabIndex = 2
+        SaveDraftButton.Text = "Save in progress"
+        SaveDraftButton.UseVisualStyleBackColor = True
         '
         ' CloseSessionButton
         '
@@ -431,5 +443,6 @@ Partial Class EhrShell
     Friend WithEvents ContextLabel As Label
     Friend WithEvents FormFooterPanel As Panel
     Friend WithEvents SubmitFormButton As Button
+    Friend WithEvents SaveDraftButton As Button
     Friend WithEvents CloseSessionButton As Button
 End Class
