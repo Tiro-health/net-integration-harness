@@ -356,7 +356,7 @@ net-integration-harness/
 └── tests/
     ├── Tiro.Health.SmartWebMessaging.Tests/        # MSTest, protocol/handler coverage
     ├── Tiro.Health.FormFiller.WebView2.Tests/      # MSTest, viewer lifecycle + telemetry contracts + embedded assets
-    └── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract + SdcConnection over a fake HttpMessageHandler
+    └── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract over a fake HttpMessageHandler
 ```
 
 ### `Tiro.Health.SmartWebMessaging` (core)
@@ -412,15 +412,15 @@ Thin, strongly-typed client over the **stateless SDC server** FHIR operations �
 - **Key types**: `SdcClientBase<TQuestionnaireResponse, TOperationOutcome, TBundle>` (core, FHIR-version-agnostic) and `SdcClient` (R5 closed binding)
 - **Operations**: `ValidateAsync(qr)` → `OperationOutcome` (`QuestionnaireResponse/$validate`); `ExtractAsync(qr)` → transaction `Bundle` (`QuestionnaireResponse/$extract`)
   - `$extract` runs the questionnaire's SDC extraction over a completed `QuestionnaireResponse` and returns a transaction `Bundle` — the resources the answers produce, plus the source QR and a `Provenance` linking them. What's extracted depends on the questionnaire: Tiro's **template-based** questionnaires yield a `Composition` whose sections carry the rendered narrative, while **definition-based** questionnaires yield structured resources (e.g. `Observation`). The stateless endpoint computes the Bundle without persisting it.
-- **Construction**: `new SdcClient(new Uri("https://host/fhir/r5"), httpClient?)` — inject a pre-configured `HttpClient` for custom TLS/proxy/timeouts. Or pass an **`SdcConnection`** (`new SdcClient(connection)`) — a small value object bundling the base address and optional `HttpClient` into one thing you build once and apply to both the client and the viewer (see below)
-- **Use one SDC base for both the form and the client.** `baseAddress` here and the viewer's `SdcEndpointAddress` ([`TiroFormViewer`](#tirohealthformfillerwebview2)) are the *same* concept — the SDC server. If a host embeds the form **and** calls `$validate`/`$extract` directly, configure the SDC address once and apply it to both, so the rendered form and the client never end up pointing at different servers. The client deliberately has no default base (you must pass one) to avoid silently diverging from a viewer you've already configured — construct it from `viewer.SdcEndpointAddress` (see [Extracting after a form submit](#extracting-after-a-form-submit)). `SdcConnection` bundles that address with an optional `HttpClient` into one reusable value if you prefer passing a single object
+- **Construction**: `new SdcClient(new Uri("https://host/fhir/r5"), httpClient?)` — inject a pre-configured `HttpClient` for custom TLS/proxy/timeouts. The client deliberately has **no default base** — you must pass one.
+- **Point the client at the same SDC server as the form.** `baseAddress` here and the viewer's `SdcEndpointAddress` ([`TiroFormViewer`](#tirohealthformfillerwebview2)) are the *same* concept — the SDC server. A host that embeds the form **and** calls `$validate`/`$extract` directly should **construct the client from `viewer.SdcEndpointAddress`** (see [Extracting after a form submit](#extracting-after-a-form-submit)) so the two can't drift apart. Note this is a **convention, not an enforced guarantee** — nothing in the API stops you from pointing the form and the client at different servers, so derive the client's address from the viewer rather than configuring it separately.
 - **Behaviour**: thin over Firely's serializer + `HttpClient` (POSTs a bare `QuestionnaireResponse`, the shape the SDC server expects). A validation failure comes back as `OperationOutcome` issues; transport/server errors (non-2xx) throw `SdcOperationException`. Responses are parsed in Firely's *recoverable* mode, so a `200` carrying an element/code a newer server emits that this Firely version doesn't recognize is still returned (partial POCO) rather than failing
 - **Telemetry-free** — the client takes no telemetry seam; it's a pure HTTP/FHIR client. If you want a span around a call, wrap it at the call site with a session you own — `Using session.StartTransaction("sdc.extract", "http.client") : Await client.ExtractAsync(qr) : End Using` — where `session` is any `ITelemetrySession` you create (e.g. from a sink via `BeginSession`). Keeping telemetry out of the client avoids coupling its lifetime to a session's
 - **R5-only**: these SDC operations exist only on `/fhir/r5`, so there is no R4/R5 split — a future R4 server would be one new `.Fhir.R4` binding. `$populate` is tracked separately (#29)
 
 #### Extracting after a form submit
 
-A host that embeds a viewer **and** wants the extraction `Bundle` constructs the client from the viewer's own `SdcEndpointAddress`, so the extract can't point at a different server than the rendered form. Foreground — `await`, then close:
+A host that embeds a viewer **and** wants the extraction `Bundle` constructs the client from the viewer's own `SdcEndpointAddress`, so the extract targets the same SDC server as the rendered form. (Deriving the address from the viewer this way is the convention that keeps them in sync — see the note above.) Foreground — `await`, then close:
 
 ```vb
 Imports Tiro.Health.FormSdk.Client            ' SdcOperationException

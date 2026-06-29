@@ -73,20 +73,6 @@ namespace Tiro.Health.FormSdk.Client
         }
 
         /// <summary>
-        /// Construct from an <see cref="SdcConnection"/> — the recommended path when the host also
-        /// configures a form viewer, so both share one base address and one transport. Unpacks the
-        /// connection and delegates to the primitive constructor.
-        /// </summary>
-        /// <param name="connection">The SDC connection (base address + optional HttpClient).</param>
-        /// <param name="fhirJson">FHIR-configured serializer options (built with <c>.ForFhir(...)</c> by the binding).</param>
-        protected SdcClientBase(SdcConnection connection, JsonSerializerOptions fhirJson)
-            : this((connection ?? throw new ArgumentNullException(nameof(connection))).BaseAddress,
-                   fhirJson,
-                   connection.HttpClient)
-        {
-        }
-
-        /// <summary>
         /// Validate a QuestionnaireResponse against its referenced Questionnaire
         /// (<c>POST QuestionnaireResponse/$validate</c>). A validation failure is reported as issues
         /// in the returned <typeparamref name="TOperationOutcome"/>, not as an exception.

@@ -62,8 +62,9 @@ Public Class Form1
         ' over the completed QR to get the transaction Bundle of resources it produces
         ' (for a template questionnaire, a Composition; for definition-based ones,
         ' structured resources like Observation). The client is constructed from the
-        ' viewer's own SdcEndpointAddress so it can't hit a different server than the
-        ' form rendered against. Foreground: we await before closing.
+        ' viewer's own SdcEndpointAddress, so it targets the same SDC server the form
+        ' rendered against (deriving the address from the viewer is what keeps them in
+        ' sync — the API doesn't enforce it). Foreground: we await before closing.
         Try
             Using client As New SdcClient(New Uri(TiroFormViewer.SdcEndpointAddress))
                 Dim bundle As Bundle = Await client.ExtractAsync(e.Response)
