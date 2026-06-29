@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 
-namespace Tiro.Health.Telemetry
+namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
     /// <summary>
-    /// No-op <see cref="ITelemetrySink"/>. Default for libraries that do not depend on any
-    /// specific telemetry backend.
+    /// No-op <see cref="ITelemetrySink"/>. Default for the form-filler when no telemetry backend
+    /// is registered.
     /// </summary>
     public sealed class NullTelemetrySink : ITelemetrySink
     {

@@ -1,6 +1,6 @@
 using System;
 using Hl7.Fhir.Model;
-using Tiro.Health.Telemetry;
+using Tiro.Health.FormFiller.WebView2.Telemetry;
 using Tiro.Health.SmartWebMessaging;
 
 namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes

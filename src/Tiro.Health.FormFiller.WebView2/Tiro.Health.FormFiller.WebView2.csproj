@@ -27,7 +27,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj" />
-    <ProjectReference Include="..\Tiro.Health.Telemetry.Abstractions\Tiro.Health.Telemetry.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>

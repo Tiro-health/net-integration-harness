@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Tiro.Health.Telemetry
+namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
     /// <summary>
     /// A telemetry session — a logical grouping of related transactions and breadcrumbs that

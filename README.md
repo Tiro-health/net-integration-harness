@@ -180,7 +180,7 @@ The library ships a working default `index.html` so the samples run out-of-the-b
 
 ## Telemetry
 
-The telemetry abstraction lives in its own backend-agnostic package, **`Tiro.Health.Telemetry.Abstractions`** (namespace `Tiro.Health.Telemetry`), used by the form-filler. It carries no telemetry *backend* dependency. Telemetry is plugged in via `ITelemetrySink`:
+The telemetry abstraction ships **inside `Tiro.Health.FormFiller.WebView2`** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`) and carries no telemetry *backend* dependency — so a consumer that wants no telemetry pulls no Sentry NuGet. Telemetry is plugged in via `ITelemetrySink`:
 
 ```vb
 Public Interface ITelemetrySink
@@ -343,8 +343,7 @@ net-integration-harness/
 │   ├── Tiro.Health.SmartWebMessaging/              # Core protocol handler (FHIR-version-agnostic)
 │   ├── Tiro.Health.SmartWebMessaging.Fhir.R5/      # FHIR R5 closed bindings
 │   ├── Tiro.Health.SmartWebMessaging.Fhir.R4/      # FHIR R4 closed bindings
-│   ├── Tiro.Health.Telemetry.Abstractions/         # Backend-agnostic telemetry seam (ITelemetrySink/Session/Span)
-│   ├── Tiro.Health.FormFiller.WebView2/            # WinForms UserControl + bridge JS (FHIR-agnostic)
+│   ├── Tiro.Health.FormFiller.WebView2/            # WinForms UserControl + bridge JS + telemetry seam (FHIR-agnostic)
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R5/    # Designer-friendly R5 viewer
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
 │   ├── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
@@ -376,18 +375,12 @@ Concrete bindings on top of the core library.
 - **Key type**: `SmartMessageHandler` — binds the base handler to `Resource`, `QuestionnaireResponse`, `OperationOutcome` from the corresponding `Hl7.Fhir.*` package
 - **Adds**: strongly-typed `FormSubmitted` events, version-specific FHIR-resource convenience overloads on `SendSdcConfigureContextAsync` and `SendSdcDisplayQuestionnaireAsync`
 
-### `Tiro.Health.Telemetry.Abstractions`
-Backend-agnostic telemetry seam used by the form-filler, so it takes no dependency on a telemetry backend to be instrumentable. (The SDC client is deliberately telemetry-free — callers wrap a span at the call site if they want one.)
-
-- **Targets**: `netstandard2.0`, `net48`
-- **Key types**: `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, and `NullTelemetrySink` (the no-op default)
-- **No backend dependency**: the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend
-
 ### `Tiro.Health.FormFiller.WebView2`
 Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to the messaging handler. FHIR-version-agnostic: derive `TiroFormViewerR4`/`R5` (or your own closed binding) to use it.
 
 - **Targets**: `net48` (C# SDK-style, WinForms + WebView2)
 - **Key type**: `TiroFormViewer<TResource, TQR, TOO>` — abstract generic UserControl
+- **Telemetry seam** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`): `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, and `NullTelemetrySink` (the no-op default). No backend dependency — the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend.
 - **Features**:
   - Explicit lifecycle state machine (`TiroFormViewerState`: Initializing → Ready → ContextSet → Submitted → Disposed)
   - Async API with `CancellationToken` end-to-end; in-flight operations cancel cleanly on disposal

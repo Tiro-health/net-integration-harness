@@ -1,7 +1,7 @@
 using System;
 using global::Sentry;
 using Tiro.Health.FormFiller.WebView2;
-using Tiro.Health.Telemetry;
+using Tiro.Health.FormFiller.WebView2.Telemetry;
 
 namespace Tiro.Health.FormFiller.WebView2.Sentry
 {

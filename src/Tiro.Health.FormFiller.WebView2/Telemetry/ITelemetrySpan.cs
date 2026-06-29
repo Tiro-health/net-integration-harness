@@ -1,6 +1,6 @@
 using System;
 
-namespace Tiro.Health.Telemetry
+namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
     /// <summary>
     /// A telemetry span. Used for both transactions and child spans — they share the same
