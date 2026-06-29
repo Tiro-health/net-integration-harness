@@ -33,33 +33,23 @@ namespace Tiro.Health.FormSdk.Client.Tests
             var conn = new SdcConnection("https://sdc.test.local/fhir/r5");
             Assert.AreEqual(BaseAddress, conn.BaseAddress);
             Assert.IsNull(conn.HttpClient);
-            Assert.IsNull(conn.Telemetry);
         }
 
         [TestMethod]
-        public void WithTelemetry_ReturnsCopyCarryingSession_LeavingOriginalUnchanged()
+        public void Ctor_CarriesInjectedHttpClient()
         {
             var http = new HttpClient();
-            var original = new SdcConnection(BaseAddress, http);
-            var session = new FakeTelemetrySession();
-
-            var withSession = original.WithTelemetry(session);
-
-            // Copy carries the session and preserves the other fields.
-            Assert.AreSame(session, withSession.Telemetry);
-            Assert.AreEqual(BaseAddress, withSession.BaseAddress);
-            Assert.AreSame(http, withSession.HttpClient);
-            // Original is untouched (immutability).
-            Assert.IsNull(original.Telemetry);
+            var conn = new SdcConnection(BaseAddress, http);
+            Assert.AreEqual(BaseAddress, conn.BaseAddress);
+            Assert.AreSame(http, conn.HttpClient);
         }
 
         [TestMethod]
-        public async Task SdcClient_FromConnection_UsesInjectedHttpClientAndSession()
+        public async Task SdcClient_FromConnection_UsesInjectedHttpClient()
         {
             const string emptyBundle = """{"resourceType":"Bundle","type":"transaction"}""";
             var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, emptyBundle);
-            var session = new FakeTelemetrySession();
-            var connection = new SdcConnection(BaseAddress, new HttpClient(handler), session);
+            var connection = new SdcConnection(BaseAddress, new HttpClient(handler));
 
             using (var client = new SdcClient(connection))
             {
@@ -67,13 +57,11 @@ namespace Tiro.Health.FormSdk.Client.Tests
                 Assert.IsNotNull(bundle);
             }
 
-            // The connection's HttpClient was used (request reached our fake handler) ...
+            // The connection's HttpClient was used: the request reached our fake handler at the
+            // resolved $extract path.
             Assert.IsNotNull(handler.LastRequest);
             Assert.IsTrue(handler.LastRequest!.RequestUri!.AbsolutePath.EndsWith(
                 "/fhir/r5/QuestionnaireResponse/$extract", StringComparison.Ordinal));
-            // ... and the connection's session recorded the operation in its trace.
-            Assert.AreEqual(1, session.Transactions.Count);
-            Assert.AreEqual("sdc.extract", session.Transactions[0].Name);
         }
 
         [TestMethod]

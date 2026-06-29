@@ -3,7 +3,6 @@ using System.Net.Http;
 using System.Text.Json;
 using Hl7.Fhir.Model;
 using Hl7.Fhir.Serialization;
-using Tiro.Health.Telemetry;
 
 namespace Tiro.Health.FormSdk.Client.Fhir.R5
 {
@@ -28,21 +27,16 @@ namespace Tiro.Health.FormSdk.Client.Fhir.R5
 
         /// <param name="baseAddress">The SDC server FHIR R5 base, e.g. <c>https://host/fhir/r5</c>.</param>
         /// <param name="httpClient">Optional pre-configured client for custom TLS/proxy/timeouts.</param>
-        /// <param name="telemetry">
-        /// Optional telemetry session; when supplied, each <c>$validate</c>/<c>$extract</c> round-trip
-        /// is recorded as a transaction in its trace. Omit for no telemetry.
-        /// </param>
-        public SdcClient(Uri baseAddress, HttpClient httpClient = null, ITelemetrySession telemetry = null)
-            : base(baseAddress, FhirJson, httpClient, telemetry)
+        public SdcClient(Uri baseAddress, HttpClient httpClient = null)
+            : base(baseAddress, FhirJson, httpClient)
         {
         }
 
         /// <summary>
-        /// Construct from an <see cref="SdcConnection"/> — shared base address, transport, and
-        /// telemetry trace. Use this when the host also configures a form viewer against the same
-        /// SDC server.
+        /// Construct from an <see cref="SdcConnection"/> — shared base address and transport. Use
+        /// this when the host also configures a form viewer against the same SDC server.
         /// </summary>
-        /// <param name="connection">The SDC connection (base address + optional HttpClient + optional session).</param>
+        /// <param name="connection">The SDC connection (base address + optional HttpClient).</param>
         public SdcClient(SdcConnection connection)
             : base(connection, FhirJson)
         {
