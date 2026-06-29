@@ -21,12 +21,12 @@ The resulting `<PackageReference>` block in your `.csproj` / `.vbproj`:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="0.0.6" />
-  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="0.0.6" />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Fhir.R5" Version="..." />
+  <PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="..." />
 </ItemGroup>
 ```
 
-(Drop the Sentry line if you don't want telemetry.)
+(Drop the Sentry line if you don't want telemetry.) Pin to the latest published version — the **Manage NuGet Packages** UI fills the `Version` in for you on install.
 
 Old-style `.vbproj` projects (the `<Project ToolsVersion="15.0">` format — anything that isn't SDK-style `<Project Sdk="...">`) need a few extra properties. There's no Properties UI for these, so edit the XML directly: in Visual Studio right-click the project → **Unload Project** → right-click again → **Edit `<ProjectName>.vbproj`** (or open the file in any text editor). Add these inside the first `<PropertyGroup>` — the one with `<Configuration>` / `<OutputType>` / `<TargetFrameworkVersion>` etc.:
 
@@ -199,7 +199,7 @@ The FHIR-version closed bindings (`TiroFormViewerR5`/`R4`) default to `NullTelem
 To **opt in to Sentry telemetry**, add the adapter package and call `TiroFormFillerSentry.UseSentry()` **once at application startup** — before any form containing a viewer is constructed:
 
 ```xml
-<PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="1.0.0" />
+<PackageReference Include="Tiro.Health.FormFiller.WebView2.Sentry" Version="..." />
 ```
 
 ```vb
