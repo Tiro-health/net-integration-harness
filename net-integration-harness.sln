@@ -36,6 +36,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{3CDEF491
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.FormSdk.Client.Tests", "tests\Tiro.Health.FormSdk.Client.Tests\Tiro.Health.FormSdk.Client.Tests.csproj", "{D51AFB98-8311-4757-9D52-1BD1EFE34900}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tiro.Health.FormFiller.WebView2.Sdc.Fhir.R5", "src\Tiro.Health.FormFiller.WebView2.Sdc.Fhir.R5\Tiro.Health.FormFiller.WebView2.Sdc.Fhir.R5.csproj", "{281B7A48-A5F7-4328-A0C2-130E7C64FDFB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -102,6 +104,10 @@ Global
 		{D51AFB98-8311-4757-9D52-1BD1EFE34900}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D51AFB98-8311-4757-9D52-1BD1EFE34900}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D51AFB98-8311-4757-9D52-1BD1EFE34900}.Release|Any CPU.Build.0 = Release|Any CPU
+		{281B7A48-A5F7-4328-A0C2-130E7C64FDFB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{281B7A48-A5F7-4328-A0C2-130E7C64FDFB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{281B7A48-A5F7-4328-A0C2-130E7C64FDFB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{281B7A48-A5F7-4328-A0C2-130E7C64FDFB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -114,5 +120,6 @@ Global
 		{531A2384-680D-4EA6-9D50-35EDAE45BBFD} = {F68978BC-B40C-4A91-9575-8183F111EFFE}
 		{99AD7864-89B2-4D78-9DAA-D691997F06EB} = {F68978BC-B40C-4A91-9575-8183F111EFFE}
 		{D51AFB98-8311-4757-9D52-1BD1EFE34900} = {3CDEF491-5EF2-4B91-8E2A-133BE48B786E}
+		{281B7A48-A5F7-4328-A0C2-130E7C64FDFB} = {F68978BC-B40C-4A91-9575-8183F111EFFE}
 	EndGlobalSection
 EndGlobal

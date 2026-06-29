@@ -36,5 +36,16 @@ namespace Tiro.Health.FormSdk.Client.Fhir.R5
             : base(baseAddress, FhirJson, httpClient, telemetry)
         {
         }
+
+        /// <summary>
+        /// Construct from an <see cref="SdcConnection"/> — shared base address, transport, and
+        /// telemetry trace. Use this when the host also configures a form viewer against the same
+        /// SDC server.
+        /// </summary>
+        /// <param name="connection">The SDC connection (base address + optional HttpClient + optional session).</param>
+        public SdcClient(SdcConnection connection)
+            : base(connection, FhirJson)
+        {
+        }
     }
 }
