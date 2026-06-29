@@ -62,18 +62,6 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         public ITelemetrySink TelemetrySink => _telemetry;
 
-        /// <summary>
-        /// This viewer's telemetry session — one trace for the viewer's lifetime (or the no-op
-        /// session when telemetry is disabled). All of the viewer's transactions share this
-        /// session's trace id. Pass it to an <c>SdcConnection</c> / <c>SdcClient</c> so direct
-        /// <c>$validate</c>/<c>$extract</c> calls land in the same trace as the form session.
-        /// <para>
-        /// <c>null</c> until the runtime constructor has run — e.g. at design time, where all
-        /// runtime initialization is skipped.
-        /// </para>
-        /// </summary>
-        public ITelemetrySession TelemetrySession => _session;
-
         private ILogger _logger = NullLogger.Instance;
         private SmartMessageHandlerBase<TResource, TQR, TOO> _smartWebMessageHandler;
         private IEmbeddedBrowser _browser;
