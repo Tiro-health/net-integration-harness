@@ -1,4 +1,6 @@
+Imports System.Diagnostics
 Imports Hl7.Fhir.Model
+Imports Hl7.Fhir.Serialization
 Imports Tiro.Health.SmartWebMessaging.Events
 Imports Tiro.Health.FormSdk.Client
 Imports Tiro.Health.FormSdk.Client.Fhir.R5
@@ -65,8 +67,17 @@ Public Class Form1
         Try
             Using client As New SdcClient(New Uri(TiroFormViewer.SdcEndpointAddress))
                 Dim bundle As Bundle = Await client.ExtractAsync(e.Response)
-                MessageBox.Show($"$extract produced a '{bundle.Type}' Bundle with {bundle.Entry.Count} entries.",
-                                "Extraction Bundle", MessageBoxButtons.OK, MessageBoxIcon.Information)
+
+                ' Showcase the extracted Bundle by rendering it as pretty FHIR JSON.
+                ' In a real EHR you would walk bundle.Entry and persist each resource;
+                ' here we just serialize the whole transaction Bundle to the debug output
+                ' so the demo shows exactly what $extract produced (Composition /
+                ' Observation / Provenance / ...). Watch the Output window in Visual Studio.
+                Dim json As String =
+                    New FhirJsonSerializer(New SerializerSettings With {.Pretty = True}).SerializeToString(bundle)
+
+                Debug.WriteLine($"$extract produced a '{bundle.Type}' Bundle with {bundle.Entry.Count} entries:")
+                Debug.WriteLine(json)
             End Using
         Catch ex As SdcOperationException
             MessageBox.Show($"Extraction failed: {ex.Message}", "Extract error", MessageBoxButtons.OK, MessageBoxIcon.Warning)

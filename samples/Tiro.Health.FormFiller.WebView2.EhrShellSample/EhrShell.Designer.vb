@@ -228,8 +228,9 @@ Partial Class EhrShell
         '
         ' Right-aligned to the preview header so it sits next to the narrative
         ' label. Enabled only when a real saved report is selected. Clicking
-        ' reopens the report in the form viewer (with the saved QR as the
-        ' initial response); confirmation dialog kicks in if a session is alive.
+        ' prompts for edit vs read-only: edit resumes filling in the Form tab
+        ' (blocked while another session is live), read-only opens a separate
+        ' consultation window.
         OpenReportButton.Anchor = AnchorStyles.Top Or AnchorStyles.Right
         OpenReportButton.Enabled = False
         OpenReportButton.Location = New Point(628, 6)
@@ -355,31 +356,31 @@ Partial Class EhrShell
         ' SubmitFormButton
         '
         SubmitFormButton.Anchor = AnchorStyles.Top Or AnchorStyles.Right
-        SubmitFormButton.Location = New Point(735, 8)
+        SubmitFormButton.Location = New Point(690, 8)
         SubmitFormButton.Name = "SubmitFormButton"
-        SubmitFormButton.Size = New Size(85, 30)
-        SubmitFormButton.TabIndex = 1
+        SubmitFormButton.Size = New Size(130, 30)
+        SubmitFormButton.TabIndex = 2
         SubmitFormButton.Text = "Submit"
         SubmitFormButton.UseVisualStyleBackColor = True
         '
         ' SaveDraftButton
         '
         SaveDraftButton.Anchor = AnchorStyles.Top Or AnchorStyles.Right
-        SaveDraftButton.Location = New Point(411, 8)
+        SaveDraftButton.Location = New Point(552, 8)
         SaveDraftButton.Name = "SaveDraftButton"
         SaveDraftButton.Size = New Size(130, 30)
-        SaveDraftButton.TabIndex = 2
+        SaveDraftButton.TabIndex = 1
         SaveDraftButton.Text = "Save in progress"
         SaveDraftButton.UseVisualStyleBackColor = True
         '
         ' CloseSessionButton
         '
         CloseSessionButton.Anchor = AnchorStyles.Top Or AnchorStyles.Right
-        CloseSessionButton.Location = New Point(549, 8)
+        CloseSessionButton.Location = New Point(414, 8)
         CloseSessionButton.Name = "CloseSessionButton"
-        CloseSessionButton.Size = New Size(180, 30)
+        CloseSessionButton.Size = New Size(130, 30)
         CloseSessionButton.TabIndex = 0
-        CloseSessionButton.Text = "Close session (dispose)"
+        CloseSessionButton.Text = "Close"
         CloseSessionButton.UseVisualStyleBackColor = True
         '
         ' EhrShell
