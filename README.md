@@ -430,23 +430,29 @@ Thin, strongly-typed client over the **stateless SDC server** FHIR operations �
 Convenience bridge for the common "embed a form, then extract the result" host. Reference it **only** if you want to run `$extract` straight off a viewer; it's the single place the form-filler and the SDC client meet, so neither core package depends on the other.
 
 - **Targets**: `net48`
-- **Adds**: an `ExtractAsync` extension method on `TiroFormViewerR5`, so a host turns a submitted `QuestionnaireResponse` into an extraction `Bundle` in one line — no `SdcClient`/`SdcConnection` to construct, no address or telemetry to wire:
+- **`Configure(SdcConnection)`** — points the viewer at the SDC server described by an `SdcConnection` (sets its `SdcEndpointAddress` from `connection.BaseAddress`). Build one `SdcConnection` and apply it to **both** the viewer (`viewer.Configure(conn)`) and any client (`new SdcClient(conn)`), so the rendered form and direct `$validate`/`$extract` calls can't drift onto different servers:
 
   ```vb
-  Imports Tiro.Health.FormFiller.WebView2.Sdc.Fhir.R5   ' brings the extension into scope (or add it as a project-level import)
+  Dim conn As New SdcConnection("https://sdc.hospital.example/fhir/r5")
+  TiroFormViewer.Configure(conn)        ' viewer takes its address from the one object
+  ' ... later, if the host also calls the SDC server itself:
+  Dim client As New SdcClient(conn)     ' same address — single source of truth
+  ```
+- **`ExtractAsync(qr)`** — turns a submitted `QuestionnaireResponse` into an extraction `Bundle` in one line, with no `SdcClient` to construct and no address to wire:
 
-  Private Async Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
+  ```vb
+  Imports Tiro.Health.FormFiller.WebView2.Sdc.Fhir.R5   ' brings the extensions into scope (or add as a project-level import)
+
+  Private Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
       ' ... optional validation-error prompt on e.Outcome ...
-      Dim bundle As Bundle = Await TiroFormViewer.ExtractAsync(e.Response)
-      ' persist / inspect the extracted resources ...
+      _pendingExtracts.Add(TiroFormViewer.ExtractAsync(e.Response))   ' fire-and-forget; safe to close now
       Me.Close()
   End Sub
   ```
 
-  The SDC server address and telemetry trace are read from the viewer itself (`SdcEndpointAddress` + `TelemetrySession`), so the extract call can't point at a different server than the form the user just filled, and its span joins the form-session trace.
-- **Cadence**: a short-lived `SdcClient` (own `HttpClient`) is created per call — fine at form-submit cadence (one extract per human submission). A host extracting in **bulk** should use `SdcClient` / `SdcConnection` directly with a shared `HttpClient`.
+  Only the **address** is read from the viewer, copied synchronously at the call; the extract then runs self-contained on its own `HttpClient`. So it's **safe to fire without awaiting and let the viewer close** (e.g. extract in the background on submit). It carries **no authentication and no telemetry of its own** — for shared/authenticated transport, bulk extraction, or telemetry correlated with the form-session trace, use `SdcClient` / `SdcConnection` directly (passing your own `HttpClient` and/or the viewer's `TelemetrySession` *while the viewer is alive*).
 - **Throws**: `InvalidOperationException` if the viewer's `SdcEndpointAddress` is unset; `SdcOperationException` on a non-2xx / unparseable server response (same contract as the client).
-- **Extension method, so it works in VB.NET on net48** — it's a plain `[Extension]`-attributed static method; VB surfaces it on `TiroFormViewerR5` as long as the namespace is in scope (per-file `Imports` or a project-level import).
+- **Extension methods, so they work in VB.NET on net48** — plain `[Extension]`-attributed static methods; VB surfaces them on `TiroFormViewerR5` as long as the namespace is in scope (per-file `Imports` or a project-level import).
 
 ### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
 WinForms demos.
