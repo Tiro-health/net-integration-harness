@@ -350,7 +350,8 @@ net-integration-harness/
 │   ├── Tiro.Health.FormSdk.Client/                 # Typed SDC FHIR client core ($validate/$extract)
 │   └── Tiro.Health.FormSdk.Client.Fhir.R5/         # SDC client — FHIR R5 closed binding
 ├── samples/
-│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form, single-patient demo (R5)
+│   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form, single-patient demo — shows the response narrative (R5)
+│   ├── Tiro.Health.FormFiller.WebView2.ExtractSample/  # Like Sample, but runs SDC $extract and shows the extracted Composition narrative (R5)
 │   └── Tiro.Health.FormFiller.WebView2.EhrShellSample/ # Dummy EHR shell — patient/encounter/template selection,
 │                                                       # tabbed viewer, in-memory QR persistence, custom index.html (R5)
 └── tests/
@@ -464,10 +465,11 @@ End Function
 
 Drain `_pending` on app exit (`Await Task.WhenAll(_pending)` with a timeout) so an in-flight extract isn't lost. `e.Response` is fully self-contained, so the viewer closing doesn't affect either path.
 
-### `Tiro.Health.FormFiller.WebView2.Sample` / `EhrShellSample`
+### `Tiro.Health.FormFiller.WebView2.Sample` / `ExtractSample` / `EhrShellSample`
 WinForms demos.
 
-- **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`. Also demonstrates the **SDC `$extract` client**: on submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` and shows the resulting transaction `Bundle`'s entry count.
+- **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
+- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows its narrative (`Composition.Text.Div`) in a `MessageBox`. Falls back to a Bundle summary if the questionnaire extracts non-Composition resources (e.g. definition-based `Observation`s).
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
   - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
@@ -477,7 +479,7 @@ WinForms demos.
   - **Reopen a report — edit or read-only** — double-clicking a report (or **Open this report**) prompts how to open it. **Edit** resumes filling it in the main shell's Form tab with the saved QR as `initialResponse`, reusing its report id (blocked while another session is live, to avoid orphaning the active viewer). **Read-only** spawns a separate top-level `ReportConsultationForm` with its own `TiroFormViewerR5` — leaving any live session untouched (showcasing that multiple viewer instances coexist) — loading a different `WebContent/Consultation/index.html` that bakes `<tiro-form-filler read-only>` into the page so the form is view-only.
   - **Tabbed embedding with dynamic Form tab** — the Form tab only exists while a session is alive (added to / removed from `TabControl.TabPages` on launch / dispose). A context banner above the form viewer shows what's being filled. Switching tabs while filling *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit **Close session** button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
   - **Custom `index.html` per role** — bundles `WebContent/Form/index.html` (editable) and `WebContent/Consultation/index.html` (read-only). The integrator picks which page to load by setting `WebContentFolder`, not by passing UI flags through the host API — UI concerns stay in the page. See [Shipping your own index.html](#shipping-your-own-indexhtml).
-- Both: `.NET 4.8` (VB.NET, old-style project format).
+- All three: `.NET 4.8` (VB.NET, old-style project format).
 
 ### `Tiro.Health.SmartWebMessaging.Tests` / `Tiro.Health.FormFiller.WebView2.Tests` / `Tiro.Health.FormSdk.Client.Tests`
 - **Targets**: `net8.0` (SmartWebMessaging) / `net48;net8.0` (FormSdk.Client — multi-targeted so the net48 build the libraries ship is also exercised) / `net48` (FormFiller — needs WinForms + WebView2)
