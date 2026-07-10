@@ -1,4 +1,5 @@
 Imports Hl7.Fhir.Model
+Imports Tiro.Health.FormFiller.WebView2.Fhir.R5
 Imports Tiro.Health.SmartWebMessaging.Events
 Imports Tiro.Health.FormSdk.Client
 Imports Tiro.Health.FormSdk.Client.Fhir.R5
@@ -8,6 +9,16 @@ Public Class Form1
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
+
+        ' The SDC server (runs $populate / $validate / $generate-narrative for the form, plus
+        ' the $extract call in HandleFormSubmitted) is configured in TWO places that must agree:
+        '   1. the viewer — set TiroFormViewer.SdcEndpointAddress here, BEFORE SetContextAsync
+        '      (the bridge reads it once when the page is wired). It's already seeded with
+        '      TiroFormViewerR5.DefaultSdcEndpointAddress (https://sdc.tiro.health/fhir/r5); this
+        '      line is where you'd point it at your own SDC server instead.
+        '   2. the SDC client — constructed from this same address in HandleFormSubmitted below,
+        '      so the extract targets the server the form rendered against.
+        TiroFormViewer.SdcEndpointAddress = TiroFormViewerR5.DefaultSdcEndpointAddress
 
         Dim patient As New Patient() With {
             .Name = New List(Of HumanName) From {
@@ -51,9 +62,10 @@ Public Class Form1
         ' transaction Bundle of structured FHIR resources. For a template questionnaire the
         ' Bundle's primary resource is a Composition — the clinical document the form produced.
         '
-        ' The client is constructed from the viewer's own SdcEndpointAddress, so the extract
-        ' targets the same SDC server the form rendered against (deriving the address from the
-        ' viewer is the convention that keeps them in sync — the API doesn't enforce it).
+        ' Config point 2 (see Form1_Load): construct the client from the viewer's own
+        ' SdcEndpointAddress, so the extract targets the same SDC server the form rendered
+        ' against. Deriving it from the viewer is the convention that keeps the two in sync —
+        ' the API doesn't enforce it, so a client pointed elsewhere would silently disagree.
         Try
             Using client As New SdcClient(New Uri(TiroFormViewer.SdcEndpointAddress))
                 Dim bundle As Bundle = Await client.ExtractAsync(e.Response)
