@@ -1,24 +1,23 @@
 Imports Hl7.Fhir.Model
-Imports Tiro.Health.FormFiller.WebView2.Fhir.R5
 Imports Tiro.Health.SmartWebMessaging.Events
 Imports Tiro.Health.FormSdk.Client
 Imports Tiro.Health.FormSdk.Client.Fhir.R5
 
 Public Class Form1
 
+    ' Single source of truth for the SDC server. Passed to BOTH the viewer (which runs
+    ' $populate / $validate / $generate-narrative for the form) and the $extract client, so
+    ' they always target the same server. Point this at your own SDC server for production;
+    ' https://sdc.tiro.health/fhir/r5 is the shared demo instance (also the viewer's default).
+    Private Const SdcEndpoint As String = "https://sdc.tiro.health/fhir/r5"
+
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
 
-        ' The SDC server (runs $populate / $validate / $generate-narrative for the form, plus
-        ' the $extract call in HandleFormSubmitted) is configured in TWO places that must agree:
-        '   1. the viewer — set TiroFormViewer.SdcEndpointAddress here, BEFORE SetContextAsync
-        '      (the bridge reads it once when the page is wired). It's already seeded with
-        '      TiroFormViewerR5.DefaultSdcEndpointAddress (https://sdc.tiro.health/fhir/r5); this
-        '      line is where you'd point it at your own SDC server instead.
-        '   2. the SDC client — constructed from this same address in HandleFormSubmitted below,
-        '      so the extract targets the server the form rendered against.
-        TiroFormViewer.SdcEndpointAddress = TiroFormViewerR5.DefaultSdcEndpointAddress
+        ' Point the viewer at the SDC server. Must be set BEFORE SetContextAsync (the bridge
+        ' reads it once when the page is wired). The $extract client uses the same SdcEndpoint.
+        TiroFormViewer.SdcEndpointAddress = SdcEndpoint
 
         Dim patient As New Patient() With {
             .Name = New List(Of HumanName) From {
@@ -62,12 +61,10 @@ Public Class Form1
         ' transaction Bundle of structured FHIR resources. For a template questionnaire the
         ' Bundle's primary resource is a Composition — the clinical document the form produced.
         '
-        ' Config point 2 (see Form1_Load): construct the client from the viewer's own
-        ' SdcEndpointAddress, so the extract targets the same SDC server the form rendered
-        ' against. Deriving it from the viewer is the convention that keeps the two in sync —
-        ' the API doesn't enforce it, so a client pointed elsewhere would silently disagree.
+        ' Construct the client against the same SdcEndpoint the viewer used, so the extract
+        ' targets the server the form rendered against.
         Try
-            Using client As New SdcClient(New Uri(TiroFormViewer.SdcEndpointAddress))
+            Using client As New SdcClient(New Uri(SdcEndpoint))
                 Dim bundle As Bundle = Await client.ExtractAsync(e.Response)
 
                 ' Pull the Composition (the extracted clinical document) out of the Bundle.
