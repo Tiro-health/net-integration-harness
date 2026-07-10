@@ -63,10 +63,7 @@ Public Class Form1
                     bundle.Entry.Select(Function(entry) entry.Resource).OfType(Of Composition)().FirstOrDefault()
 
                 If composition IsNot Nothing Then
-                    ' The readable narrative lives on the Composition's SECTIONS
-                    ' (section[].Text.Div), not the top-level Composition.Text — so join the
-                    ' section narratives. (Text.Div here is XHTML; a real host would render it
-                    ' in a browser/RichTextBox rather than a plain MessageBox.)
+                    ' The readable narrative lives on the Composition's SECTIONS (section[].Text.Div))
                     Dim narrative As String = String.Join(
                         Environment.NewLine & Environment.NewLine,
                         composition.Section.
