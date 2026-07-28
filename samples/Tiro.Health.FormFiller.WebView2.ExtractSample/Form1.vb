@@ -1,3 +1,4 @@
+Imports System.IO
 Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
 Imports Tiro.Health.FormSdk.Client
@@ -14,6 +15,11 @@ Public Class Form1
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
+
+        ' Serve the form page bundled with this sample (WebContent\index.html) instead of the
+        ' viewer's built-in assets — the light-blue page makes it obvious the host is supplying
+        ' the HTML. Must be set before the handle is created (i.e. before SetContextAsync).
+        TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
 
         ' Point the viewer at the SDC server. Must be set BEFORE SetContextAsync (the bridge
         ' reads it once when the page is wired). The $extract client uses the same SdcEndpoint.
