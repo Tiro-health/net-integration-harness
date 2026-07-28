@@ -161,7 +161,15 @@ namespace Tiro.Health.FormFiller.WebView2
                     throw new ObjectDisposedException(GetType().Name);
                 case TiroFormViewerState.Submitted:
                     throw new InvalidOperationException("The form has already been submitted.");
-                    // Initializing, Ready, and ContextSet are all valid.
+                case TiroFormViewerState.Initializing:
+                case TiroFormViewerState.Ready:
+                    // No questionnaire has been displayed yet (SetContextAsync hasn't run), so
+                    // there is nothing to submit. Reject fast: since navigation is deferred to
+                    // SetContextAsync, waiting here would block on a handshake that can never
+                    // arrive and surface as a misleading 30s "handshake timeout".
+                    throw new InvalidOperationException(
+                        "Cannot submit before a form is displayed. Call SetContextAsync first.");
+                    // Only ContextSet is valid.
             }
         }
 

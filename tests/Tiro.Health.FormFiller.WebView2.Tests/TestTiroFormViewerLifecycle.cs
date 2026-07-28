@@ -139,6 +139,33 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task SendFormRequestSubmitAsync_WhileInitializing_ThrowsInvalidOperation()
+        {
+            // No handshake yet (state Initializing) and no SetContextAsync — nothing to submit.
+            await DelayUntilBrowserInitialized();
+            Assert.AreEqual(TiroFormViewerState.Initializing, _viewer.State);
+
+            await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+                await _viewer.SendFormRequestSubmitAsync());
+        }
+
+        [TestMethod]
+        public async Task SendFormRequestSubmitAsync_WhenReadyButNoContext_ThrowsInvalidOperation()
+        {
+            // Handshake received (state Ready) but SetContextAsync never called: no form is
+            // displayed, so there is nothing to submit. Must fail fast with InvalidOperationException
+            // rather than blocking on a handshake/submit that can't complete — with navigation now
+            // deferred to SetContextAsync, a bare submit would otherwise hang until the handshake
+            // timeout. Guards the tightened GuardCanSendFormRequest (Ready is no longer accepted).
+            await DelayUntilBrowserInitialized();
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            Assert.AreEqual(TiroFormViewerState.Ready, _viewer.State);
+
+            await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+                await _viewer.SendFormRequestSubmitAsync());
+        }
+
+        [TestMethod]
         public async Task SetContextAsync_TwiceFromContextSet_ThrowsInvalidOperation()
         {
             // First call: handshake races with SetContextAsync's wait, then send completes
