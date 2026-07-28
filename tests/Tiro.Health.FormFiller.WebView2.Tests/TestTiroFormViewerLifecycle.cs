@@ -181,6 +181,32 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task Navigation_IsDeferredUntilSetContext_ReadingWebContentFolderThen()
+        {
+            await DelayUntilBrowserInitialized();
+
+            // Navigation must NOT happen eagerly during init. If it did, a WebContentFolder
+            // set after construction (as a Form_Load handler does) would race the async init
+            // and might be read before it's assigned.
+            Assert.AreEqual(0, _browser.NavigatedUrls.Count,
+                "Viewer must not navigate until the first SetContextAsync.");
+
+            // Assign the folder AFTER construction, exactly as a Form_Load handler would.
+            _viewer.WebContentFolder = @"C:\custom\web\content";
+
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+            Assert.AreEqual(1, _browser.NavigatedUrls.Count, "SetContextAsync should navigate exactly once.");
+            CollectionAssert.Contains(
+                _browser.VirtualHostMappings.ConvertAll(m => m.Folder),
+                @"C:\custom\web\content",
+                "The folder assigned before SetContextAsync must be the one mapped — proving it is " +
+                "read at SetContextAsync, not captured earlier during construction.");
+        }
+
+        [TestMethod]
         public void Dispose_ClearsPendingResponseListeners()
         {
             // Pending response listeners hold closures over caller-supplied handlers, the

@@ -18,7 +18,8 @@ Public Class Form1
 
         ' Serve the form page bundled with this sample (WebContent\index.html) instead of the
         ' viewer's built-in assets — the light-blue page makes it obvious the host is supplying
-        ' the HTML. Must be set before the handle is created (i.e. before SetContextAsync).
+        ' the HTML. WebContentFolder is read at the first SetContextAsync (when the viewer
+        ' navigates), so setting it here in Form_Load — before that call — takes effect.
         TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
 
         ' Point the viewer at the SDC server. Must be set BEFORE SetContextAsync (the bridge

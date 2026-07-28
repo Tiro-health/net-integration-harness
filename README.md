@@ -193,13 +193,22 @@ Only two things are non-negotiable: the `tiro-web-sdk` `<script>` tag and a `<ti
      </Content>
    </ItemGroup>
    ```
-4. Point `WebContentFolder` at the deployed folder. In a Designer-built VB.NET form, set it inside `Form_Load` *before* you call `SetContextAsync` (the WebView2 initializes lazily inside `SetContextAsync`, so as long as the property is set first, the right `index.html` is the one that loads):
-   ```vb
-   Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-       TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
-       ' ... AddHandler / build patient / SetContextAsync ...
-   End Sub
-   ```
+4. Point `WebContentFolder` at the deployed folder. It's read once, at the first `SetContextAsync` call — the point the viewer navigates to your page — so set it any time **before** that call; setting it afterwards has no effect. Both of these are safe (there's no init-timing race — navigation is deferred until `SetContextAsync` reads the property):
+
+   - **Object initializer** — natural when you build the viewer in code, as the EhrShell sample does:
+     ```vb
+     Private ReadOnly TiroFormViewer As New TiroFormViewerR5() With {
+         .Dock = DockStyle.Fill,
+         .WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
+     }
+     ```
+   - **`Form_Load`, before `SetContextAsync`** — convenient for a Designer-placed viewer, and what the Sample and ExtractSample do:
+     ```vb
+     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+         TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
+         ' ... AddHandler / build patient / SetContextAsync ...
+     End Sub
+     ```
 
 ## Telemetry
 
