@@ -28,8 +28,9 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>
         /// Optional folder containing a consumer-supplied <c>index.html</c> (and any supporting assets).
         /// When null, the <c>index.html</c> shipped with this package is used.
-        /// Set this before the control's handle is created (e.g. via object initializer, or before
-        /// adding the control to its parent form).
+        /// The value is read once, at the first <see cref="SetContextAsync"/> call (the point the page is
+        /// navigated), so set it any time before then — an object initializer or <c>Form_Load</c> both work.
+        /// Setting it after the first <see cref="SetContextAsync"/> has no effect.
         /// </summary>
         public string WebContentFolder { get; set; }
 
@@ -78,6 +79,13 @@ namespace Tiro.Health.FormFiller.WebView2
 
         // Tracks if WebView is initialized
         private Task _initializationTask;
+
+        // Guards one-time navigation to the content folder. Navigation is deferred out of the
+        // eager (constructor-started) InitializeBrowserAsync into the first SetContextAsync, so
+        // WebContentFolder is read at a deterministic, caller-controlled point rather than
+        // whenever the async WebView2 init happens to finish — which was a race with callers
+        // that set the folder in Form_Load. 0 = not navigated, 1 = navigated.
+        private int _navigated;
 
         // Track if handshake has been received
         private readonly TaskCompletionSource<bool> _handshakeReceivedSource =
@@ -153,7 +161,15 @@ namespace Tiro.Health.FormFiller.WebView2
                     throw new ObjectDisposedException(GetType().Name);
                 case TiroFormViewerState.Submitted:
                     throw new InvalidOperationException("The form has already been submitted.");
-                    // Initializing, Ready, and ContextSet are all valid.
+                case TiroFormViewerState.Initializing:
+                case TiroFormViewerState.Ready:
+                    // No questionnaire has been displayed yet (SetContextAsync hasn't run), so
+                    // there is nothing to submit. Reject fast: since navigation is deferred to
+                    // SetContextAsync, waiting here would block on a handshake that can never
+                    // arrive and surface as a misleading 30s "handshake timeout".
+                    throw new InvalidOperationException(
+                        "Cannot submit before a form is displayed. Call SetContextAsync first.");
+                    // Only ContextSet is valid.
             }
         }
 
@@ -333,13 +349,11 @@ namespace Tiro.Health.FormFiller.WebView2
                     return Task.CompletedTask;
                 };
 
-                var contentFolder = !string.IsNullOrEmpty(WebContentFolder)
-                    ? WebContentFolder
-                    : DefaultWebContent.FolderPath;
-
-                _browser.MapVirtualHost(VirtualHostName, contentFolder);
-                _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
-
+                // Navigation (MapVirtualHost + Navigate) is intentionally NOT done here. It's
+                // deferred to the first SetContextAsync via NavigateToContent() so WebContentFolder
+                // is read at a deterministic, caller-controlled point. Doing it here would read the
+                // folder whenever this async init happened to finish — a race with callers that set
+                // WebContentFolder in Form_Load.
                 initSpan?.Finish(TelemetrySpanStatus.Ok);
             }
             catch (Exception ex)
@@ -348,6 +362,23 @@ namespace Tiro.Health.FormFiller.WebView2
                 _telemetry.CaptureException(ex);
                 throw;
             }
+        }
+
+        // Maps the virtual host to the resolved content folder and navigates to index.html.
+        // Idempotent: only the first call navigates (a SetContextAsync retried after a handshake
+        // timeout must not reload the page). Reads WebContentFolder here — at the first
+        // SetContextAsync — so any value set before that call (object initializer, Form_Load, …)
+        // is guaranteed to take effect.
+        private void NavigateToContent()
+        {
+            if (Interlocked.CompareExchange(ref _navigated, 1, 0) != 0) return;
+
+            var contentFolder = !string.IsNullOrEmpty(WebContentFolder)
+                ? WebContentFolder
+                : DefaultWebContent.FolderPath;
+
+            _browser.MapVirtualHost(VirtualHostName, contentFolder);
+            _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
         }
 
         private void OnBrowserMessageReceived(object sender, string inboundJson)
@@ -482,6 +513,13 @@ namespace Tiro.Health.FormFiller.WebView2
                 try
                 {
                     await _initializationTask.WaitAsync(linkedCts.Token);
+
+                    // Browser environment + bridge scripts are ready; now navigate to the content
+                    // folder. Deferred to here (not the eager init task) so WebContentFolder is read
+                    // at this caller-controlled point — no race with hosts that set it in Form_Load.
+                    // Idempotent, so a retried SetContextAsync won't reload the page.
+                    NavigateToContent();
+
                     await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
                         timeoutMessage: $"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
 

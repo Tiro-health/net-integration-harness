@@ -232,12 +232,14 @@ Public Class EhrShell
         _activeTemplate = template
 
         _viewer = New TiroFormViewerR5() With {.Dock = DockStyle.Fill}
+        _viewer.SdcEndpointAddress = "https://sdc.tiro.health/fhir/r5"
         ' Point the viewer at WebContent\Form — the editable form page bundled
         ' with the sample. Each role gets its own page (Form for filling,
         ' Consultation for read-only viewing); the integrator picks which one
         ' by setting WebContentFolder, not by passing UI flags through the
-        ' host API. Must be set before the handle is created (i.e. before the
-        ' viewer is added to a Controls collection).
+        ' host API. WebContentFolder is read at SetContextAsync (when the viewer
+        ' navigates), so setting it here — before the LaunchSession SetContextAsync
+        ' call below — takes effect.
         _viewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent", "Form")
         AddHandler _viewer.FormSubmitted, AddressOf OnFormSubmitted
         AddHandler _viewer.CloseApplication, AddressOf OnCloseApplication

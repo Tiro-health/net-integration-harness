@@ -159,10 +159,33 @@ End Class
 
 The library ships a working default `index.html` so the samples run out-of-the-box, but for production you'll want to host your own page. The bridge and SMART Web Messaging plumbing are auto-injected by the host (regardless of which page is loaded), so your `index.html` stays UI-only — no SDK init, no transport setup, no Sentry CDN tag.
 
-1. Run any of the samples; the default page renders with a yellow banner at the top.
-2. Click **Copy starter template** in that banner. The button writes a hardcoded minimal HTML5 page to your clipboard — `<!DOCTYPE html>`, the SDK script, the two CSS rules needed to make the form-filler fill the viewport, and a bare `<tiro-form-filler id="form-filler">`. No banner, no runtime-applied attributes (`questionnaire`, `launch-context`, `sdc-endpoint-address`), no SDK-injected styles.
-3. Paste it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) below) — don't hardcode them in the page.
-4. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
+Only two things are non-negotiable: the `tiro-web-sdk` `<script>` tag and a `<tiro-form-filler id="form-filler">` element. Everything else (endpoints, `questionnaire`, `launch-context`) is applied at runtime by the host — don't bake it into the page.
+
+1. Start from this minimal starter template. (You can also get it by running any sample and clicking **Copy starter template** in the default page's yellow banner, but the canonical copy is right here — no need to run anything.)
+   ```html
+   <!DOCTYPE html>
+   <html lang="en">
+   <head>
+       <meta charset="UTF-8">
+       <title>Tiro Form Filler</title>
+       <!-- Tracks the latest SDK. If you pin the .NET integration harness (NuGet) to a fixed
+            version, pin a matching tiro-web-sdk version here too (e.g. sdk/vX.Y.Z/) instead of
+            `latest`, so a future frontend release can't drift the bridge contract. Save-draft
+            needs tiro-web-sdk >= 0.3.0. -->
+       <script src="https://cdn.tiro.health/sdk/latest/tiro-web-sdk.iife.js" defer></script>
+       <style>
+           html, body { margin: 0; height: 100%; }
+           tiro-form-filler { display: block; height: 100%; }
+       </style>
+   </head>
+   <body>
+       <tiro-form-filler id="form-filler"></tiro-form-filler>
+   </body>
+   </html>
+   ```
+   For fuller, checked-in examples, see the samples: `ExtractSample/WebContent/index.html` (a lightly-branded single page) and the EhrShell sample's `WebContent/Form/index.html` (editable) and `WebContent/Consultation/index.html` (read-only — bakes in the `read-only` attribute).
+2. Save it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) below) — don't hardcode them in the page.
+3. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
    ```xml
    <ItemGroup>
      <Content Include="WebContent\**\*">
@@ -170,13 +193,22 @@ The library ships a working default `index.html` so the samples run out-of-the-b
      </Content>
    </ItemGroup>
    ```
-5. Point `WebContentFolder` at the deployed folder. In a Designer-built VB.NET form, set it inside `Form_Load` *before* you call `SetContextAsync` (the WebView2 initializes lazily inside `SetContextAsync`, so as long as the property is set first, the right `index.html` is the one that loads):
-   ```vb
-   Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-       TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
-       ' ... AddHandler / build patient / SetContextAsync ...
-   End Sub
-   ```
+4. Point `WebContentFolder` at the deployed folder. It's read once, at the first `SetContextAsync` call — the point the viewer navigates to your page — so set it any time **before** that call; setting it afterwards has no effect. Both of these are safe (there's no init-timing race — navigation is deferred until `SetContextAsync` reads the property):
+
+   - **Object initializer** — natural when you build the viewer in code, as the EhrShell sample does:
+     ```vb
+     Private ReadOnly TiroFormViewer As New TiroFormViewerR5() With {
+         .Dock = DockStyle.Fill,
+         .WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
+     }
+     ```
+   - **`Form_Load`, before `SetContextAsync`** — convenient for a Designer-placed viewer, and what the Sample and ExtractSample do:
+     ```vb
+     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+         TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
+         ' ... AddHandler / build patient / SetContextAsync ...
+     End Sub
+     ```
 
 ## Telemetry
 

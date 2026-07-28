@@ -139,6 +139,33 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task SendFormRequestSubmitAsync_WhileInitializing_ThrowsInvalidOperation()
+        {
+            // No handshake yet (state Initializing) and no SetContextAsync — nothing to submit.
+            await DelayUntilBrowserInitialized();
+            Assert.AreEqual(TiroFormViewerState.Initializing, _viewer.State);
+
+            await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+                await _viewer.SendFormRequestSubmitAsync());
+        }
+
+        [TestMethod]
+        public async Task SendFormRequestSubmitAsync_WhenReadyButNoContext_ThrowsInvalidOperation()
+        {
+            // Handshake received (state Ready) but SetContextAsync never called: no form is
+            // displayed, so there is nothing to submit. Must fail fast with InvalidOperationException
+            // rather than blocking on a handshake/submit that can't complete — with navigation now
+            // deferred to SetContextAsync, a bare submit would otherwise hang until the handshake
+            // timeout. Guards the tightened GuardCanSendFormRequest (Ready is no longer accepted).
+            await DelayUntilBrowserInitialized();
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            Assert.AreEqual(TiroFormViewerState.Ready, _viewer.State);
+
+            await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+                await _viewer.SendFormRequestSubmitAsync());
+        }
+
+        [TestMethod]
         public async Task SetContextAsync_TwiceFromContextSet_ThrowsInvalidOperation()
         {
             // First call: handshake races with SetContextAsync's wait, then send completes
@@ -178,6 +205,32 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             await AssertThrowsCancelled(async () =>
                 await _viewer.SetContextAsync("http://example.org/q", cancellationToken: cts.Token));
+        }
+
+        [TestMethod]
+        public async Task Navigation_IsDeferredUntilSetContext_ReadingWebContentFolderThen()
+        {
+            await DelayUntilBrowserInitialized();
+
+            // Navigation must NOT happen eagerly during init. If it did, a WebContentFolder
+            // set after construction (as a Form_Load handler does) would race the async init
+            // and might be read before it's assigned.
+            Assert.AreEqual(0, _browser.NavigatedUrls.Count,
+                "Viewer must not navigate until the first SetContextAsync.");
+
+            // Assign the folder AFTER construction, exactly as a Form_Load handler would.
+            _viewer.WebContentFolder = @"C:\custom\web\content";
+
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+            Assert.AreEqual(1, _browser.NavigatedUrls.Count, "SetContextAsync should navigate exactly once.");
+            CollectionAssert.Contains(
+                _browser.VirtualHostMappings.ConvertAll(m => m.Folder),
+                @"C:\custom\web\content",
+                "The folder assigned before SetContextAsync must be the one mapped — proving it is " +
+                "read at SetContextAsync, not captured earlier during construction.");
         }
 
         [TestMethod]

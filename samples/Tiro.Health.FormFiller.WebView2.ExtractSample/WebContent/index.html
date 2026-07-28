@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Extract sample — embedded form</title>
+    <script src="https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" defer></script>
+    <style>
+        /* Light blue background so it's obvious this page is served from the
+           sample's WebContentFolder rather than the viewer's built-in assets. */
+        html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; display: flex; flex-direction: column; background: #e0f2fe; }
+        header { padding: 8px 16px; background: #bae6fd; border-bottom: 1px solid #7dd3fc; font-size: 0.85rem; color: #075985; }
+        header code { background: #7dd3fc; padding: 1px 4px; border-radius: 3px; }
+        tiro-form-filler { display: block; flex: 1; }
+    </style>
+</head>
+<body>
+    <header>Form page shipped by the Extract sample (<code>WebContent/</code>).</header>
+    <tiro-form-filler id="form-filler"></tiro-form-filler>
+</body>
+</html>

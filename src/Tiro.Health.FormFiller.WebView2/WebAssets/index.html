@@ -76,13 +76,31 @@
             document.getElementById("dismiss-banner-btn").addEventListener("click", () => banner.remove());
             copyBtn.addEventListener("click", async () => {
                 const original = copyBtn.textContent;
+                let ok = false;
                 try {
                     await navigator.clipboard.writeText(STARTER_TEMPLATE);
-                    copyBtn.textContent = "Copied ✓";
+                    ok = true;
                 } catch (err) {
-                    console.error("Copy starter template failed:", err);
-                    copyBtn.textContent = "Copy failed — see console";
+                    // The async Clipboard API rejects with "Document is not focused"
+                    // in some WebView2 hosting states. Fall back to the legacy
+                    // execCommand("copy") path via a temporary textarea, which does
+                    // not depend on document-focus state.
+                    console.warn("navigator.clipboard.writeText failed; trying execCommand fallback:", err);
+                    const ta = document.createElement("textarea");
+                    ta.value = STARTER_TEMPLATE;
+                    ta.style.position = "fixed";
+                    ta.style.opacity = "0";
+                    document.body.appendChild(ta);
+                    ta.focus();
+                    ta.select();
+                    try {
+                        ok = document.execCommand("copy");
+                    } catch (fallbackErr) {
+                        console.error("Copy starter template failed:", fallbackErr);
+                    }
+                    document.body.removeChild(ta);
                 }
+                copyBtn.textContent = ok ? "Copied ✓" : "Copy failed — see console";
                 setTimeout(() => { copyBtn.textContent = original; }, 2000);
             });
         });
