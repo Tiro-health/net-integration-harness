@@ -29,13 +29,6 @@ jobs:
       contents: read
       packages: read
 
-    # TEMPORARY: the bridge's save-draft uses submit({ status }), added in web-sdk
-    # 0.3.0, which is not yet on the `latest` dist-tag (stable is 0.2.3). Until 0.3.0
-    # is promoted to `latest` this check is expectedly red; allow it to fail so it
-    # doesn't block PRs. When 0.3.0 is `latest`: remove this line and make the job a
-    # required status check. (Nightly runs still surface the real status in logs.)
-    continue-on-error: true
-
     defaults:
       run:
         working-directory: build/bridge-contract

@@ -233,11 +233,13 @@ Public Class EhrShell
 
         _viewer = New TiroFormViewerR5() With {.Dock = DockStyle.Fill}
         _viewer.SdcEndpointAddress = "https://sdc.tiro.health/fhir/r5"
-        ' Point the viewer at WebContent\Form — the editable form page bundled
-        ' with the sample. Each role gets its own page (Form for filling,
-        ' Consultation for read-only viewing); the integrator picks which one
-        ' by setting WebContentFolder, not by passing UI flags through the
-        ' host API. WebContentFolder is read at SetContextAsync (when the viewer
+        ' Point the viewer at WebContent\Form — the one form page bundled with the
+        ' sample, shared by both roles. The split between host API and page is:
+        ' the host owns what the EHR is authoritative about (endpoints, launch
+        ' context, ReadOnly — see ReportConsultationForm), the page owns static
+        ' presentation (auto-collapse, compact-grouping, density-mode). So roles
+        ' that differ only in whether the form is editable share a page instead of
+        ' forking one. WebContentFolder is read at SetContextAsync (when the viewer
         ' navigates), so setting it here — before the LaunchSession SetContextAsync
         ' call below — takes effect.
         _viewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent", "Form")

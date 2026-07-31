@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -207,6 +208,57 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task ReadOnly_WithNoEndpointOverride_StillEmitsConfigureCarryingReadOnly()
+        {
+            await DelayUntilBrowserInitialized();
+
+            // The base viewer seeds no SdcEndpointAddress (only the closed R5/R4 bindings do),
+            // so this isolates read-only as the sole reason to emit sdc.configure. Before the
+            // ReadOnly property existed the message was gated on the endpoints alone, and a
+            // read-only launch with no endpoint override would have sent nothing at all.
+            _viewer.ReadOnly = true;
+
+            await RunSetContextToCompletion();
+
+            var configure = SingleSdcConfigureMessage();
+            StringAssert.Contains(configure, "\"configuration\":{\"readOnly\":true}",
+                "ReadOnly must travel on configuration.readOnly — the protocol's renderer-specific " +
+                "extension point — even when no endpoint override is set.");
+        }
+
+        [TestMethod]
+        public async Task ReadOnly_DefaultFalse_EmitsNoConfigureAtAll()
+        {
+            await DelayUntilBrowserInitialized();
+
+            // Default ReadOnly (false) plus no endpoint override means there is nothing to
+            // configure. false is already the page-side default, so asserting it would be
+            // noise on the wire.
+            await RunSetContextToCompletion();
+
+            Assert.AreEqual(0, SdcConfigureMessages().Count,
+                "With no endpoints and ReadOnly left at its default, no sdc.configure should be sent.");
+        }
+
+        [TestMethod]
+        public async Task ReadOnly_WithSdcEndpoint_EmitsBothKeysInOneConfiguration()
+        {
+            await DelayUntilBrowserInitialized();
+
+            _viewer.SdcEndpointAddress = "http://sdc.example.org/fhir/r5";
+            _viewer.ReadOnly = true;
+
+            await RunSetContextToCompletion();
+
+            // Both flags share the single `configuration` object — neither may displace the
+            // other (the pre-existing code collapsed configuration to null whenever
+            // SdcEndpointAddress was unset).
+            var configure = SingleSdcConfigureMessage();
+            StringAssert.Contains(configure, "\"sdcServer\":\"http://sdc.example.org/fhir/r5\"");
+            StringAssert.Contains(configure, "\"readOnly\":true");
+        }
+
+        [TestMethod]
         public void Dispose_ClearsPendingResponseListeners()
         {
             // Pending response listeners hold closures over caller-supplied handlers, the
@@ -267,6 +319,26 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 return;
             }
             Assert.Fail("Expected OperationCanceledException (or subclass).");
+        }
+
+        // Drive a full SetContextAsync round trip: start it, satisfy the handshake it waits
+        // on, then await completion. Callers configure the viewer first, then inspect
+        // _browser.PostedMessages for what went out.
+        private async Task RunSetContextToCompletion()
+        {
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+        }
+
+        private List<string> SdcConfigureMessages()
+            => _browser.PostedMessages.FindAll(m => m.Contains("\"messageType\":\"sdc.configure\""));
+
+        private string SingleSdcConfigureMessage()
+        {
+            var matches = SdcConfigureMessages();
+            Assert.AreEqual(1, matches.Count, "Expected exactly one sdc.configure message.");
+            return matches[0];
         }
 
         private static async Task PollFor(Func<bool> predicate, TimeSpan timeout)

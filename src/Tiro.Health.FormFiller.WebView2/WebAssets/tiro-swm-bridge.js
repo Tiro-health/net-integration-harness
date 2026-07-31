@@ -281,10 +281,21 @@
             // renderer-specific extension point) rather than overloading `terminologyServer`.
             // `payload.dataServer` maps cleanly to `data-endpoint-address`.
             if (pendingFormFillerConfig) {
-                const sdcServer = pendingFormFillerConfig.configuration && pendingFormFillerConfig.configuration.sdcServer;
+                const configuration = pendingFormFillerConfig.configuration;
+                const sdcServer = configuration && configuration.sdcServer;
                 const dataServer = pendingFormFillerConfig.dataServer;
                 if (sdcServer) formFiller.setAttribute("sdc-endpoint-address", sdcServer);
                 if (dataServer) formFiller.setAttribute("data-endpoint-address", dataServer);
+
+                // `configuration.readOnly` renders the form view-only. Applied here, before
+                // the `questionnaire` attribute flips on below, so a read-only launch never
+                // paints an editable form first. Set as an ATTRIBUTE, not via the element's
+                // `readOnly` property: the tiro-web-sdk script is `defer`red, so the custom
+                // element may not be upgraded yet at this point — attributes survive upgrade,
+                // pre-upgrade property assignments get shadowed by Lit's accessors. Only ever
+                // set (never cleared): the host omits the field when false, and the page-side
+                // default is already false.
+                if (configuration && configuration.readOnly) formFiller.toggleAttribute("read-only", true);
             }
 
             if (SmartWebMessaging.context && Array.isArray(SmartWebMessaging.context.launchContext)) {
