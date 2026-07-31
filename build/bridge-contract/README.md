@@ -21,21 +21,19 @@ version-agnostic (integrators load the floating `cdn.tiro.health/sdk/latest` cha
 whatever `latest` currently is. A red run with no harness change means **the frontend's `latest` moved the
 contract** — that's the alarm, not a flake.
 
-## ⚠️ Currently expected to be RED — and why
+## Status: green
 
-The bridge's `save-draft` path calls `submit({ status: "in-progress" })`. That option was added in
-**web-sdk `0.3.0`**, which at time of writing is only on the `next`/`rc` channel — stable `latest` is `0.2.3`,
-whose `submit()` takes **no arguments**. So:
+`0.3.0` is now the `latest` dist-tag, so the check passes and the job is no longer allowed to fail.
 
-| target | result |
-|--------|--------|
-| `latest` (0.2.3) | ❌ red — `submit({status})` not in stable yet |
-| `next` (0.3.0-rc) | ✅ green — bridge matches |
+It was red for a stretch, and that red was correct rather than a flake: the bridge's `save-draft` path calls
+`submit({ status: "in-progress" })`, an option added in **web-sdk `0.3.0`**, while stable `latest` was still
+`0.2.3` — whose `submit()` takes no arguments. The check was reporting, accurately, that `save-draft` did not
+function against the frontend the harness loads by default. **Save-draft still requires
+`@tiro-health/web-sdk` >= 0.3.0**, which matters for integrators pinning an older SDK in their own
+`index.html`.
 
-This red is **correct**: it reports that `save-draft` does not function against the stable frontend the harness
-loads by default. **Save-draft requires `@tiro-health/web-sdk` >= 0.3.0.** When 0.3.0 is promoted to the
-`latest` dist-tag this check goes green automatically; at that point remove the `continue-on-error` in the
-workflow and make it a required status check.
+A red run from here on means the frontend's `latest` moved the contract out from under the shipped bridge —
+investigate rather than retry.
 
 ## Running locally
 
@@ -46,7 +44,7 @@ gh auth refresh -h github.com -s read:packages    # one-time, adds the scope
 cd build/bridge-contract
 export NODE_AUTH_TOKEN=$(gh auth token)
 npm ci
-npm install --no-save @tiro-health/web-sdk@latest  # or @next to see it green
+npm install --no-save @tiro-health/web-sdk@latest  # what CI checks; @next to preview an upcoming release
 npm run typecheck
 ```
 

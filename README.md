@@ -183,7 +183,7 @@ Only two things are non-negotiable: the `tiro-web-sdk` `<script>` tag and a `<ti
    </body>
    </html>
    ```
-   For fuller, checked-in examples, see the samples: `ExtractSample/WebContent/index.html` (a lightly-branded single page) and the EhrShell sample's `WebContent/Form/index.html` (editable) and `WebContent/Consultation/index.html` (read-only — bakes in the `read-only` attribute).
+   For fuller, checked-in examples, see the samples: `ExtractSample/WebContent/index.html` (a lightly-branded single page) and the EhrShell sample's `WebContent/Form/index.html`. Note you don't need a second page for read-only viewing — set the viewer's `ReadOnly` property instead (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host)).
 2. Save it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) below) — don't hardcode them in the page.
 3. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
    ```xml
@@ -339,6 +339,22 @@ TiroFormViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5"
 
 `SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
 
+### Rendering a form read-only
+
+`ReadOnly` renders the form view-only — no answer can be changed. Set it before `SetContextAsync`, like the endpoint properties:
+
+```vb
+TiroFormViewer.ReadOnly = True
+Await TiroFormViewer.SetContextAsync(templateUrl, patient, initialResponse:=savedResponse)
+```
+
+It travels to the page on the same `sdc.configure` message as the endpoints, so the bridge applies it before the form initializes — a read-only launch never paints an editable form first. This is the supported way to show a validated or archived report; you do **not** need a second `index.html` with the `read-only` attribute baked in.
+
+Two limits worth knowing:
+
+- **Per session, not per moment.** `ReadOnly` is read once when the `sdc.configure` payload is built, so a viewer can't be flipped between editable and view-only mid-session — use one viewer per role (the EhrShell sample opens its read-only consultation in a separate window with its own viewer). You don't need to do anything for the post-submit case: the form component locks itself once a response has been submitted.
+- **Rich-text fields aren't hard-locked yet.** For `rich-text` items the frontend currently suppresses editing with CSS rather than disabling the editor outright, so read-only there is a strong deterrent rather than an enforced guarantee. Don't rely on it as the only control if immutability is a legal requirement.
+
 > **R4 routes to the R5 endpoint today.** `TiroFormViewerR4.DefaultSdcEndpointAddress` also points at `/fhir/r5` — Tiro doesn't yet host a dedicated R4 SDC server. The R5 endpoint round-trips most R4 questionnaire content fine for development and demos, but resource shapes that diverge between versions can be coerced silently. R4 consumers running anything beyond exploration should override `SdcEndpointAddress` with their own R4-hosting SDC server.
 
 > **Production integrators should host their own SDC server and override `SdcEndpointAddress`.** `sdc.tiro.health` is a best-effort shared instance for demos and getting-started use — it offers no SLA, no uptime guarantees, and isn't suitable for clinical workflows.
@@ -421,6 +437,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Embeds `WebAssets/tiro-swm-bridge.js` and auto-injects it into every page via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` — page is UI-only
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
+  - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
 Designer-friendly closed bindings of `TiroFormViewer<,,>`.
@@ -508,9 +525,9 @@ WinForms demos.
   - **Reports list per patient** — every saved `QuestionnaireResponse` (finalized or draft) is stored in an in-memory `ResponseStore` keyed by a stable **report id** and shown newest-first in the Patient details tab. **+ New report** mints a fresh id, so it's always a distinct report; reopening one to edit reuses its id, so resubmitting updates that report in place rather than creating a duplicate.
   - **Save in progress** — a footer button alongside **Submit** that calls `SendFormRequestSubmitAsync(intent:="save-draft")` (maps to the frontend's `submit({ status: "in-progress" })`; requires `tiro-web-sdk >= 0.3.0`). The draft round-trips back with status `in-progress`; the shell persists it (so it's resumable from the reports list) but **keeps the session alive** so the doctor can keep filling — distinguished from a finalized Submit (status `completed`, which ends the session) by inspecting `e.Response.Status` in the `FormSubmitted` handler.
   - **Read-only narrative preview** — single-clicking a saved report renders its narrative in a `RichTextBox` (RTF when the SDC's `$generate-narrative` produced one, plain-text fallback otherwise — both via `QuestionnaireResponseHelper`). The preview is decoupled from session state, so the doctor can peek at older reports while a form is in progress.
-  - **Reopen a report — edit or read-only** — double-clicking a report (or **Open this report**) prompts how to open it. **Edit** resumes filling it in the main shell's Form tab with the saved QR as `initialResponse`, reusing its report id (blocked while another session is live, to avoid orphaning the active viewer). **Read-only** spawns a separate top-level `ReportConsultationForm` with its own `TiroFormViewerR5` — leaving any live session untouched (showcasing that multiple viewer instances coexist) — loading a different `WebContent/Consultation/index.html` that bakes `<tiro-form-filler read-only>` into the page so the form is view-only.
+  - **Reopen a report — edit or read-only** — double-clicking a report (or **Open this report**) prompts how to open it. **Edit** resumes filling it in the main shell's Form tab with the saved QR as `initialResponse`, reusing its report id (blocked while another session is live, to avoid orphaning the active viewer). **Read-only** spawns a separate top-level `ReportConsultationForm` with its own `TiroFormViewerR5` — leaving any live session untouched (showcasing that multiple viewer instances coexist) — setting `ReadOnly = True` so the form renders view-only off the *same* `WebContent/Form/index.html` the editable session uses.
   - **Tabbed embedding with dynamic Form tab** — the Form tab only exists while a session is alive (added to / removed from `TabControl.TabPages` on launch / dispose). A context banner above the form viewer shows what's being filled. Switching tabs while filling *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit **Close session** button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
-  - **Custom `index.html` per role** — bundles `WebContent/Form/index.html` (editable) and `WebContent/Consultation/index.html` (read-only). The integrator picks which page to load by setting `WebContentFolder`, not by passing UI flags through the host API — UI concerns stay in the page. See [Shipping your own index.html](#shipping-your-own-indexhtml).
+  - **Custom `index.html` + host-side role config** — bundles a single `WebContent/Form/index.html`, shared by the editable session and the read-only consultation window. Illustrates where the line sits: the host API owns what the EHR is authoritative about (endpoints, launch context, `ReadOnly`), the page owns static presentation (branding, SDK version, `auto-collapse` / `compact-grouping` / `density-mode`). Roles that differ only in editability share one page instead of forking it. See [Shipping your own index.html](#shipping-your-own-indexhtml) and [Rendering a form read-only](#rendering-a-form-read-only).
 - All three: `.NET 4.8` (VB.NET, old-style project format).
 
 ### `Tiro.Health.SmartWebMessaging.Tests` / `Tiro.Health.FormFiller.WebView2.Tests` / `Tiro.Health.FormSdk.Client.Tests`

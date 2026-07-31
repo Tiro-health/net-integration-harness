@@ -53,6 +53,19 @@ namespace Tiro.Health.FormFiller.WebView2
         public string DataEndpointAddress { get; set; }
 
         /// <summary>
+        /// The <c>read-only</c> attribute applied to every <c>&lt;tiro-form-filler&gt;</c> on the
+        /// embedded page, overwriting any value baked into <c>index.html</c>. Renders the form
+        /// view-only — no answer can be changed. Defaults to <c>false</c>.
+        /// <para>
+        /// Read once when the <c>sdc.configure</c> payload is built, so set it before
+        /// <see cref="SetContextAsync"/> — setting it afterwards has no effect. A viewer cannot
+        /// be flipped between editable and view-only mid-session; use one viewer per role
+        /// (the form component locks itself after a submit regardless of this property).
+        /// </para>
+        /// </summary>
+        public bool ReadOnly { get; set; }
+
+        /// <summary>
         /// The telemetry sink the viewer uses for instrumentation. Resolved at construction
         /// time from <see cref="CreateTelemetrySink"/> — which on the base implementation
         /// reads <see cref="TiroFormViewerDefaults.TelemetrySinkFactory"/>, defaulting to
@@ -524,17 +537,24 @@ namespace Tiro.Health.FormFiller.WebView2
                         timeoutMessage: $"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
 
                     // After handshake, send the protocol's sdc.configure message with the
-                    // endpoint addresses so the bridge can apply them to the form-filler
-                    // before it initializes. Only emit when at least one endpoint is set;
-                    // the SDC server lands on payload.configuration.sdcServer (the
-                    // protocol's renderer-specific extension point) since it isn't a
-                    // terminology server in the strict SDC SWM sense. The data server
-                    // maps cleanly to payload.dataServer.
-                    if (!string.IsNullOrEmpty(SdcEndpointAddress) || !string.IsNullOrEmpty(DataEndpointAddress))
+                    // endpoint addresses and renderer flags so the bridge can apply them to
+                    // the form-filler before it initializes. Only emit when there's something
+                    // to say. Both the SDC server and read-only land on
+                    // payload.configuration (the protocol's renderer-specific extension
+                    // point) — the SDC server because it isn't a terminology server in the
+                    // strict SDC SWM sense, read-only because it's a renderer concern with no
+                    // field of its own in the dialect. The data server maps cleanly to
+                    // payload.dataServer.
+                    if (!string.IsNullOrEmpty(SdcEndpointAddress) || !string.IsNullOrEmpty(DataEndpointAddress) || ReadOnly)
                     {
-                        object configuration = string.IsNullOrEmpty(SdcEndpointAddress)
-                            ? null
-                            : (object)new System.Collections.Generic.Dictionary<string, object> { ["sdcServer"] = SdcEndpointAddress };
+                        // Built per-key so each flag travels independently — read-only has to
+                        // reach the page even when no endpoint override is set. Only emitted
+                        // when true: false is already the page-side default, so there's
+                        // nothing to assert.
+                        var configurationMap = new System.Collections.Generic.Dictionary<string, object>();
+                        if (!string.IsNullOrEmpty(SdcEndpointAddress)) configurationMap["sdcServer"] = SdcEndpointAddress;
+                        if (ReadOnly) configurationMap["readOnly"] = true;
+                        object configuration = configurationMap.Count == 0 ? null : (object)configurationMap;
 
                         // sdc.configure is fire-and-forget — no response message — so the
                         // span finishes synchronously on send completion. Mirrors the JS
@@ -543,6 +563,7 @@ namespace Tiro.Health.FormFiller.WebView2
                         configureSpan?.SetTag("messageType", "sdc.configure");
                         if (!string.IsNullOrEmpty(SdcEndpointAddress)) configureSpan?.SetTag("sdc_server", SdcEndpointAddress);
                         if (!string.IsNullOrEmpty(DataEndpointAddress)) configureSpan?.SetTag("data_server", DataEndpointAddress);
+                        if (ReadOnly) configureSpan?.SetTag("read_only", "true");
 
                         try
                         {

@@ -18,11 +18,13 @@ Public Class ReportConsultationForm
         InitializeComponent()
         _entry = entry
         _practitioner = practitioner
-        ' Point WebContentFolder at the read-only "Consultation" page — its
-        ' index.html bakes the <tiro-form-filler read-only> attribute into the
-        ' element so the rendered form is view-only. Must be set before the
-        ' WebView2 handle is created (i.e. before the form is shown).
-        TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent", "Consultation")
+        ' Same page as the editable session (WebContent\Form) — the view-only
+        ' rendering comes from the ReadOnly property, not from a second index.html.
+        ' The bridge applies it to the <tiro-form-filler> element before the form
+        ' initializes, so nothing here paints as editable first. Both are read at
+        ' SetContextAsync, so setting them in the ctor is well before the deadline.
+        TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent", "Form")
+        TiroFormViewer.ReadOnly = True
     End Sub
 
     Private Async Sub ReportConsultationForm_Load(sender As Object, e As EventArgs) Handles MyBase.Load
