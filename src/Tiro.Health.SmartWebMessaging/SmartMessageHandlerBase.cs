@@ -33,6 +33,7 @@ namespace Tiro.Health.SmartWebMessaging
         public event EventHandler<HandshakeReceivedEventArgs> HandshakeReceived;
         public event EventHandler<CloseApplicationEventArgs> CloseApplication;
         public event EventHandler<FormSubmittedEventArgs<TQuestionnaireResponse, TOperationOutcome>> FormSubmitted;
+        public event EventHandler<FormDirtyChangedEventArgs> FormDirtyChanged;
 
         private readonly ConcurrentDictionary<string, Func<SmartMessageResponse, Task>> _responseListeners
             = new ConcurrentDictionary<string, Func<SmartMessageResponse, Task>>();
@@ -182,6 +183,12 @@ namespace Tiro.Health.SmartWebMessaging
                         response = HandleUiDone(message);
                         break;
 
+                    case "ui.form.dirtyChanged":
+                        _logger.LogDebug("Handling ui.form.dirtyChanged.");
+                        var dirtyPayload = JsonSerializer.Deserialize<FormDirtyChange>(payloadJson, SerializeOptions);
+                        response = HandleFormDirtyChanged(message, dirtyPayload);
+                        break;
+
                     default:
                         response = SmartMessageResponse.CreateErrorResponse(
                             message.MessageId,
@@ -232,6 +239,13 @@ namespace Tiro.Health.SmartWebMessaging
         {
             _logger.LogDebug("Raising CloseApplication for MessageId: {MessageId}", message.MessageId);
             CloseApplication?.Invoke(this, new CloseApplicationEventArgs());
+            return new SmartMessageResponse(Guid.NewGuid().ToString(), message.MessageId, false, new ResponsePayload());
+        }
+
+        private SmartMessageResponse HandleFormDirtyChanged(SmartMessageRequest message, FormDirtyChange payload)
+        {
+            _logger.LogDebug("Raising FormDirtyChanged for MessageId: {MessageId}", message.MessageId);
+            FormDirtyChanged?.Invoke(this, new FormDirtyChangedEventArgs(payload?.IsDirty ?? false));
             return new SmartMessageResponse(Guid.NewGuid().ToString(), message.MessageId, false, new ResponsePayload());
         }
 

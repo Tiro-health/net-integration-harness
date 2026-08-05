@@ -26,6 +26,7 @@ namespace Tiro.Health.FormFiller.WebView2
     {
         public event EventHandler<FormSubmittedEventArgs<TQR, TOO>> FormSubmitted;
         public event EventHandler<CloseApplicationEventArgs> CloseApplication;
+        public event EventHandler<FormDirtyChangedEventArgs> FormDirtyChanged;
 
         /// <summary>
         /// Optional folder containing a consumer-supplied <c>index.html</c> (and any supporting assets).
@@ -125,6 +126,14 @@ namespace Tiro.Health.FormFiller.WebView2
 
         /// <summary>Current lifecycle state. See <see cref="TiroFormViewerState"/>.</summary>
         public TiroFormViewerState State => (TiroFormViewerState)Volatile.Read(ref _state);
+
+        /// <summary>
+        /// Whether the user has made any changes to the displayed form since it loaded.
+        /// Kept in sync from the page's <c>ui.form.dirtyChanged</c> notifications; also
+        /// raised as <see cref="FormDirtyChanged"/>. Pre-populated/auto-<c>$populate</c>d
+        /// answers do not count as dirty — only genuine user edits do.
+        /// </summary>
+        public bool IsDirty { get; private set; }
 
         /// <summary>CAS transition: only moves state if currently equals <paramref name="from"/>.</summary>
         private bool TryTransition(TiroFormViewerState from, TiroFormViewerState to)
@@ -297,6 +306,7 @@ namespace Tiro.Health.FormFiller.WebView2
             _smartWebMessageHandler.HandshakeReceived += OnHandshakeReceived;
             _smartWebMessageHandler.FormSubmitted += OnFormSubmitted;
             _smartWebMessageHandler.CloseApplication += OnCloseApplication;
+            _smartWebMessageHandler.FormDirtyChanged += OnFormDirtyChanged;
 
             _browser.MessageReceived += OnBrowserMessageReceived;
             _browser.Control.Dock = DockStyle.Fill;
@@ -465,6 +475,12 @@ namespace Tiro.Health.FormFiller.WebView2
         private void OnCloseApplication(object sender, CloseApplicationEventArgs e)
         {
             CloseApplication?.Invoke(this, e);
+        }
+
+        private void OnFormDirtyChanged(object sender, FormDirtyChangedEventArgs e)
+        {
+            IsDirty = e.IsDirty;
+            FormDirtyChanged?.Invoke(this, e);
         }
 
         private void OnFormSubmitted(object sender, FormSubmittedEventArgs<TQR, TOO> e)

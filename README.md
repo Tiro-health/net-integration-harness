@@ -82,6 +82,8 @@ Then wire three things:
 - `CloseApplication` — the page emitted `ui.done` (e.g. its own Cancel button). Just close the form.
 - The Submit button's `Click` — `Await TiroFormViewer.SendFormRequestSubmitAsync()`. The page validates and round-trips back via `FormSubmitted`.
 
+Optionally, a fourth: `FormDirtyChanged`/`IsDirty` — track whether the user has made unsaved changes, e.g. to warn before closing. See [Warn on unsaved changes](#warn-on-unsaved-changes) below.
+
 The full sample lives at `samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb`:
 
 ```vb
@@ -152,6 +154,30 @@ End Class
 ```
 
 > **Want X-button → page-validate → keep-form-open-on-errors?** Hook `Form1_FormClosing`, set `e.Cancel = True`, `Await TiroFormViewer.SendFormRequestSubmitAsync()`, and use a flag to let the eventual `FormSubmitted` close re-enter cleanly. Skipped in this minimal sample — the EHR Shell sample shows the equivalent pattern (tab switch + explicit `Close session` button) for an embedded-in-tab integration.
+
+#### Warn on unsaved changes
+
+`TiroFormViewer.IsDirty` reflects whether the user has made any changes to the displayed form
+since it loaded — kept in sync from the page's `ui.form.dirtyChanged` notifications, and also
+raised as the `FormDirtyChanged` event. Pre-populated/auto-`$populate`d answers do not count as
+dirty, only genuine user edits do. Hook `Form1_FormClosing` to warn before the window closes
+with unsaved changes:
+
+```vb
+Private Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles Me.FormClosing
+    If TiroFormViewer.IsDirty Then
+        If MessageBox.Show("You have unsaved changes. Close anyway?", "Unsaved changes",
+                            MessageBoxButtons.YesNo) = DialogResult.No Then
+            e.Cancel = True
+        End If
+    End If
+End Sub
+```
+
+If a program-initiated close (e.g. from `HandleFormSubmitted`/`HandleCloseApplication`) can also
+run while the form is still dirty, guard with a flag set right before that `Me.Close()` call so
+`Form1_FormClosing` doesn't re-prompt on its own close — see
+`samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb` for the full pattern.
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
@@ -426,7 +452,7 @@ FHIR-version-agnostic implementation of the SMART Web Messaging protocol.
 
 - **Targets**: `netstandard2.0`, `net48`
 - **Key type**: `SmartMessageHandlerBase<TResource, TQuestionnaireResponse, TOperationOutcome>` — abstract generic handler covering protocol routing, request/response correlation via `Func<SmartMessageResponse, Task>` listeners, and `CancellationToken` plumbing across the entire async surface
-- **Handles**: `status.handshake`, `sdc.configure`, `sdc.configureContext`, `sdc.displayQuestionnaire`, `form.submitted`, `ui.form.requestSubmit`, `ui.form.persist`, `ui.done`
+- **Handles**: `status.handshake`, `sdc.configure`, `sdc.configureContext`, `sdc.displayQuestionnaire`, `form.submitted`, `ui.form.requestSubmit`, `ui.form.persist`, `ui.done`, `ui.form.dirtyChanged`
 - **Validation**: validates inbound `form.submitted` payloads via `Validator.ValidateObject` so subscribers never see null `Response`/`Outcome`
 
 ### `Tiro.Health.SmartWebMessaging.Fhir.R5` / `Tiro.Health.SmartWebMessaging.Fhir.R4`
@@ -591,6 +617,7 @@ The harness is version-agnostic about `tiro-web-sdk` — you choose the `<script
 One floor to know:
 
 - **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) requires **`tiro-web-sdk` >= 0.3.0**. It maps to the frontend's `submit({ status: "in-progress" })`, an option added in 0.3.0. On older versions the option is ignored and the form **finalizes** instead of saving a draft. Plain finalize (`SendFormRequestSubmitAsync()`) works on all versions.
+- **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** requires a `tiro-web-sdk` version carrying [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) on `<tiro-form-filler>` — **version TBD, not yet released** at the time this was written. On older versions the bridge's listener is simply never invoked (the frontend never fires the event), so `IsDirty` silently stays `false` rather than erroring.
 
 The `build/bridge-contract/` type-check guards this contract against the live `tiro-web-sdk@latest`; see its README.
 
