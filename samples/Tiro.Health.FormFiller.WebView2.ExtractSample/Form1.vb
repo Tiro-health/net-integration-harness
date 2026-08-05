@@ -1,6 +1,7 @@
 Imports System.IO
 Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
+Imports Tiro.Health.SmartWebMessaging.Message.Payload
 Imports Tiro.Health.FormSdk.Client
 Imports Tiro.Health.FormSdk.Client.Fhir.R5
 
@@ -44,9 +45,22 @@ Public Class Form1
             }
         }
 
+        ' Showcases passing an arbitrary named resource as launch context, alongside the
+        ' well-known patient/encounter/author shorthand — here a Specimen, via the
+        ' launchContext parameter. Purely illustrative: this sample form doesn't reference
+        ' %specimen anywhere, so it has no effect on rendering or extraction.
+        Dim specimen As New Specimen() With {
+            .Id = "specimen-1",
+            .Type = New CodeableConcept("http://terminology.hl7.org/CodeSystem/v2-0487", "TISS", "Tissue"),
+            .Subject = New ResourceReference("Patient/test-123")
+        }
+
         Await TiroFormViewer.SetContextAsync(
             "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699",
-            patient)
+            patient:=patient,
+            launchContext:=New List(Of LaunchContext(Of Resource)) From {
+                New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
+            })
     End Sub
 
     Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click

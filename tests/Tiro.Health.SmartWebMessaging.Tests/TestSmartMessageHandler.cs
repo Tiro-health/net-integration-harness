@@ -637,6 +637,77 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         Assert.IsTrue(sentMessage.Contains("\"name\":\"user\""));
         Assert.IsTrue(sentMessage.Contains("\"contentResource\":{\"resourceType\":\"Practitioner\",\"id\":\"PR1\""));
     }
+
+    // Verifies an arbitrary named resource (e.g. "coverage") can ride alongside the
+    // patient/encounter/user shorthand in the same sdc.displayQuestionnaire launch context,
+    // via the canonical-URL overload (the one TiroFormViewer.SetContextAsync calls).
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestSendSdcDisplayQuestionnaireAsync_CanonicalUrl_MergesExtraLaunchContext()
+    {
+        var messageHandler = new SmartMessageHandler();
+        var mockSender = new Mock<SmartMessageHandler.MessageSender>();
+        string sentMessage = null!;
+
+        mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
+                 .Callback<string>(msg => sentMessage = msg)
+                 .Returns(System.Threading.Tasks.Task.CompletedTask);
+
+        messageHandler.SendMessage = mockSender.Object;
+
+        var patient = new Patient { Id = "P1" };
+        var coverage = new Coverage { Id = "COV1" };
+        var extraContext = new List<LaunchContext<Resource>>
+        {
+            new LaunchContext<Resource>("coverage", contentResource: coverage)
+        };
+
+        await messageHandler.SendSdcDisplayQuestionnaireAsync(
+            questionnaireCanonicalUrl: "http://example.com/Questionnaire/survey",
+            patient: patient,
+            launchContext: extraContext
+        );
+
+        mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
+
+        Assert.IsNotNull(sentMessage);
+        // Both the named shorthand and the arbitrary extra entry are present.
+        Assert.IsTrue(sentMessage.Contains("\"name\":\"patient\""));
+        Assert.IsTrue(sentMessage.Contains("\"contentResource\":{\"resourceType\":\"Patient\",\"id\":\"P1\""));
+        Assert.IsTrue(sentMessage.Contains("\"name\":\"coverage\""));
+        Assert.IsTrue(sentMessage.Contains("\"contentResource\":{\"resourceType\":\"Coverage\",\"id\":\"COV1\""));
+    }
+
+    // Without any named shorthand supplied, the caller-provided launchContext list is sent as-is.
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestSendSdcDisplayQuestionnaireAsync_CanonicalUrl_LaunchContextOnly()
+    {
+        var messageHandler = new SmartMessageHandler();
+        var mockSender = new Mock<SmartMessageHandler.MessageSender>();
+        string sentMessage = null!;
+
+        mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
+                 .Callback<string>(msg => sentMessage = msg)
+                 .Returns(System.Threading.Tasks.Task.CompletedTask);
+
+        messageHandler.SendMessage = mockSender.Object;
+
+        var device = new Device { Id = "DEV1" };
+        var extraContext = new List<LaunchContext<Resource>>
+        {
+            new LaunchContext<Resource>("device", contentResource: device)
+        };
+
+        await messageHandler.SendSdcDisplayQuestionnaireAsync(
+            questionnaireCanonicalUrl: "http://example.com/Questionnaire/survey",
+            launchContext: extraContext
+        );
+
+        mockSender.Verify(s => s.Invoke(It.IsAny<string>()), Times.Once);
+
+        Assert.IsNotNull(sentMessage);
+        Assert.IsTrue(sentMessage.Contains("\"name\":\"device\""));
+        Assert.IsTrue(sentMessage.Contains("\"contentResource\":{\"resourceType\":\"Device\",\"id\":\"DEV1\""));
+    }
     
     [TestMethod]
     public async System.Threading.Tasks.Task TestSendMessageWithoutSenderDelegate()

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -10,6 +11,7 @@ using Tiro.Health.FormFiller.WebView2.Telemetry;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
 using Tiro.Health.SmartWebMessaging.Message;
+using Tiro.Health.SmartWebMessaging.Message.Payload;
 
 namespace Tiro.Health.FormFiller.WebView2
 {
@@ -506,12 +508,20 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         protected virtual bool IsOutcomeSuccessful(TOO outcome) => true;
 
+        /// <summary>
+        /// Displays the questionnaire at <paramref name="questionnaireCanonicalUrl"/> and sets the
+        /// initial launch context. <paramref name="patient"/>/<paramref name="encounter"/>/
+        /// <paramref name="author"/> are shorthand for the well-known "patient"/"encounter"/"user"
+        /// launch context entries; <paramref name="launchContext"/> carries any additional named
+        /// resource (e.g. coverage, device, or an app-specific launch parameter) alongside them.
+        /// </summary>
         public async Task SetContextAsync(
             string questionnaireCanonicalUrl,
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
             TQR initialResponse = default,
+            List<LaunchContext<TResource>> launchContext = null,
             CancellationToken cancellationToken = default)
         {
             GuardCanSetContext();
@@ -594,6 +604,7 @@ namespace Tiro.Health.FormFiller.WebView2
                         patient: patient,
                         encounter: encounter,
                         author: author,
+                        launchContext: launchContext,
                         responseHandler: wrappedHandler,
                         cancellationToken: linkedCts.Token);
 

@@ -155,6 +155,19 @@ End Class
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
+`patient`/`encounter`/`author` cover the well-known launch context entries ("patient"/"encounter"/"user"). To pass any other named resource (e.g. a `Coverage`, `Device`, or an app-specific launch parameter), use the `launchContext` parameter — it's appended alongside the named shorthand, not instead of it:
+
+```vb
+Dim coverage As New Coverage() With {.Id = "COV1"}
+
+Await TiroFormViewer.SetContextAsync(
+    "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699",
+    patient:=patient,
+    launchContext:=New List(Of LaunchContext(Of Resource)) From {
+        New LaunchContext(Of Resource)("coverage", contentResource:=coverage)
+    })
+```
+
 ## Shipping your own index.html
 
 The library ships a working default `index.html` so the samples run out-of-the-box, but for production you'll want to host your own page. The bridge and SMART Web Messaging plumbing are auto-injected by the host (regardless of which page is loaded), so your `index.html` stays UI-only — no SDK init, no transport setup, no Sentry CDN tag.

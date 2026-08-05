@@ -6,6 +6,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Tiro.Health.FormFiller.WebView2.Tests.Fakes;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
+using Tiro.Health.SmartWebMessaging.Message.Payload;
 using R5 = Tiro.Health.SmartWebMessaging.Fhir.R5;
 using HL7Model = Hl7.Fhir.Model;
 
@@ -286,6 +287,32 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task SetContextAsync_LaunchContext_CarriesArbitraryNamedResourceAlongsidePatient()
+        {
+            await DelayUntilBrowserInitialized();
+
+            var patient = new HL7Model.Patient { Id = "P1" };
+            var coverage = new HL7Model.Coverage { Id = "COV1" };
+            var launchContext = new List<LaunchContext<HL7Model.Resource>>
+            {
+                new LaunchContext<HL7Model.Resource>("coverage", contentResource: coverage)
+            };
+
+            var setContext = _viewer.SetContextAsync(
+                "http://example.org/q", patient: patient, launchContext: launchContext);
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+            var display = SingleSdcDisplayQuestionnaireMessage();
+            StringAssert.Contains(display, "\"name\":\"patient\"",
+                "The patient shorthand must still be present alongside the extra launch context entry.");
+            StringAssert.Contains(display, "\"resourceType\":\"Patient\",\"id\":\"P1\"");
+            StringAssert.Contains(display, "\"name\":\"coverage\"",
+                "An arbitrary named resource passed via launchContext must reach the wire, not just patient/encounter/author.");
+            StringAssert.Contains(display, "\"resourceType\":\"Coverage\",\"id\":\"COV1\"");
+        }
+
+        [TestMethod]
         public void Dispose_ClearsPendingResponseListeners()
         {
             // Pending response listeners hold closures over caller-supplied handlers, the
@@ -365,6 +392,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         {
             var matches = SdcConfigureMessages();
             Assert.AreEqual(1, matches.Count, "Expected exactly one sdc.configure message.");
+            return matches[0];
+        }
+
+        private List<string> SdcDisplayQuestionnaireMessages()
+            => _browser.PostedMessages.FindAll(m => m.Contains("\"messageType\":\"sdc.displayQuestionnaire\""));
+
+        private string SingleSdcDisplayQuestionnaireMessage()
+        {
+            var matches = SdcDisplayQuestionnaireMessages();
+            Assert.AreEqual(1, matches.Count, "Expected exactly one sdc.displayQuestionnaire message.");
             return matches[0];
         }
 

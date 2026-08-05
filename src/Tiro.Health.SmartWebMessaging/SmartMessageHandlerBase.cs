@@ -421,20 +421,23 @@ namespace Tiro.Health.SmartWebMessaging
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
+            List<LaunchContext<TResource>> launchContext = null,
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
         {
             return SendSdcDisplayQuestionnaireAsync(
                 questionnaire: (object)questionnaire,
                 questionnaireResponse: questionnaireResponse,
-                launchContext: BuildLaunchContext(patient, encounter, author),
+                launchContext: MergeLaunchContext(BuildLaunchContext(patient, encounter, author), launchContext),
                 responseHandler: responseHandler,
                 cancellationToken: cancellationToken);
         }
 
         /// <summary>
         /// Sends <c>sdc.displayQuestionnaire</c> with a canonical URL reference to the questionnaire
-        /// and FHIR-resource launch context (patient/encounter/user).
+        /// and FHIR-resource launch context (patient/encounter/user), plus any additional named
+        /// resources supplied via <paramref name="launchContext"/> (e.g. coverage, device, or an
+        /// app-specific launch parameter).
         /// </summary>
         public Task SendSdcDisplayQuestionnaireAsync(
             string questionnaireCanonicalUrl,
@@ -442,13 +445,14 @@ namespace Tiro.Health.SmartWebMessaging
             TResource patient = default,
             TResource encounter = default,
             TResource author = default,
+            List<LaunchContext<TResource>> launchContext = null,
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
         {
             return SendSdcDisplayQuestionnaireAsync(
                 questionnaire: (object)questionnaireCanonicalUrl,
                 questionnaireResponse: questionnaireResponse,
-                launchContext: BuildLaunchContext(patient, encounter, author),
+                launchContext: MergeLaunchContext(BuildLaunchContext(patient, encounter, author), launchContext),
                 responseHandler: responseHandler,
                 cancellationToken: cancellationToken);
         }
@@ -465,6 +469,23 @@ namespace Tiro.Health.SmartWebMessaging
             if (encounter != null) ctx.Add(new LaunchContext<TResource>("encounter", contentResource: encounter));
             if (author != null) ctx.Add(new LaunchContext<TResource>("user", contentResource: author));
             return ctx.Count > 0 ? ctx : null;
+        }
+
+        /// <summary>
+        /// Appends caller-supplied launch context entries (e.g. coverage, device, or any other
+        /// named resource) after the named patient/encounter/user entries. Returns <c>null</c>
+        /// when both inputs are empty, so the emitted payload omits the list entirely.
+        /// </summary>
+        protected static List<LaunchContext<TResource>> MergeLaunchContext(
+            List<LaunchContext<TResource>> named, List<LaunchContext<TResource>> additional)
+        {
+            if ((additional == null || additional.Count == 0))
+                return named;
+
+            var merged = new List<LaunchContext<TResource>>();
+            if (named != null) merged.AddRange(named);
+            merged.AddRange(additional);
+            return merged;
         }
 
         // ---------------------------------------------------------------------------
