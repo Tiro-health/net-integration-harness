@@ -25,6 +25,18 @@ node --test          # or: npm test
 
 ## What it covers
 
+`dirty-state.test.mjs` pins **GH-46**: `<tiro-form-filler>`'s `tiro-dirty-change` event is
+forwarded to the host as a fire-and-forget `ui.form.dirtyChanged` message. It asserts the
+message type and payload shape, that both the dirty *and* cleared transitions arrive (a
+one-way-only forward would latch `IsDirty` on stale state), that it registers no pending
+request, and that displaying a questionnaire doesn't clobber the listener.
+
+These use the optional host transport — `loadBridge(elements, { host: true })` installs a
+stub `window.chrome.webview`, so outbound envelopes are captured via `sent(messageType)`
+and host→page messages can be injected with `receive(envelope)`. With a transport present
+the bridge enters its handshake retry loop; the sandbox's `setTimeout` is unref'd so those
+timers can't hold the test process open.
+
 `launch-context.test.mjs` is the regression suite for **GH-48**: launch context was
 dropped whenever the host's `SdcEndpointAddress` differed from the tiro-web-sdk's
 built-in default, so `$populate` went out with no `context` parameters and every

@@ -400,6 +400,13 @@
                 fire("tiro-submit-error", { error: err });
             }
         });
+
+        // Forward the form-filler's dirty-state transitions to the host. Fire-and-forget
+        // (sendEvent, not sendRequest) — the host doesn't need to acknowledge it, only
+        // observe it, same as window.tiro.cancel()'s ui.done.
+        formFiller.addEventListener("tiro-dirty-change", /** @param {CustomEvent} e */ e => {
+            SmartWebMessaging.sendEvent("ui.form.dirtyChanged", { isDirty: e.detail.isDirty });
+        });
     }
 
     function wireAllFormFillers() {

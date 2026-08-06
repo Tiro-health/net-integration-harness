@@ -93,6 +93,25 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task DirtyChangedMessage_UpdatesIsDirty_AndFiresEvent()
+        {
+            var fired = new TaskCompletionSource<FormDirtyChangedEventArgs>();
+            _viewer.FormDirtyChanged += (_, args) => fired.TrySetResult(args);
+
+            await DelayUntilBrowserInitialized();
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            Assert.IsFalse(_viewer.IsDirty);
+
+            _browser.RaiseMessageReceived(BuildDirtyChangedMessage("dc-1", isDirty: true));
+
+            var args = await fired.Task.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+            Assert.IsTrue(args.IsDirty);
+            Assert.IsTrue(_viewer.IsDirty);
+            // Dirty-state is informational — it doesn't move the lifecycle state machine.
+            Assert.AreEqual(TiroFormViewerState.Ready, _viewer.State);
+        }
+
+        [TestMethod]
         public void Dispose_TransitionsToDisposed()
         {
             _viewer.Dispose();
@@ -428,6 +447,13 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             ""messagingHandle"": ""smart-web-messaging"",
             ""messageType"": ""ui.done"",
             ""payload"": {{}}
+        }}";
+
+        private static string BuildDirtyChangedMessage(string id, bool isDirty) => $@"{{
+            ""messageId"": ""{id}"",
+            ""messagingHandle"": ""smart-web-messaging"",
+            ""messageType"": ""ui.form.dirtyChanged"",
+            ""payload"": {{ ""isDirty"": {(isDirty ? "true" : "false")} }}
         }}";
 
         private static string BuildFormSubmitMessage(string id) => $@"{{

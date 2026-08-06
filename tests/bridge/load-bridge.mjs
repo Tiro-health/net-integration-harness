@@ -25,9 +25,14 @@ export const flush = async (turns = 6) => {
  * @param {object[]} formFillers stub elements returned by querySelectorAll("tiro-form-filler")
  * @returns {Promise<{window: any, document: any, warnings: string[]}>}
  */
-export async function loadBridge(formFillers) {
+export async function loadBridge(formFillers, { host = false } = {}) {
     const warnings = [];
     const errors = [];
+
+    // Outbound envelopes the bridge posted to the host, in order. Only captured when
+    // a transport is installed; without one SmartWebMessaging.init() returns false and
+    // the bridge stops before starting handshake retries.
+    const outbound = [];
 
     const document = {
         readyState: "complete", // bootstrap() runs immediately rather than waiting on DOMContentLoaded
@@ -44,6 +49,20 @@ export async function loadBridge(formFillers) {
     const window = { document };
     window.window = window;
 
+    // Minimal WebView2 transport. Installing it makes isWebView2() true, so the bridge
+    // proceeds past init() into its handshake retry loop — harmless here because the
+    // sandbox's setTimeout is unref'd below, so those pending timers never hold the
+    // test process open.
+    let hostMessageListener = null;
+    if (host) {
+        window.chrome = {
+            webview: {
+                postMessage: message => { outbound.push(message); },
+                addEventListener: (type, cb) => { if (type === "message") hostMessageListener = cb; },
+            },
+        };
+    }
+
     const sandbox = {
         window,
         document,
@@ -56,7 +75,13 @@ export async function loadBridge(formFillers) {
         CustomEvent: class CustomEvent {
             constructor(type, init) { this.type = type; this.detail = init?.detail; }
         },
-        setTimeout,
+        // unref'd so the bridge's handshake retry / timeout timers can never keep the
+        // test process alive after the assertions are done.
+        setTimeout: (fn, ms, ...args) => {
+            const t = setTimeout(fn, ms, ...args);
+            if (typeof t?.unref === "function") t.unref();
+            return t;
+        },
         clearTimeout,
         queueMicrotask,
         Promise,
@@ -75,7 +100,20 @@ export async function loadBridge(formFillers) {
     // bootSentry() resolves through a promise chain before handlers are wired.
     await flush();
 
-    return { window, document, warnings, errors };
+    return {
+        window,
+        document,
+        warnings,
+        errors,
+        outbound,
+        /** Outbound envelopes of one messageType, newest last. */
+        sent: messageType => outbound.filter(m => m.messageType === messageType),
+        /** Simulate a host -> page envelope arriving over the transport. */
+        receive: message => {
+            if (!hostMessageListener) throw new Error("no host transport installed (pass { host: true })");
+            hostMessageListener({ data: message });
+        },
+    };
 }
 
 /** Invoke a registered bridge handler for a host message type. */

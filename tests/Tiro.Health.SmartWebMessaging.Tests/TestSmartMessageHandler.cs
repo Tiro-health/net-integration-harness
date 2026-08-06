@@ -933,6 +933,76 @@ namespace Tiro.Health.SmartWebMessaging.Tests
     }
 
     [TestMethod]
+    public void TestFormDirtyChanged_True()
+    {
+      // Create a mock for the event handler
+      var mockFormDirtyChangedEventHandler = new Mock<EventHandler<FormDirtyChangedEventArgs>>();
+
+      // Create an instance of SmartMessageHandler
+      var messageHandler = new SmartMessageHandler();
+
+      // Variable to capture the event args
+      FormDirtyChangedEventArgs capturedFormDirtyChangedArgs = null!;
+
+      // Subscribe the mock event handler to the FormDirtyChanged event
+      messageHandler.FormDirtyChanged += (sender, args) =>
+      {
+        mockFormDirtyChangedEventHandler.Object(sender, args);
+        capturedFormDirtyChangedArgs = args!;
+      };
+
+      // Create ui.form.dirtyChanged message JSON
+      string jsonString = """
+                {
+                 "messageId": "dirty-1",
+                 "messagingHandle": "smart-web-messaging",
+                 "messageType": "ui.form.dirtyChanged",
+                 "payload": { "isDirty": true }
+                }
+             """;
+
+      // Handle the message
+      var result = messageHandler.HandleMessage(jsonString);
+      Console.WriteLine($"Message handled: {result}");
+
+      // Verify response structure
+      Assert.IsNotNull(result);
+      StringAssert.Contains(result, "\"responseToMessageId\":\"dirty-1\"");
+      StringAssert.Contains(result, "\"additionalResponsesExpected\":false");
+      StringAssert.Contains(result, "\"$type\":\"base\"");
+
+      // Verify that the FormDirtyChanged event was fired once with the right value
+      mockFormDirtyChangedEventHandler.Verify(m => m(It.IsAny<object>(), It.IsAny<FormDirtyChangedEventArgs>()), Times.Once);
+      Assert.IsNotNull(capturedFormDirtyChangedArgs);
+      Assert.IsTrue(capturedFormDirtyChangedArgs.IsDirty);
+    }
+
+    [TestMethod]
+    public void TestFormDirtyChanged_False()
+    {
+      var messageHandler = new SmartMessageHandler();
+      FormDirtyChangedEventArgs capturedFormDirtyChangedArgs = null!;
+      messageHandler.FormDirtyChanged += (sender, args) => capturedFormDirtyChangedArgs = args!;
+
+      string jsonString = """
+                {
+                 "messageId": "dirty-2",
+                 "messagingHandle": "smart-web-messaging",
+                 "messageType": "ui.form.dirtyChanged",
+                 "payload": { "isDirty": false }
+                }
+             """;
+
+      var result = messageHandler.HandleMessage(jsonString);
+
+      Assert.IsNotNull(result);
+      StringAssert.Contains(result, "\"responseToMessageId\":\"dirty-2\"");
+      StringAssert.Contains(result, "\"$type\":\"base\"");
+      Assert.IsNotNull(capturedFormDirtyChangedArgs);
+      Assert.IsFalse(capturedFormDirtyChangedArgs.IsDirty);
+    }
+
+    [TestMethod]
     public async System.Threading.Tasks.Task TestSendSdcDisplayQuestionnaireAsync_WithCanonicalUrlAndFhirResources()
     {
         var messageHandler = new SmartMessageHandler();
