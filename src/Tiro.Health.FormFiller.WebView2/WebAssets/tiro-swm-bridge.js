@@ -253,9 +253,11 @@
     // The handle is intersected with HTMLElement because the published web-sdk .d.ts
     // imports its base class (LitElement) from `lit`, which a type-only consumer doesn't
     // install — without the intersection the element would lose setAttribute/addEventListener.
+    // LitElementLike (build/bridge-contract/globals.d.ts) restores the base-class members
+    // the bridge uses — currently updateComplete — for the same reason.
     // The element-specific members we care about (submit, questionnaire, sdcClient) are
     // declared directly on TiroFormFiller, so the submit() contract is still checked.
-    /** @param {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement} formFiller */
+    /** @param {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement & LitElementLike} formFiller */
     function wireFormFiller(formFiller) {
         // Endpoint config is driven by the protocol's sdc.configure message (per the SDC
         // SMART Web Messaging dialect — see github.com/brianpos/sdc-smart-web-messaging).
@@ -402,7 +404,7 @@
 
     function wireAllFormFillers() {
         document.querySelectorAll("tiro-form-filler").forEach(el =>
-            wireFormFiller(/** @type {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement} */ (el)));
+            wireFormFiller(/** @type {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement & LitElementLike} */ (el)));
     }
 
     // ============================================================

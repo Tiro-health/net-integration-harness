@@ -12,3 +12,18 @@ interface Window {
 }
 
 declare var Sentry: any;
+
+// LitElement base-class members the bridge depends on. The published web-sdk .d.ts
+// imports its base class from `lit`, which a type-only consumer doesn't install, so
+// these are absent from the exported TiroFormFiller type — the same gap that forces
+// the `& HTMLElement` intersection. Declared here rather than taking a dependency on
+// `lit`, so the bridge's use of them is still checked. See tiro-swm-bridge.js §4.
+interface LitElementLike {
+  /**
+   * Resolves once the element's pending update cycle has completed. The bridge awaits
+   * this between changing endpoint attributes and applying the launch context, because
+   * <tiro-form-filler> rebuilds its SDC client during that update and seeds the
+   * replacement only from state set before it. See GH-48.
+   */
+  readonly updateComplete: Promise<boolean>;
+}
