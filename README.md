@@ -614,10 +614,10 @@ The harness is version-agnostic about `tiro-web-sdk` — you choose the `<script
 
 **Pinning recommendation:** if you pin the .NET integration harness (NuGet package) to a fixed version, pin a matching `tiro-web-sdk` version in your `index.html` too (`sdk/vX.Y.Z/`) rather than tracking floating `sdk/latest`. A pinned harness ships a fixed bridge that was validated against a specific frontend (each harness release records the version it validated against); tracking `latest` lets a future frontend release drift the bridge contract out from under your pinned bridge. Track `latest` only if you also track the latest harness.
 
-One floor to know:
+Two floors to know:
 
 - **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) requires **`tiro-web-sdk` >= 0.3.0**. It maps to the frontend's `submit({ status: "in-progress" })`, an option added in 0.3.0. On older versions the option is ignored and the form **finalizes** instead of saving a draft. Plain finalize (`SendFormRequestSubmitAsync()`) works on all versions.
-- **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** requires a `tiro-web-sdk` version carrying [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) on `<tiro-form-filler>` — **version TBD, not yet released** at the time this was written. On older versions the bridge's listener is simply never invoked (the frontend never fires the event), so `IsDirty` silently stays `false` rather than erroring.
+- **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** requires [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) on `<tiro-form-filler>`, first available in **`tiro-web-sdk` 0.3.1-dev.1** on the pre-release `sdk-dev` channel (`https://cdn.tiro.health/sdk-dev/v0.3.1-dev.1/tiro-web-sdk.iife.js`). Not yet on the stable `sdk/` channel — the floor there will be 0.3.1 once it ships. On versions without it the bridge's listener is simply never invoked (the frontend never fires the event), so `IsDirty` silently stays `false` rather than erroring.
 
 The `build/bridge-contract/` type-check guards this contract against the live `tiro-web-sdk@latest`; see its README.
 
