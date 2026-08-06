@@ -3,11 +3,6 @@ Imports Tiro.Health.SmartWebMessaging.Events
 
 Public Class Form1
 
-    ' Set right before a program-initiated Me.Close() (from HandleFormSubmitted /
-    ' HandleCloseApplication) so Form1_FormClosing's unsaved-changes prompt doesn't
-    ' re-trigger on that same close.
-    Private isClosingConfirmed As Boolean = False
-
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
@@ -64,31 +59,11 @@ Public Class Form1
             MessageBox.Show(narrativeHtml, "QuestionnaireResponse Narrative", MessageBoxButtons.OK, MessageBoxIcon.Information)
         End If
 
-        isClosingConfirmed = True
         Me.Close()
     End Sub
 
     Private Sub HandleCloseApplication(sender As Object, e As CloseApplicationEventArgs)
-        isClosingConfirmed = True
         Me.Close()
-    End Sub
-
-    Private Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles Me.FormClosing
-        If isClosingConfirmed Then Return
-
-        If TiroFormViewer.IsDirty Then
-            Dim result As DialogResult = MessageBox.Show(
-                "You have unsaved changes. Close anyway?",
-                "Unsaved changes",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning)
-            If result = DialogResult.No Then
-                e.Cancel = True
-                Return
-            End If
-        End If
-
-        isClosingConfirmed = True
     End Sub
 
 End Class

@@ -177,7 +177,11 @@ End Sub
 If a program-initiated close (e.g. from `HandleFormSubmitted`/`HandleCloseApplication`) can also
 run while the form is still dirty, guard with a flag set right before that `Me.Close()` call so
 `Form1_FormClosing` doesn't re-prompt on its own close — see
-`samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb` for the full pattern.
+`samples/Tiro.Health.FormFiller.WebView2.ExtractSample/Form1.vb` for the full pattern.
+
+> That sample loads `tiro-web-sdk` from the pre-release `sdk-dev` channel, because `IsDirty`
+> needs a frontend version the stable channel doesn't carry yet. See
+> [Frontend version compatibility](#frontend-version-compatibility).
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
 
