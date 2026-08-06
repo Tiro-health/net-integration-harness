@@ -10,6 +10,7 @@ on:
     paths:
       - 'src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js'
       - 'build/bridge-contract/**'
+      - 'tests/bridge/**'
       - '.github/workflows/bridge-contract.yml'
   push:
     branches: [master]
@@ -57,3 +58,27 @@ jobs:
 
       - name: Type-check bridge against frontend contract
         run: npm run typecheck
+
+  # Behavioral tests: run the shipped bridge against a stub <tiro-form-filler> that
+  # models the element's update semantics. No registry auth and no dependencies —
+  # deliberately separate from the type-check so a GitHub Packages outage can't mask
+  # a real regression. See tests/bridge/README.md.
+  behavior:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: tests/bridge
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run bridge behavioral tests
+        run: npm test
