@@ -1,0 +1,18 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Emit a packages.lock.json next to every project. Locks the full transitive
+         dependency graph so SCA tooling (Aikido) can scan what actually restores,
+         not just the direct PackageReferences, and so restores are reproducible.
+
+         Applies to the old-style VB.NET samples too: they import Microsoft.Common.props
+         (which imports this file) and set RestoreProjectStyle=PackageReference, which is
+         what lock files require. Nothing here uses packages.config.
+
+         Regenerate after changing any PackageReference by running `dotnet restore`, or
+         by building the solution. CI restores in locked mode, so a stale lock file fails
+         the build instead of silently resolving something new. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+</Project>

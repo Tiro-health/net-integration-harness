@@ -88,8 +88,12 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Releasing version $VERSION"
 
+      # Locked mode here too, so a published package is built from exactly the
+      # dependency graph recorded in the lock files. CI enforces the same on every
+      # PR and push to master, so master's lock files are always current by the
+      # time a release runs — this shouldn't ever be the step that blocks one.
       - name: Restore
-        run: msbuild net-integration-harness.sln -t:Restore -p:Configuration=Release
+        run: msbuild net-integration-harness.sln -t:Restore -p:Configuration=Release -p:RestoreLockedMode=true
 
       # Build the full sln first so every src/*.dll exists on disk. msbuild
       # -t:Pack on its own skips the Build target dependency for reasons
