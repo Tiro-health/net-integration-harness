@@ -48,6 +48,15 @@ export class FormFillerStub {
         this.setAttributeLog = [];
         this._listeners = new Map();
 
+        // Arguments of each submit() call, in order. `undefined` entries record a
+        // no-argument call, which is what a finalize must produce — the distinction
+        // between submit() and submit({...}) is the whole point of the intent mapping.
+        this.submitCalls = [];
+
+        // Set by tests that exercise narrative generation. The real element exposes the
+        // SDC client it built; the bridge reads sdcClient.generateNarrative off it.
+        this.sdcClient = undefined;
+
         // Lit batching state.
         this._changed = new Set();
         this._updatePending = false;
@@ -156,6 +165,14 @@ export class FormFillerStub {
         else this.attributes.delete(name);
         if (name === "read-only") this.readOnly = on;
         return on;
+    }
+
+    /**
+     * Real signature is submit(options?) where options carries the target status.
+     * Records the raw argument so a test can tell submit() from submit(undefined).
+     */
+    submit(options) {
+        this.submitCalls.push(options);
     }
 
     addEventListener(type, handler) {

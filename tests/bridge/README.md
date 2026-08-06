@@ -23,7 +23,45 @@ cd tests/bridge
 node --test          # or: npm test
 ```
 
+### Writing assertions across the vm boundary
+
+Values the **bridge** constructs live in the sandbox realm and carry its
+`Object.prototype`, so `assert.deepStrictEqual` — which `node:assert/strict` also aliases
+`deepEqual` to — fails on the prototype even when every key matches, printing two
+identical-looking objects. Wrap those in `plain()` from `load-bridge.mjs`:
+
+```js
+assert.deepEqual(plain(element.submitCalls[0]), { status: "in-progress" });
+```
+
+Only needed for bridge-created values. Anything the stub built runs in the host realm and
+compares as normal.
+
 ## What it covers
+
+`submit-intent.test.mjs` (**GH-50**) pins `ui.form.requestSubmit` → `submit()`. This is the
+`submit({ intent })` vs `submit({ status })` bug class (#19 / PR #25) that the
+`build/bridge-contract` type-check structurally **cannot** catch: calling the wrong branch
+is a valid call with a valid signature, so `tsc` passes while save-draft silently finalizes
+the form. Covers save-draft → `{ status: "in-progress" }`, finalize/absent/unrecognised →
+bare `submit()`, and that a request before any questionnaire is displayed is a no-op.
+
+`protocol.test.mjs` (**GH-50**) pins the acknowledgement contract: a base ack for handled
+messages, `UnknownMessageTypeException` for unknown types, `HandlerException` for a
+throwing handler (and exactly one response, never an error followed by an ack),
+`ui.form.persist` acking as a deliberate no-op, response envelopes not being acked
+themselves, and `window.tiro.cancel()`.
+
+`form-submitted.test.mjs` (**GH-50**) pins the `tiro-submit` → `form.submitted` round trip:
+request semantics rather than fire-and-forget, `tiro-submitted` only after the host acks,
+`tiro-submit-error` on refusal, the `completed` status fallback never overwriting a real
+status, `sanitize()` stripping nulls, and narrative generation being optional — a failing
+`generateNarrative` must not cost the user their submitted form.
+
+`configure.test.mjs` (**GH-50**) covers `sdc.configure` and launch-context edges. Its two
+data-endpoint tests are a second regression guard for GH-48: the element rebuilds its
+client on `dataEndpointAddress` too, so `DataEndpointAddress` is an independent route into
+the same defect. Both fail against the pre-fix bridge, verified by swapping it in.
 
 `dirty-state.test.mjs` pins **GH-46**: `<tiro-form-filler>`'s `tiro-dirty-change` event is
 forwarded to the host as a fire-and-forget `ui.form.dirtyChanged` message. It asserts the

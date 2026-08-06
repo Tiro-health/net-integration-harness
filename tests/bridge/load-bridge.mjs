@@ -22,22 +22,41 @@ export const flush = async (turns = 6) => {
 };
 
 /**
+ * Re-materialise a value the bridge created inside the vm realm as a host-realm one.
+ *
+ * Object literals built in the sandbox carry that realm's Object.prototype, so
+ * assert.deepStrictEqual (which `node:assert/strict` also aliases deepEqual to)
+ * fails on the prototype even when every key and value matches — the diff prints
+ * two identical-looking objects. JSON round-tripping rebuilds them with host
+ * intrinsics so the comparison is about content.
+ *
+ * Only needed for values the BRIDGE constructed. Anything the stub built (it runs
+ * in the host realm) compares fine as-is.
+ */
+export const plain = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
+
+/**
  * @param {object[]} formFillers stub elements returned by querySelectorAll("tiro-form-filler")
  * @returns {Promise<{window: any, document: any, warnings: string[]}>}
  */
 export async function loadBridge(formFillers, { host = false } = {}) {
     const warnings = [];
     const errors = [];
+    let uuidCounter = 0;
 
     // Outbound envelopes the bridge posted to the host, in order. Only captured when
     // a transport is installed; without one SmartWebMessaging.init() returns false and
     // the bridge stops before starting handshake retries.
     const outbound = [];
 
+    // document CustomEvents the bridge fired — its page-facing status hooks
+    // (tiro-connected, tiro-submitted, tiro-submit-error, tiro-cancelled, ...).
+    const documentEvents = [];
+
     const document = {
         readyState: "complete", // bootstrap() runs immediately rather than waiting on DOMContentLoaded
         addEventListener() {},
-        dispatchEvent() { return true; },
+        dispatchEvent(event) { documentEvents.push(event); return true; },
         querySelectorAll(selector) {
             return selector === "tiro-form-filler" ? formFillers : [];
         },
@@ -71,7 +90,11 @@ export async function loadBridge(formFillers, { host = false } = {}) {
             warn: (...a) => warnings.push(a.join(" ")),
             error: (...a) => errors.push(a.join(" ")),
         },
-        crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000000" },
+        // Deterministic but unique: pendingRequests is keyed by messageId, so a constant
+        // would make concurrent requests collide. Sequential keeps failures readable.
+        crypto: {
+            randomUUID: () => `00000000-0000-4000-8000-${String(++uuidCounter).padStart(12, "0")}`,
+        },
         CustomEvent: class CustomEvent {
             constructor(type, init) { this.type = type; this.detail = init?.detail; }
         },
@@ -106,8 +129,13 @@ export async function loadBridge(formFillers, { host = false } = {}) {
         warnings,
         errors,
         outbound,
+        documentEvents,
         /** Outbound envelopes of one messageType, newest last. */
         sent: messageType => outbound.filter(m => m.messageType === messageType),
+        /** Response envelopes the bridge posted (acks and errors carry no messageType). */
+        responses: () => outbound.filter(m => m.responseToMessageId),
+        /** document CustomEvents of one type, newest last. */
+        fired: type => documentEvents.filter(e => e.type === type),
         /** Simulate a host -> page envelope arriving over the transport. */
         receive: message => {
             if (!hostMessageListener) throw new Error("no host transport installed (pass { host: true })");
