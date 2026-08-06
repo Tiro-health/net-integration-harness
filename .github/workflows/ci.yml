@@ -26,8 +26,13 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      # RestoreLockedMode fails the build if any packages.lock.json is out of date
+      # rather than silently resolving something new, so the locked graph the SCA
+      # scanner reads is the graph CI actually built. After changing a
+      # PackageReference, run `dotnet restore` locally and commit the updated
+      # lock files, or this step fails with NU1004.
       - name: Restore
-        run: msbuild net-integration-harness.sln -t:Restore -p:Configuration=Release
+        run: msbuild net-integration-harness.sln -t:Restore -p:Configuration=Release -p:RestoreLockedMode=true
 
       - name: Build
         run: msbuild net-integration-harness.sln -p:Configuration=Release
