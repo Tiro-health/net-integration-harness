@@ -253,9 +253,11 @@
     // The handle is intersected with HTMLElement because the published web-sdk .d.ts
     // imports its base class (LitElement) from `lit`, which a type-only consumer doesn't
     // install — without the intersection the element would lose setAttribute/addEventListener.
+    // LitElementLike (build/bridge-contract/globals.d.ts) restores the base-class members
+    // the bridge uses — currently updateComplete — for the same reason.
     // The element-specific members we care about (submit, questionnaire, sdcClient) are
     // declared directly on TiroFormFiller, so the submit() contract is still checked.
-    /** @param {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement} formFiller */
+    /** @param {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement & LitElementLike} formFiller */
     function wireFormFiller(formFiller) {
         // Endpoint config is driven by the protocol's sdc.configure message (per the SDC
         // SMART Web Messaging dialect — see github.com/brianpos/sdc-smart-web-messaging).
@@ -298,22 +300,50 @@
                 if (configuration && configuration.readOnly) formFiller.toggleAttribute("read-only", true);
             }
 
-            if (SmartWebMessaging.context && Array.isArray(SmartWebMessaging.context.launchContext)) {
-                const launchContext = {};
-                SmartWebMessaging.context.launchContext.forEach(item => {
-                    if (item.name && item.contentResource) launchContext[item.name] = item.contentResource;
-                });
-                if (Object.keys(launchContext).length > 0)
-                    formFiller.setAttribute("launch-context", JSON.stringify(launchContext));
-            }
+            // Everything below must land in a LATER update than the endpoint attributes
+            // above. tiro-web-sdk rebuilds its SDC client inside willUpdate() whenever
+            // sdcEndpointAddress changes, and seeds the replacement from
+            // _pendingLaunchContext alone:
+            //
+            //   willUpdate(changed) {
+            //     (changed.has("sdcEndpointAddress") || changed.has("dataEndpointAddress")) &&
+            //       (this._sdcClient = new SdcClient({ baseUrl: this.sdcEndpointAddress,
+            //                                          launchContext: this._pendingLaunchContext, ... }))
+            //   }
+            //   set launchContext(v) { this._sdcClient ? this._sdcClient.launchContext = v
+            //                                          : this._pendingLaunchContext = v }
+            //
+            // The element already owns a client by the time we run — its constructor
+            // defaults sdcEndpointAddress to the Tiro demo server — so a launch context set
+            // in the SAME batch as an endpoint change is written to the OUTGOING client and
+            // discarded by the rebuild. $populate then goes out with no context parameters
+            // and every %patient / %encounter expression resolves empty. Reordering within
+            // the batch cannot help; the rebuild always wins. Awaiting updateComplete lets it
+            // settle so the launch context lands on the client that survives.
+            //
+            // Only reproduces when the host's endpoint differs from the SDK's default:
+            // writing back the identical default is not a Lit change, so nothing rebuilds.
+            // See GH-48.
+            Promise.resolve(formFiller.updateComplete)
+                .then(() => {
+                    if (SmartWebMessaging.context && Array.isArray(SmartWebMessaging.context.launchContext)) {
+                        const launchContext = {};
+                        SmartWebMessaging.context.launchContext.forEach(item => {
+                            if (item.name && item.contentResource) launchContext[item.name] = item.contentResource;
+                        });
+                        if (Object.keys(launchContext).length > 0)
+                            formFiller.setAttribute("launch-context", JSON.stringify(launchContext));
+                    }
 
-            if (questionnaireResponse)
-                formFiller.setAttribute("initial-response", JSON.stringify(questionnaireResponse));
+                    if (questionnaireResponse)
+                        formFiller.setAttribute("initial-response", JSON.stringify(questionnaireResponse));
 
-            formFiller.setAttribute(
-                "questionnaire",
-                typeof questionnaire === "string" ? questionnaire : JSON.stringify(questionnaire)
-            );
+                    formFiller.setAttribute(
+                        "questionnaire",
+                        typeof questionnaire === "string" ? questionnaire : JSON.stringify(questionnaire)
+                    );
+                })
+                .catch(err => console.error("[bridge] failed to display questionnaire:", err));
         });
 
         // Store launch context so it can be applied to the next questionnaire.
@@ -381,7 +411,7 @@
 
     function wireAllFormFillers() {
         document.querySelectorAll("tiro-form-filler").forEach(el =>
-            wireFormFiller(/** @type {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement} */ (el)));
+            wireFormFiller(/** @type {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement & LitElementLike} */ (el)));
     }
 
     // ============================================================
