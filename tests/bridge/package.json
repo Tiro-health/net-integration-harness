@@ -1,0 +1,9 @@
+{
+  "name": "bridge-behavior-tests",
+  "private": true,
+  "type": "module",
+  "description": "Behavioral tests for the shipped tiro-swm-bridge.js. Runs the real bridge bytes against a stub <tiro-form-filler> that models the @tiro-health/web-sdk element's observable semantics. Zero dependencies: node --test only, no jsdom, no network. Complements build/bridge-contract (static type-check) and the Playwright smoke test tracked in #26.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
