@@ -11,7 +11,7 @@ Public Class Form1
     ' $populate / $validate / $generate-narrative for the form) and the $extract client, so
     ' they always target the same server. Point this at your own SDC server for production;
     ' https://sdc.tiro.health/fhir/r5 is the shared demo instance (also the viewer's default).
-    Private Const SdcEndpoint As String = "https://sdc.tiro.health/fhir/r5"
+    Private Const SdcEndpoint As String = "https://sdc-dev.tiro.health/fhir/r5"
 
     ' Set right before a program-initiated Me.Close() (from HandleFormSubmitted /
     ' HandleCloseApplication) so Form1_FormClosing's unsaved-changes prompt doesn't
@@ -61,7 +61,7 @@ Public Class Form1
         }
 
         Await TiroFormViewer.SetContextAsync(
-            "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699",
+            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|1.2.7",
             patient:=patient,
             launchContext:=New List(Of LaunchContext(Of Resource)) From {
                 New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
