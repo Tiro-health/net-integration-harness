@@ -1,5 +1,10 @@
 name: Build and Publish NuGet
 
+# Actions are pinned to full commit SHAs (GH-53); see .github/workflows/ci.yml for the
+# rationale and the bump procedure. It matters most here: the publish job holds
+# `id-token: write` and mints a real nuget.org key, so a moved tag on any action in
+# this file would be a supply-chain path straight into a published package.
+
 on:
   push:
     tags:
@@ -25,9 +30,9 @@ jobs:
     env:
       NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           registry-url: 'https://npm.pkg.github.com'
@@ -66,17 +71,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
 
       # net48 + WinForms src projects don't reliably build under `dotnet pack`
       # (NU5026: net48 DLL not produced). MSBuild handles them correctly.
       - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2.0.0
 
       # Strip the leading 'v' from the tag (e.g., v1.0.37 -> 1.0.37)
       - name: Parse version
@@ -122,7 +127,7 @@ jobs:
           }
 
       - name: Upload NuGet artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nupkgs
           path: artifacts/packages/*.nupkg
@@ -131,7 +136,7 @@ jobs:
       # user is the nuget.org profile name (e.g. axelv21), not an email.
       - name: NuGet OIDC login
         id: login
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
           user: ${{ secrets.NUGET_USER }}
 
