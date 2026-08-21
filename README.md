@@ -179,8 +179,8 @@ run while the form is still dirty, guard with a flag set right before that `Me.C
 `Form1_FormClosing` doesn't re-prompt on its own close — see
 `samples/Tiro.Health.FormFiller.WebView2.ExtractSample/Form1.vb` for the full pattern.
 
-> That sample loads `tiro-web-sdk` from the pre-release `sdk-dev` channel, because `IsDirty`
-> needs a frontend version the stable channel doesn't carry yet. See
+> `IsDirty` needs a frontend that fires `tiro-dirty-change`, which reached the stable
+> `sdk/` channel in `tiro-web-sdk` 0.3.2 — so that sample pins `sdk/v0.3.2`. See
 > [Frontend version compatibility](#frontend-version-compatibility).
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
@@ -621,7 +621,7 @@ The harness is version-agnostic about `tiro-web-sdk` — you choose the `<script
 Two floors to know:
 
 - **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) requires **`tiro-web-sdk` >= 0.3.0**. It maps to the frontend's `submit({ status: "in-progress" })`, an option added in 0.3.0. On older versions the option is ignored and the form **finalizes** instead of saving a draft. Plain finalize (`SendFormRequestSubmitAsync()`) works on all versions.
-- **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** requires [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) on `<tiro-form-filler>`, first available in **`tiro-web-sdk` 0.3.1-dev.1** on the pre-release `sdk-dev` channel (`https://cdn.tiro.health/sdk-dev/v0.3.1-dev.1/tiro-web-sdk.iife.js`). Not yet on the stable `sdk/` channel — the floor there will be 0.3.1 once it ships. On versions without it the bridge's listener is simply never invoked (the frontend never fires the event), so `IsDirty` silently stays `false` rather than erroring.
+- **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** requires [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) on `<tiro-form-filler>`, which requires **`tiro-web-sdk` >= 0.3.2** on the stable `sdk/` channel. (It first appeared in the `0.3.1-dev.*` pre-releases; 0.3.1 itself never deployed, so 0.3.2 is the first stable version carrying it.) On versions without it the bridge's listener is simply never invoked — the frontend never fires the event — so `IsDirty` silently stays `false` rather than erroring. There is no way to detect this from the page: `addEventListener` succeeds against every version.
 
 The `build/bridge-contract/` type-check guards this contract against the live `tiro-web-sdk@latest`; see its README.
 
