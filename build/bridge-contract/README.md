@@ -2,7 +2,7 @@
 
 Type-checks the **actual shipped** `src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js`
 against the published TypeScript types of `@tiro-health/web-sdk` — the `<tiro-form-filler>` web component
-the bridge drives. It exists to catch **drift between the bridge and the external frontend**, e.g. the
+the bridge drives. It exists to catch **drift between the bridge and the frontend element**, e.g. the
 `submit({ intent })`-vs-`submit({ status })` bug (#19 / PR #25) that no test caught because the
 bridge↔frontend seam was never exercised.
 
@@ -14,26 +14,22 @@ The bridge's calls into the element must match the frontend's API. Concretely, `
 bridge calls `formFiller.submit(...)` (or reads `questionnaire` / `sdcClient`, etc.) with a shape the
 installed `@tiro-health/web-sdk` doesn't accept.
 
-## Version target: floating `latest` (intentionally)
+## Version target: the pin (GH-59)
 
-CI installs `@tiro-health/web-sdk@latest` fresh on every run — **not** a pinned version. The harness is
-version-agnostic (integrators load the floating `cdn.tiro.health/sdk/latest` channel), so the check tracks
-whatever `latest` currently is. A red run with no harness change means **the frontend's `latest` moved the
-contract** — that's the alarm, not a flake.
+On PRs, pushes, and the release gate, CI installs the **exact version pinned in
+`build/web-sdk/package.json`** — the version the harness embeds and ships (GH-60). Bridge and
+element are validated as the pair that actually ships; checking anything else would validate a
+version integrators never run.
 
-## Status: green
+> Historical note: this check originally tracked the floating `latest` dist-tag, because integrators
+> loaded `cdn.tiro.health/sdk/latest` from their own `index.html`. That rationale expired with the
+> embedding architecture (GH-64) — there is no fielded `latest` population anymore. During that era
+> the check was legitimately red for a stretch (bridge called `submit({ status })`, a 0.3.0 API,
+> while `latest` was still 0.2.3 — i.e. save-draft genuinely didn't work against the default page's
+> SDK). That failure class is now structurally impossible: the pair ships together.
 
-`0.3.0` is now the `latest` dist-tag, so the check passes and the job is no longer allowed to fail.
-
-It was red for a stretch, and that red was correct rather than a flake: the bridge's `save-draft` path calls
-`submit({ status: "in-progress" })`, an option added in **web-sdk `0.3.0`**, while stable `latest` was still
-`0.2.3` — whose `submit()` takes no arguments. The check was reporting, accurately, that `save-draft` did not
-function against the frontend the harness loads by default. **Save-draft still requires
-`@tiro-health/web-sdk` >= 0.3.0**, which matters for integrators pinning an older SDK in their own
-`index.html`.
-
-A red run from here on means the frontend's `latest` moved the contract out from under the shipped bridge —
-investigate rather than retry.
+The **nightly** run still checks `@latest`, as an advisory heads-up only: a red nightly means the
+*next pin bump* will need bridge work — nothing shipped is affected.
 
 ## Running locally
 
@@ -44,7 +40,8 @@ gh auth refresh -h github.com -s read:packages    # one-time, adds the scope
 cd build/bridge-contract
 export NODE_AUTH_TOKEN=$(gh auth token)
 npm ci
-npm install --no-save @tiro-health/web-sdk@latest  # what CI checks; @next to preview an upcoming release
+VER=$(node -p "require('../web-sdk/package.json').dependencies['@tiro-health/web-sdk']")
+npm install --no-save "@tiro-health/web-sdk@$VER"  # what CI gates on; @latest to preview the next bump
 npm run typecheck
 ```
 
@@ -53,4 +50,5 @@ The package must grant the harness repo Actions read access (GitHub Packages →
 
 ## Follow-up
 
-A heavier **behavioral** smoke test (Playwright, real element from the CDN) is tracked separately in #26.
+A heavier **behavioral** smoke test (Playwright, the embedded element against a dockerized SDC
+server) is tracked in #26.

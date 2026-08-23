@@ -91,8 +91,9 @@ and nothing rebuilds), so a fix for one cannot silently break the other.
 
 `form-filler-stub.mjs` models the element's semantics — Lit's update batching, the
 `launchContext` getter/setter, and the `willUpdate` client rebuild — transcribed from
-the shipped SDK bundle, with the original minified source quoted in comments beside
-each behaviour.
+the **pinned** SDK bundle (`build/web-sdk/package.json`, the exact version the harness
+embeds per GH-59/GH-60), with the original minified source quoted in comments beside
+each behaviour. When the pin bumps, re-verify the stub against the new bundle.
 
 That makes these tests only as accurate as the model. They validate **our** use of the
 element's contract, not the element itself, and they would not have found GH-48 from

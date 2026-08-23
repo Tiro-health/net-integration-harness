@@ -11,14 +11,11 @@ on:
       - 'v*.*.*'
 
 jobs:
-  # Release gate: the bridge must match the current stable frontend
-  # (@tiro-health/web-sdk@latest) before we publish. If it doesn't, this job fails and
-  # `publish` (which needs it) is skipped — the release is blocked.
-  #
-  # This is intentionally BLOCKING. While the save-draft submit({ status }) API is only
-  # on web-sdk >= 0.3.0 (not yet on the `latest` dist-tag), this gate fails and blocks
-  # releases by design — until 0.3.0 is promoted to `latest`, or the bridge stops calling
-  # an API absent from stable. See build/bridge-contract/README.md.
+  # Release gate: the bridge must type-check against the PINNED web-sdk version
+  # (build/web-sdk/package.json) — the exact bundle this release embeds and ships
+  # (GH-59/GH-60). If it doesn't, this job fails and `publish` (which needs it) is
+  # skipped — the release is blocked. Gating against anything else (e.g. `latest`)
+  # would validate a version we don't ship. See build/bridge-contract/README.md.
   contract-check:
     runs-on: ubuntu-latest
     permissions:
@@ -41,15 +38,17 @@ jobs:
       - name: Install tooling
         run: npm ci
 
-      - name: Install @tiro-health/web-sdk@latest
-        run: npm install --no-save @tiro-health/web-sdk@latest
-
-      # Record the concrete version this release is validated against, for the run summary.
-      - name: Record validated SDK version
+      - name: Install pinned @tiro-health/web-sdk
         run: |
-          VER=$(npm view @tiro-health/web-sdk version)
-          echo "Validating bridge against tiro-web-sdk@$VER (latest dist-tag)"
-          echo "Bridge contract validated against **tiro-web-sdk v$VER** (this version or higher, same major, supported)." >> "$GITHUB_STEP_SUMMARY"
+          VER=$(node -p "require('../web-sdk/package.json').dependencies['@tiro-health/web-sdk']")
+          echo "Validating bridge against pinned tiro-web-sdk@$VER"
+          npm install --no-save "@tiro-health/web-sdk@$VER"
+
+      # Record the concrete version this release embeds, for the run summary.
+      - name: Record embedded SDK version
+        run: |
+          VER=$(node -p "require('../web-sdk/package.json').dependencies['@tiro-health/web-sdk']")
+          echo "Bridge contract validated against **tiro-web-sdk v$VER** — the exact version embedded in this release (GH-60)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Type-check bridge against frontend contract
         run: npm run typecheck
