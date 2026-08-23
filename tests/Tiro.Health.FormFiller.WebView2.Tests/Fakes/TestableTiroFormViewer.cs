@@ -29,7 +29,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         /// </summary>
         public string ExpectedWebSdkVersionOverride { get; set; }
 
-        protected override string ExpectedWebSdkElementVersion => ExpectedWebSdkVersionOverride;
+        internal override string ExpectedWebSdkElementVersion => ExpectedWebSdkVersionOverride;
 
         protected override bool IsOutcomeSuccessful(OperationOutcome outcome)
             => outcome == null || outcome.Success;

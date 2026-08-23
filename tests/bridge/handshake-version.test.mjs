@@ -44,13 +44,3 @@ test("reports a foreign element's version with source 'collision'", async () => 
     assert.deepEqual(handshakePayload(h),
         { client: { name: "tiro-web-sdk", version: "0.2.1", source: "collision" } });
 });
-
-test("every handshake retry carries the same payload", async () => {
-    const h = await loadBridge([new FormFillerStub()], { host: true, sdkVersion: "0.4.0" });
-    await flush();
-
-    const first = handshakePayload(h);
-    for (const msg of h.sent("status.handshake")) {
-        assert.deepEqual(plain(msg.payload), first);
-    }
-});

@@ -75,6 +75,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.IsFalse(string.IsNullOrEmpty(WebSdkAssets.Version));
         }
 
+        // The bridge's SDK_URL and the host's virtual-host mapping are hardcoded on
+        // both sides of a runtime boundary; this pins them together.
+        [TestMethod]
+        public void Bridge_LoadsSdkFromTheMappedVirtualHost()
+        {
+            var bridge = ReadEmbeddedString("Tiro.Health.FormFiller.WebView2.WebAssets.tiro-swm-bridge.js");
+
+            StringAssert.Contains(bridge, $"https://{WebSdkAssets.VirtualHostName}/{WebSdkAssets.BundleFileName}");
+        }
+
         // The bridge handles the protocol's sdc.configure message: it stashes the
         // payload and applies payload.configuration.sdcServer / payload.dataServer
         // to the <tiro-form-filler> element's endpoint attributes right before the

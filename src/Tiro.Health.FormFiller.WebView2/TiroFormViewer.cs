@@ -93,11 +93,6 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private const string VirtualHostName = "appassets.example"; // https://github.com/MicrosoftEdge/WebView2Feedback/issues/2381
 
-        // Serves the embedded web-sdk bundle (GH-60) — separate host because
-        // VirtualHostName can map to the consumer's folder. Must match SDK_URL
-        // in WebAssets/tiro-swm-bridge.js.
-        private const string SdkVirtualHostName = "tiro-sdk.example";
-
         // Tracks if WebView is initialized
         private Task _initializationTask;
 
@@ -145,9 +140,11 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>
         /// The element version the handshake must report, or null to skip the assert.
         /// Defaults to the embedded bundle's expectedElementVersion (GH-61); the assert
-        /// arms itself when the pin bumps to a version-exposing SDK.
+        /// arms itself when the pin bumps to a version-exposing SDK. Internal so
+        /// consumer subclasses cannot opt out of the assert; tests override via
+        /// InternalsVisibleTo.
         /// </summary>
-        protected virtual string ExpectedWebSdkElementVersion => WebSdkAssets.ExpectedElementVersion;
+        internal virtual string ExpectedWebSdkElementVersion => WebSdkAssets.ExpectedElementVersion;
 
         /// <summary>
         /// Whether the user has made any changes to the displayed form since it loaded.
@@ -434,7 +431,7 @@ namespace Tiro.Health.FormFiller.WebView2
                 _browser.MapVirtualHost(VirtualHostName, contentFolder);
                 // Embedded web-sdk on its own host, mapped before Navigate. DenyCors is fine
                 // for a plain <script src>; the bridge must not add a crossorigin attribute.
-                _browser.MapVirtualHost(SdkVirtualHostName, WebSdkAssets.FolderPath);
+                _browser.MapVirtualHost(WebSdkAssets.VirtualHostName, WebSdkAssets.FolderPath);
                 _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
             }
             catch
@@ -551,11 +548,7 @@ namespace Tiro.Health.FormFiller.WebView2
             if (payload?.ExtraFields == null) return (null, null);
             if (!payload.ExtraFields.TryGetValue("client", out var client)
                 || client.ValueKind != System.Text.Json.JsonValueKind.Object) return (null, null);
-            string Str(string name) =>
-                client.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
-                    ? v.GetString()
-                    : null;
-            return (Str("version"), Str("source"));
+            return (client.GetStringOrNull("version"), client.GetStringOrNull("source"));
         }
 
         private void OnCloseApplication(object sender, CloseApplicationEventArgs e)

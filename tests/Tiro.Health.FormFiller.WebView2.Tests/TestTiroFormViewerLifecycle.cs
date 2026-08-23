@@ -435,12 +435,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.Fail($"Predicate did not become true within {timeout}.");
         }
 
-        private static string BuildHandshakeMessage(string id) => $@"{{
-            ""messageId"": ""{id}"",
-            ""messagingHandle"": ""smart-web-messaging"",
-            ""messageType"": ""status.handshake"",
-            ""payload"": {{}}
-        }}";
+        private static string BuildHandshakeMessage(string id) => SwmTest.Handshake(id);
 
         private static string BuildUiDoneMessage(string id) => $@"{{
             ""messageId"": ""{id}"",

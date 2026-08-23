@@ -18,11 +18,15 @@ namespace Tiro.Health.FormFiller.WebView2
         private const string VersionResourceName = "Tiro.Health.FormFiller.WebView2.WebAssets.web-sdk.version.json";
         internal const string BundleFileName = "tiro-web-sdk.iife.js";
 
+        // Must match SDK_URL in WebAssets/tiro-swm-bridge.js — pinned together by
+        // TestEmbeddedWebAssets.Bridge_LoadsSdkFromTheMappedVirtualHost.
+        internal const string VirtualHostName = "tiro-sdk.example";
+
         private static readonly Lazy<string> _folderPath = new Lazy<string>(
             Extract, LazyThreadSafetyMode.ExecutionAndPublication);
 
-        private static readonly Lazy<VersionManifest> _manifest = new Lazy<VersionManifest>(
-            ReadManifest, LazyThreadSafetyMode.ExecutionAndPublication);
+        private static readonly Lazy<(string Version, string Expected)> _manifest =
+            new Lazy<(string, string)>(ReadManifest, LazyThreadSafetyMode.ExecutionAndPublication);
 
         /// <summary>Folder holding the extracted bundle, for the SDK virtual-host mapping.</summary>
         public static string FolderPath => _folderPath.Value;
@@ -31,11 +35,11 @@ namespace Tiro.Health.FormFiller.WebView2
         public static string Version => _manifest.Value.Version;
 
         /// <summary>
-        /// The element version the host asserts at handshake (GH-61), or <c>null</c> while
+        /// The element version the handshake must report (GH-61), or <c>null</c> while
         /// the pinned SDK predates a static element version (atticus-frontend#2927). The
         /// assert arms itself on the first pin bump that sets this — no code change.
         /// </summary>
-        public static string ExpectedElementVersion => _manifest.Value.ExpectedElementVersion;
+        public static string ExpectedElementVersion => _manifest.Value.Expected;
 
         private static string Extract()
         {
@@ -46,35 +50,17 @@ namespace Tiro.Health.FormFiller.WebView2
             return EmbeddedAssetExtraction.PublishResource(asm, BundleResourceName, folder, BundleFileName);
         }
 
-        private static VersionManifest ReadManifest()
+        private static (string, string) ReadManifest()
         {
             var asm = typeof(WebSdkAssets).Assembly;
             var bytes = EmbeddedAssetExtraction.ReadResource(asm, VersionResourceName);
             using (var doc = JsonDocument.Parse(bytes))
             {
-                var root = doc.RootElement;
-                var version = root.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.String
-                    ? v.GetString()
-                    : null;
+                var version = doc.RootElement.GetStringOrNull("version");
                 if (string.IsNullOrEmpty(version))
                     throw new InvalidOperationException(
                         "web-sdk.version.json carries no version — staged bundle metadata is corrupt; re-run build/web-sdk/copy-bundle.mjs.");
-                var expected = root.TryGetProperty("expectedElementVersion", out var e) && e.ValueKind == JsonValueKind.String
-                    ? e.GetString()
-                    : null;
-                return new VersionManifest(version, expected);
-            }
-        }
-
-        private sealed class VersionManifest
-        {
-            public string Version { get; }
-            public string ExpectedElementVersion { get; }
-
-            public VersionManifest(string version, string expectedElementVersion)
-            {
-                Version = version;
-                ExpectedElementVersion = expectedElementVersion;
+                return (version, doc.RootElement.GetStringOrNull("expectedElementVersion"));
             }
         }
     }
