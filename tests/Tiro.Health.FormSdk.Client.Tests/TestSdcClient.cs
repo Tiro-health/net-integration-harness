@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Hl7.Fhir.Model;
@@ -148,6 +149,53 @@ namespace Tiro.Health.FormSdk.Client.Tests
             Assert.IsNotNull(ex.Outcome, "server diagnostics from a recoverable error body must not be dropped");
             Assert.AreEqual(OperationOutcome.IssueSeverity.Fatal, ex.Outcome!.Issue[0].Severity);
             Assert.AreEqual("boom", ex.Outcome!.Issue[0].Diagnostics);
+        }
+
+        // GH-63: the SDC server aggregates this to learn which harness versions are
+        // deployed, so the product token and a non-placeholder version both matter.
+        [TestMethod]
+        public async Task Requests_CarryTheHarnessUserAgent()
+        {
+            const string outcomeJson = """{"resourceType":"OperationOutcome","issue":[]}""";
+            var (client, handler) = ClientReturning(HttpStatusCode.OK, outcomeJson);
+
+            await client.ValidateAsync(SampleResponse());
+
+            var products = handler.LastRequest!.Headers.UserAgent;
+            Assert.AreEqual(1, products.Count);
+            Assert.AreEqual("Tiro.Health.FormSdk.Client", products.Single().Product!.Name);
+            Assert.IsFalse(string.IsNullOrWhiteSpace(products.Single().Product!.Version));
+            Assert.IsFalse(products.Single().Product!.Version!.Contains("+"),
+                "commit-sha build metadata must be stripped from the UA version token");
+        }
+
+        [TestMethod]
+        public async Task Requests_PreserveAConsumerConfiguredUserAgent()
+        {
+            // An injected client's own UA must survive: per-request headers replace defaults,
+            // and hospital proxies may allowlist on the consumer's token.
+            var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"resourceType":"OperationOutcome","issue":[]}""");
+            var http = new HttpClient(handler);
+            http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AcmeEhr", "7.3"));
+            var client = new SdcClient(BaseAddress, http);
+
+            await client.ValidateAsync(SampleResponse());
+
+            var names = handler.LastRequest!.Headers.UserAgent.Select(p => p.Product!.Name).ToList();
+            CollectionAssert.AreEqual(new[] { "AcmeEhr", "Tiro.Health.FormSdk.Client" }, names);
+        }
+
+        [TestMethod]
+        public async Task SharedHttpClient_IsNotMutatedByTheUserAgent()
+        {
+            var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"resourceType":"OperationOutcome","issue":[]}""");
+            var http = new HttpClient(handler);
+            var client = new SdcClient(BaseAddress, http);
+
+            await client.ValidateAsync(SampleResponse());
+
+            Assert.AreEqual(0, http.DefaultRequestHeaders.UserAgent.Count,
+                "an IHttpClientFactory-managed client is shared; setting defaults would leak onto unrelated requests");
         }
 
         [TestMethod]

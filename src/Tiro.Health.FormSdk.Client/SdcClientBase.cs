@@ -1,6 +1,7 @@
 using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -30,6 +31,11 @@ namespace Tiro.Health.FormSdk.Client
         where TBundle : Resource
     {
         private const string FhirJsonMediaType = "application/fhir+json";
+
+        // Identifies this harness to the SDC server, which aggregates it to learn which
+        // harness versions are deployed in the field (GH-63 / atticus-backend#3568) —
+        // the data behind the support window. Computed once; reflection is not per-request.
+        private static readonly ProductInfoHeaderValue UserAgent = BuildUserAgent();
 
         private readonly HttpClient _http;
         private readonly bool _ownsHttpClient;
@@ -102,6 +108,14 @@ namespace Tiro.Health.FormSdk.Client
                 request.Content = new StringContent(json, Encoding.UTF8, FhirJsonMediaType);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(FhirJsonMediaType));
 
+                // Per-request, never on DefaultRequestHeaders: an injected client may be
+                // shared (IHttpClientFactory) and must not be mutated. Any User-Agent the
+                // consumer configured is carried over first — a per-request header would
+                // otherwise suppress it, and hospital proxies may allowlist on it.
+                foreach (var product in _http.DefaultRequestHeaders.UserAgent)
+                    request.Headers.UserAgent.Add(product);
+                request.Headers.UserAgent.Add(UserAgent);
+
                 using (var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false))
                 {
                     var responseBody = response.Content == null
@@ -159,6 +173,28 @@ namespace Tiro.Health.FormSdk.Client
                         $"SDC operation '{relativePath}' returned '{parsed?.TypeName ?? "null"}', expected '{typeof(TOut).Name}'.{detail}");
                 }
             }
+        }
+
+        private static ProductInfoHeaderValue BuildUserAgent()
+        {
+            var asm = typeof(SdcClientBase<TQuestionnaireResponse, TOperationOutcome, TBundle>).Assembly;
+
+            // InformationalVersion carries the package version (the publish workflow passes
+            // -p:Version), but the SDK appends "+<commit sha>" — not wanted in a UA token.
+            var informational = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            var plus = informational?.IndexOf('+') ?? -1;
+            if (plus >= 0) informational = informational.Substring(0, plus);
+
+            foreach (var candidate in new[] { informational, asm.GetName().Version?.ToString(), "0.0.0" })
+            {
+                if (string.IsNullOrWhiteSpace(candidate)) continue;
+                // A version with characters HTTP tokens disallow would throw on every
+                // request; try the next candidate instead.
+                try { return new ProductInfoHeaderValue("Tiro.Health.FormSdk.Client", candidate); }
+                catch (FormatException) { }
+            }
+
+            return new ProductInfoHeaderValue("Tiro.Health.FormSdk.Client", "0.0.0");
         }
 
         /// <summary>Disposes the internally-created <see cref="HttpClient"/>; a no-op when one was injected.</summary>
