@@ -425,15 +425,25 @@ namespace Tiro.Health.FormFiller.WebView2
         {
             if (Interlocked.CompareExchange(ref _navigated, 1, 0) != 0) return;
 
-            var contentFolder = !string.IsNullOrEmpty(WebContentFolder)
-                ? WebContentFolder
-                : DefaultWebContent.FolderPath;
+            try
+            {
+                var contentFolder = !string.IsNullOrEmpty(WebContentFolder)
+                    ? WebContentFolder
+                    : DefaultWebContent.FolderPath;
 
-            _browser.MapVirtualHost(VirtualHostName, contentFolder);
-            // Embedded web-sdk on its own host, mapped before Navigate. DenyCors is fine
-            // for a plain <script src>; the bridge must not add a crossorigin attribute.
-            _browser.MapVirtualHost(SdkVirtualHostName, WebSdkAssets.FolderPath);
-            _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
+                _browser.MapVirtualHost(VirtualHostName, contentFolder);
+                // Embedded web-sdk on its own host, mapped before Navigate. DenyCors is fine
+                // for a plain <script src>; the bridge must not add a crossorigin attribute.
+                _browser.MapVirtualHost(SdkVirtualHostName, WebSdkAssets.FolderPath);
+                _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
+            }
+            catch
+            {
+                // Roll back so a retried SetContextAsync re-attempts navigation and
+                // surfaces the real cause instead of a handshake timeout.
+                Interlocked.Exchange(ref _navigated, 0);
+                throw;
+            }
         }
 
         private void OnBrowserMessageReceived(object sender, string inboundJson)

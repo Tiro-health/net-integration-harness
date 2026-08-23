@@ -36,13 +36,13 @@ jobs:
           scope: '@tiro-health'
 
       - name: Install tooling
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Install pinned @tiro-health/web-sdk
         run: |
           VER=$(node -p "require('../web-sdk/package.json').dependencies['@tiro-health/web-sdk']")
           echo "Validating bridge against pinned tiro-web-sdk@$VER"
-          npm install --no-save "@tiro-health/web-sdk@$VER"
+          npm install --no-save --ignore-scripts "@tiro-health/web-sdk@$VER"
 
       # Record the concrete version this release embeds, for the run summary.
       - name: Record embedded SDK version
@@ -81,13 +81,16 @@ jobs:
           scope: '@tiro-health'
 
       # The packed WebView2 package embeds the pinned bundle (GH-60).
+      # --ignore-scripts everywhere npm runs in this repo: we only need tarball
+      # extraction, and this job later packs + publishes — no lifecycle script
+      # from the dependency tree may run on this runner.
       - name: Stage pinned web-sdk bundle
         working-directory: build/web-sdk
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm ci
+          npm ci --ignore-scripts
           node copy-bundle.mjs
 
       - name: Setup .NET

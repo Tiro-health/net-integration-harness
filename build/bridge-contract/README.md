@@ -39,9 +39,9 @@ The package is on **GitHub Packages**, so npm needs a token with `read:packages`
 gh auth refresh -h github.com -s read:packages    # one-time, adds the scope
 cd build/bridge-contract
 export NODE_AUTH_TOKEN=$(gh auth token)
-npm ci
+npm ci --ignore-scripts
 VER=$(node -p "require('../web-sdk/package.json').dependencies['@tiro-health/web-sdk']")
-npm install --no-save "@tiro-health/web-sdk@$VER"  # what CI gates on; @latest to preview the next bump
+npm install --no-save --ignore-scripts "@tiro-health/web-sdk@$VER"  # what CI gates on; @latest to preview the next bump
 npm run typecheck
 ```
 

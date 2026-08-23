@@ -35,6 +35,35 @@ test("foreign pre-defined element: no injection, hard error, wiring continues", 
     assert.ok(h.window.SmartWebMessaging.listeners["sdc.displayQuestionnaire"]);
 });
 
+test("not-yet-executed page SDK script tag: no injection, collision reported", async () => {
+    // An async/defer page tag hasn't defined the element at bootstrap time — the
+    // DOM scan must still catch it (the registry check alone cannot).
+    const el = new FormFillerStub();
+    const h = await loadBridge([el], { host: true, pageSdkScriptTag: true });
+    await flush();
+
+    assert.equal(h.injectedScripts.length, 0);
+    assert.equal(h.fired("tiro-sdk-collision").length, 1);
+    assert.ok(h.errors.some(e => e.includes("Remove the tiro-web-sdk <script> tag")));
+});
+
+test("a refused handshake rejects immediately, not after the 30s timeout", async () => {
+    const el = new FormFillerStub();
+    const h = await loadBridge([el], { host: true, predefinedElement: {} });
+    await flush();
+
+    const attempt = h.sent("status.handshake")[0];
+    h.receive({
+        responseToMessageId: attempt.messageId,
+        payload: { $type: "error", errorType: "HandlerException", errorMessage: "session refused (GH-61)" },
+    });
+    await flush();
+
+    assert.equal(h.fired("tiro-disconnected").length, 1,
+        "an error ack is terminal — the page must learn of the refusal without waiting out the retry window");
+    assert.equal(h.fired("tiro-connected").length, 0);
+});
+
 test("SDK load failure: error surfaced, bootstrap still reaches the handshake", async () => {
     const el = new FormFillerStub();
     const h = await loadBridge([el], { host: true, sdkLoad: "fail" });

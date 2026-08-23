@@ -119,11 +119,20 @@
                     resolve(payload);
                 };
 
+                // An error ack means the host REFUSED the session (GH-61) — terminal,
+                // so stop retrying and report immediately instead of timing out.
+                const onError = err => {
+                    if (resolved) return;
+                    resolved = true;
+                    attemptIds.forEach(id => this.pendingRequests.delete(id));
+                    reject(err);
+                };
+
                 const attempt = () => {
                     if (resolved) return;
                     const messageId = this.generateMessageId();
                     attemptIds.push(messageId);
-                    this.pendingRequests.set(messageId, { resolve: onSuccess, reject: () => {} });
+                    this.pendingRequests.set(messageId, { resolve: onSuccess, reject: onError });
                     this.sendMessage({
                         messageId,
                         messagingHandle: this.messagingHandle,

@@ -33,8 +33,19 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 
         public void PostMessage(string json) => PostedMessages.Add(json);
 
+        /// <summary>When set, the next MapVirtualHost call throws this once.</summary>
+        public Exception ThrowOnNextMapVirtualHost { get; set; }
+
         public void MapVirtualHost(string hostName, string folderPath)
-            => VirtualHostMappings.Add((hostName, folderPath));
+        {
+            var ex = ThrowOnNextMapVirtualHost;
+            if (ex != null)
+            {
+                ThrowOnNextMapVirtualHost = null;
+                throw ex;
+            }
+            VirtualHostMappings.Add((hostName, folderPath));
+        }
 
         public void Navigate(Uri url) => NavigatedUrls.Add(url);
 

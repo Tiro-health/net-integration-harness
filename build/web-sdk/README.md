@@ -23,7 +23,7 @@ The package lives on **GitHub Packages** (private), so npm needs a token with
 gh auth refresh -h github.com -s read:packages    # one-time, adds the scope
 cd build/web-sdk
 export NODE_AUTH_TOKEN=$(gh auth token)
-npm ci
+npm ci --ignore-scripts
 node copy-bundle.mjs
 ```
 

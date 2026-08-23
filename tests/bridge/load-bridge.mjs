@@ -41,10 +41,11 @@ export const plain = value => (value === undefined ? undefined : JSON.parse(JSON
  * @param {boolean} [opts.host] install a stub WebView2 transport
  * @param {"ok"|"fail"} [opts.sdkLoad] how the injected web-sdk script "loads" (GH-60)
  * @param {string} [opts.sdkVersion] static version the loaded element class exposes (GH-61)
- * @param {object} [opts.predefinedElement] pre-registers tiro-form-filler, as a leftover page script tag would
+ * @param {object} [opts.predefinedElement] pre-registers tiro-form-filler, as an already-executed page script would
+ * @param {boolean} [opts.pageSdkScriptTag] a not-yet-executed page-level SDK <script> tag is present in the DOM
  * @returns {Promise<{window: any, document: any, warnings: string[]}>}
  */
-export async function loadBridge(formFillers, { host = false, sdkLoad = "ok", sdkVersion, predefinedElement } = {}) {
+export async function loadBridge(formFillers, { host = false, sdkLoad = "ok", sdkVersion, predefinedElement, pageSdkScriptTag = false } = {}) {
     const warnings = [];
     const errors = [];
     let uuidCounter = 0;
@@ -74,7 +75,11 @@ export async function loadBridge(formFillers, { host = false, sdkLoad = "ok", sd
         querySelectorAll(selector) {
             return selector === "tiro-form-filler" ? formFillers : [];
         },
-        querySelector() { return null; },
+        querySelector(selector) {
+            if (pageSdkScriptTag && typeof selector === "string" && selector.includes("tiro-web-sdk"))
+                return { src: "https://cdn.tiro.health/sdk/v0.2.1/tiro-web-sdk.iife.js" };
+            return null;
+        },
         createElement() { return { setAttribute() {} }; },
         // Simulates script loading: the web-sdk script "defines" the element class
         // (with the configured static version) then fires onload — or onerror when
