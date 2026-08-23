@@ -616,7 +616,7 @@ The harness **embeds** the exact `tiro-web-sdk` version it was validated against
 - **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) needs `submit({ status })` (web-sdk >= 0.3.0) — the embedded SDK satisfies this. On the old page-pinned model, an older SDK silently **finalized** instead of saving a draft; that failure mode can no longer occur.
 - **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** needs [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) (web-sdk >= 0.3.2) — likewise satisfied by the embedded SDK.
 
-A page that still loads its own `tiro-web-sdk` copy collides with the embedded one: the bridge skips injection, logs an error, and fires `tiro-sdk-collision` — remove the script tag. The `build/bridge-contract/` type-check gates every PR and release against the pinned version; the version story for integrators is one line: **pin the harness NuGet, done**.
+A page that still loads its own `tiro-web-sdk` copy collides with the embedded one: the bridge skips injection, fires `tiro-sdk-collision`, and the viewer **refuses the session** — `SetContextAsync` throws `WebSdkLoadException` — remove the script tag. The same refusal applies when the embedded SDK fails to load (`tiro-sdk-error`), so a broken environment surfaces as a clear exception instead of a blank form. The `build/bridge-contract/` type-check gates every PR and release against the pinned version; the version story for integrators is one line: **pin the harness NuGet, done**.
 
 ## Troubleshooting
 

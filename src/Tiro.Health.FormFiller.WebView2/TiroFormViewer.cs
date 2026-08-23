@@ -112,6 +112,10 @@ namespace Tiro.Health.FormFiller.WebView2
         private readonly TaskCompletionSource<bool> _handshakeReceivedSource =
             new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        // Terminal web-sdk failure (GH-61). Also faulted into the TCS, but kept as a
+        // field so a bad handshake AFTER a successful one still fails later operations.
+        private volatile Exception _webSdkFailure;
+
         // Telemetry session — one per viewer lifetime. All transactions started via
         // _session share the same trace id, so Sentry's trace view groups them.
         private ITelemetrySession _session;
@@ -362,6 +366,11 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 await _browser.InitializeAsync();
 
+                // Pre-warm the ~6MB SDK extraction off the UI thread so the first
+                // SetContextAsync doesn't pay it synchronously. Failures are cached by
+                // the Lazy and resurface with context at NavigateToContent.
+                _ = Task.Run(() => { try { _ = WebSdkAssets.FolderPath; } catch { /* rethrown on use */ } });
+
                 // Inject host telemetry config as window.__tiroSentryConfig before the page
                 // runs any of its own scripts. The bridge below consumes this to bootstrap
                 // its Sentry SDK with the host's DSN/env/release and to set the sentry-trace
@@ -488,21 +497,25 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void OnHandshakeReceived(object sender, HandshakeReceivedEventArgs e)
         {
-            var reported = ExtractClientVersion(e?.Payload);
+            var (reported, source) = ExtractClient(e?.Payload);
             PageWebSdkVersion = reported;
 
-            // GH-61: the page must run exactly the embedded bundle. Armed only when the
-            // pinned SDK exposes a static version (build/web-sdk expectedElementVersion).
-            var expected = ExpectedWebSdkElementVersion;
-            if (expected != null && !string.Equals(reported, expected, StringComparison.Ordinal))
+            // A refused session is terminal: keep answering repeat handshakes with the
+            // same error so the page never sees a success ack (tiro-connected).
+            var existing = _webSdkFailure;
+            if (existing != null) throw existing;
+
+            var failure = EvaluateWebSdkReport(reported, source);
+            if (failure != null)
             {
-                var mismatch = new WebSdkVersionMismatchException(expected, reported);
-                _telemetry.CaptureException(mismatch);
-                _session?.AddBreadcrumb("lifecycle", "Handshake rejected: " + mismatch.Message);
-                // Awaiters of the handshake (SetContextAsync, SendFormRequestSubmitAsync)
-                // throw instead of proceeding; state stays Initializing.
-                _handshakeReceivedSource.TrySetException(mismatch);
-                return;
+                _webSdkFailure = failure;
+                _telemetry.CaptureException(failure);
+                _session?.AddBreadcrumb("lifecycle", "Handshake rejected: " + failure.Message);
+                // Awaiters of the handshake throw instead of proceeding; state stays
+                // Initializing. The rethrow turns the ack into an error response so the
+                // page fires tiro-disconnected rather than tiro-connected.
+                _handshakeReceivedSource.TrySetException(failure);
+                throw failure;
             }
 
             TryTransition(TiroFormViewerState.Initializing, TiroFormViewerState.Ready);
@@ -511,15 +524,28 @@ namespace Tiro.Health.FormFiller.WebView2
                 reported == null ? "Handshake received" : $"Handshake received (tiro-web-sdk {reported})");
         }
 
-        private static string ExtractClientVersion(RequestPayload payload)
+        // GH-61: collision/load-error always refuse the session; a version mismatch
+        // refuses only when armed (build/web-sdk expectedElementVersion non-null).
+        private Exception EvaluateWebSdkReport(string reported, string source)
         {
-            if (payload?.ExtraFields == null) return null;
+            if (source == "collision" || source == "error")
+                return new WebSdkLoadException(source);
+            var expected = ExpectedWebSdkElementVersion;
+            if (expected != null && !string.Equals(reported, expected, StringComparison.Ordinal))
+                return new WebSdkVersionMismatchException(expected, reported);
+            return null;
+        }
+
+        private static (string Version, string Source) ExtractClient(RequestPayload payload)
+        {
+            if (payload?.ExtraFields == null) return (null, null);
             if (!payload.ExtraFields.TryGetValue("client", out var client)
-                || client.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
-            return client.TryGetProperty("version", out var version)
-                && version.ValueKind == System.Text.Json.JsonValueKind.String
-                ? version.GetString()
-                : null;
+                || client.ValueKind != System.Text.Json.JsonValueKind.Object) return (null, null);
+            string Str(string name) =>
+                client.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? v.GetString()
+                    : null;
+            return (Str("version"), Str("source"));
         }
 
         private void OnCloseApplication(object sender, CloseApplicationEventArgs e)
@@ -783,6 +809,15 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         private async Task WaitForHandshakeAsync(ITelemetrySpan sendSpan, CancellationToken linkedToken, CancellationToken userToken, string timeoutMessage)
         {
+            // A terminal web-sdk failure beats a completed TCS: a bad handshake after a
+            // successful one cannot fault the one-shot TCS, but must still fail here.
+            var webSdkFailure = _webSdkFailure;
+            if (webSdkFailure != null)
+            {
+                sendSpan?.Finish(TelemetrySpanStatus.InternalError);
+                throw webSdkFailure;
+            }
+
             try
             {
                 await _handshakeReceivedSource.Task.WaitAsync(linkedToken);

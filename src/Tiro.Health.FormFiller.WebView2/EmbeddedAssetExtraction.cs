@@ -37,6 +37,29 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
+        /// Publishes an embedded resource into <paramref name="folder"/>. The fast path
+        /// compares stream length only, so warm starts never materialize the bytes.
+        /// </summary>
+        internal static string PublishResource(Assembly asm, string resourceName, string folder, string fileName)
+        {
+            using (var stream = asm.GetManifestResourceStream(resourceName))
+            {
+                if (stream == null)
+                    throw new InvalidOperationException("Embedded resource not found: " + resourceName);
+
+                var targetInfo = new FileInfo(Path.Combine(folder, fileName));
+                if (targetInfo.Exists && targetInfo.Length == stream.Length)
+                    return folder;
+
+                using (var ms = new MemoryStream((int)stream.Length))
+                {
+                    stream.CopyTo(ms);
+                    return Publish(ms.ToArray(), folder, fileName);
+                }
+            }
+        }
+
+        /// <summary>
         /// Publishes <paramref name="content"/> as <paramref name="fileName"/> inside
         /// <paramref name="folder"/> and returns the folder.
         /// </summary>

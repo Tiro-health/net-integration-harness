@@ -42,8 +42,8 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             ""payload"": {{ {clientJson} }}
         }}";
 
-        private static string WithClient(string version) =>
-            $@"""client"": {{ ""name"": ""tiro-web-sdk"", ""version"": {(version == null ? "null" : $"\"{version}\"")} }}";
+        private static string WithClient(string version, string source = "embedded") =>
+            $@"""client"": {{ ""name"": ""tiro-web-sdk"", ""version"": {(version == null ? "null" : $"\"{version}\"")}, ""source"": ""{source}"" }}";
 
         private async Task<Task> StartSetContextAsync()
         {
@@ -102,6 +102,59 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             await Assert.ThrowsExceptionAsync<WebSdkVersionMismatchException>(
                 () => setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token));
+        }
+
+        [TestMethod]
+        public async Task CollisionSource_RefusesSession_EvenUnarmed()
+        {
+            // Page loaded its own SDK copy — refused regardless of version arming.
+            var setContext = await StartSetContextAsync();
+            _browser.RaiseMessageReceived(Handshake("hs-1", WithClient("0.3.2", source: "collision")));
+
+            await Assert.ThrowsExceptionAsync<WebSdkLoadException>(
+                () => setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token));
+        }
+
+        [TestMethod]
+        public async Task ErrorSource_RefusesSession_EvenUnarmed()
+        {
+            // Embedded SDK failed to load — the form can never render; fail, don't blank.
+            var setContext = await StartSetContextAsync();
+            _browser.RaiseMessageReceived(Handshake("hs-1", WithClient(null, source: "error")));
+
+            await Assert.ThrowsExceptionAsync<WebSdkLoadException>(
+                () => setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token));
+        }
+
+        [TestMethod]
+        public async Task RefusedHandshake_AcksWithErrorResponse_NotSuccess()
+        {
+            // The page must see an error ack (tiro-disconnected), never tiro-connected.
+            var setContext = await StartSetContextAsync();
+            _browser.RaiseMessageReceived(Handshake("hs-1", WithClient("0.3.2", source: "collision")));
+            try { await setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token); }
+            catch (WebSdkLoadException) { /* expected */ }
+
+            var ack = _browser.PostedMessages.Find(m => m.Contains("hs-1"));
+            Assert.IsNotNull(ack, "The handshake must still be answered.");
+            StringAssert.Contains(ack, "\"error\"");
+        }
+
+        [TestMethod]
+        public async Task LateMismatch_AfterSuccessfulHandshake_FailsSubsequentOperations()
+        {
+            _viewer.ExpectedWebSdkVersionOverride = "0.4.0";
+
+            var setContext = await StartSetContextAsync();
+            _browser.RaiseMessageReceived(Handshake("hs-1", WithClient("0.4.0")));
+            await setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+            // A second, mismatching handshake (page reload with a foreign bundle) can't
+            // fault the one-shot TCS but must still fail everything after it.
+            _browser.RaiseMessageReceived(Handshake("hs-2", WithClient("0.2.1")));
+
+            await Assert.ThrowsExceptionAsync<WebSdkVersionMismatchException>(
+                () => _viewer.SendFormRequestSubmitAsync());
         }
 
         [TestMethod]

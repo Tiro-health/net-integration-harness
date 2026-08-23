@@ -475,29 +475,34 @@
     // Must match TiroFormViewer.SdkVirtualHostName — hardcoded both sides.
     const SDK_URL = "https://tiro-sdk.example/tiro-web-sdk.iife.js";
 
+    // Resolves with the SDK source reported at handshake: "embedded" | "collision"
+    // | "error". The host refuses the session on the latter two (GH-61).
     function bootSdk() {
-        // Foreign definition = the page still carries its own SDK script tag.
-        // Don't inject a second copy (double customElements.define throws); wire
-        // the foreign element so the handshake and its version report still happen.
-        if (typeof customElements !== "undefined" && customElements.get("tiro-form-filler")) {
+        // Foreign definition or a page-level SDK script tag = the page still loads
+        // its own SDK. Don't inject a second copy (double customElements.define
+        // throws); wire what's there so the handshake report reaches the host.
+        const foreignElement = typeof customElements !== "undefined" && customElements.get("tiro-form-filler");
+        const foreignTag = typeof document.querySelector === "function"
+            && document.querySelector('script[src*="tiro-web-sdk"]');
+        if (foreignElement || foreignTag) {
             console.error(
-                "[bridge] <tiro-form-filler> is already defined by a script the page loaded itself. " +
+                "[bridge] the page loads its own tiro-web-sdk copy. " +
                 "Remove the tiro-web-sdk <script> tag from your index.html — the harness embeds and " +
                 "serves its own validated copy (GH-60).");
             fire("tiro-sdk-collision");
-            return Promise.resolve(false);
+            return Promise.resolve("collision");
         }
         return new Promise(resolve => {
             const script = document.createElement("script");
             script.src = SDK_URL;
             // No crossorigin attribute: the virtual-host mapping is DenyCors, which a
             // plain no-cors script load passes and a CORS-mode load would not.
-            script.onload = () => resolve(true);
+            script.onload = () => resolve("embedded");
             script.onerror = () => {
                 console.error("[bridge] failed to load the embedded tiro-web-sdk from " + SDK_URL +
                     " — the form cannot render. Is the page hosted by the .NET harness?");
                 fire("tiro-sdk-error");
-                resolve(false);
+                resolve("error");
             };
             document.head.appendChild(script);
         });
@@ -509,7 +514,7 @@
 
     function bootstrap() {
         // SDK loads before wiring, so elements are upgraded when wireFormFiller runs.
-        Promise.all([bootSentry(), bootSdk()]).then(() => {
+        Promise.all([bootSentry(), bootSdk()]).then(([, sdkSource]) => {
             wireAllFormFillers();
 
             const transportOk = SmartWebMessaging.init();
@@ -530,6 +535,7 @@
                 const client = {
                     name: "tiro-web-sdk",
                     version: cls && typeof cls.version === "string" ? cls.version : null,
+                    source: sdkSource,
                 };
                 SmartWebMessaging.retryHandshake({ client }).then(
                     () => fire("tiro-connected"),

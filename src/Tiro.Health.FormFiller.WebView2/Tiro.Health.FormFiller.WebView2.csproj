@@ -52,10 +52,22 @@
   </ItemGroup>
 
   <!-- A package without the pinned bundle is a broken control (no-opt-out embedding,
-       GH-60), so a build without it must fail loudly rather than skip silently. -->
+       GH-60), so a build with a missing OR stale staged bundle must fail loudly. -->
   <Target Name="EnsureWebSdkBundleStaged" BeforeTargets="BeforeBuild;GenerateNuspec">
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)\WebAssets\tiro-web-sdk.iife.js') Or !Exists('$(MSBuildProjectDirectory)\WebAssets\web-sdk.version.json')"
+    <PropertyGroup>
+      <_WebSdkManifest>$(MSBuildProjectDirectory)\WebAssets\web-sdk.version.json</_WebSdkManifest>
+      <_WebSdkPinFile>$(MSBuildProjectDirectory)\..\..\build\web-sdk\package.json</_WebSdkPinFile>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\WebAssets\tiro-web-sdk.iife.js') Or !Exists('$(_WebSdkManifest)')"
            Text="The pinned tiro-web-sdk bundle is not staged. Run: cd build/web-sdk &amp;&amp; npm ci &amp;&amp; node copy-bundle.mjs (needs GitHub Packages read auth — see build/web-sdk/README.md). GH-59/GH-60." />
+    <PropertyGroup Condition="Exists('$(_WebSdkManifest)') And Exists('$(_WebSdkPinFile)')">
+      <_WebSdkPinned>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkPinFile)')), '&quot;@tiro-health/web-sdk&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkPinned>
+      <_WebSdkStaged>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkManifest)')), '&quot;version&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkStaged>
+    </PropertyGroup>
+    <!-- Stale staging is self-consistent (bundle + manifest agree with each other),
+         so even the GH-61 handshake assert cannot catch it — only this can. -->
+    <Error Condition="Exists('$(_WebSdkManifest)') And Exists('$(_WebSdkPinFile)') And '$(_WebSdkPinned)' != '$(_WebSdkStaged)'"
+           Text="Staged web-sdk bundle is v$(_WebSdkStaged) but build/web-sdk pins v$(_WebSdkPinned). Re-run: cd build/web-sdk &amp;&amp; npm ci &amp;&amp; node copy-bundle.mjs. GH-59." />
   </Target>
 
 </Project>

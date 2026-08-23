@@ -17,9 +17,8 @@ namespace Tiro.Health.FormFiller.WebView2
         private static string Extract()
         {
             var asm = typeof(DefaultWebContent).Assembly;
-            var content = EmbeddedAssetExtraction.ReadResource(asm, ResourceName);
             var folder = EmbeddedAssetExtraction.AssemblyVersionFolder(asm);
-            return EmbeddedAssetExtraction.Publish(content, folder, IndexFileName);
+            return EmbeddedAssetExtraction.PublishResource(asm, ResourceName, folder, IndexFileName);
         }
     }
 }

@@ -6,7 +6,8 @@ namespace Tiro.Health.FormFiller.WebView2
     /// The page's <c>&lt;tiro-form-filler&gt;</c> reported a version different from the
     /// bundle embedded in this package (GH-61) — a stale WebView2 cache, a leftover
     /// SDK script tag, or a foreign bundle. The viewer refuses the session rather
-    /// than run an unvalidated pairing.
+    /// than run an unvalidated pairing. Terminal for this viewer: the served bundle
+    /// cannot change within a process, so fix the page/cache and create a new viewer.
     /// </summary>
     public class WebSdkVersionMismatchException : InvalidOperationException
     {

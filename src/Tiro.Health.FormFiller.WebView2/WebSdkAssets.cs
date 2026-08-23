@@ -40,11 +40,10 @@ namespace Tiro.Health.FormFiller.WebView2
         private static string Extract()
         {
             var asm = typeof(WebSdkAssets).Assembly;
-            var content = EmbeddedAssetExtraction.ReadResource(asm, BundleResourceName);
-            // Own subfolder (not DefaultWebContent's): the SDK is served on its own
-            // virtual host regardless of whether the consumer supplies WebContentFolder.
-            var folder = Path.Combine(EmbeddedAssetExtraction.AssemblyVersionFolder(asm), "web-sdk");
-            return EmbeddedAssetExtraction.Publish(content, folder, BundleFileName);
+            // Subfolder keyed by the SDK version: a pin switch can never be satisfied by
+            // a stale byte-length-equal bundle left from another pin.
+            var folder = Path.Combine(EmbeddedAssetExtraction.AssemblyVersionFolder(asm), "web-sdk", Version);
+            return EmbeddedAssetExtraction.PublishResource(asm, BundleResourceName, folder, BundleFileName);
         }
 
         private static VersionManifest ReadManifest()
