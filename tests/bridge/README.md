@@ -75,6 +75,17 @@ and host→page messages can be injected with `receive(envelope)`. With a transp
 the bridge enters its handshake retry loop; the sandbox's `setTimeout` is unref'd so those
 timers can't hold the test process open.
 
+`sdk-boot.test.mjs` (**GH-60**) pins the bridge-owned SDK injection: the embedded bundle
+is injected (no `crossorigin`, per the DenyCors mapping) and awaited before wiring; a
+foreign pre-defined element or a leftover page-level SDK script tag skips injection and
+fires `tiro-sdk-collision`; a load failure fires `tiro-sdk-error` but still handshakes so
+the host refuses loudly instead of timing out; a refused handshake (error ack) rejects
+immediately rather than after the 30s retry window.
+
+`handshake-version.test.mjs` (**GH-61**) pins the handshake report the host asserts on:
+`client.version` (the element's static version, `null` when absent) and `client.source`
+(`embedded` / `collision` / `error`).
+
 `launch-context.test.mjs` is the regression suite for **GH-48**: launch context was
 dropped whenever the host's `SdcEndpointAddress` differed from the tiro-web-sdk's
 built-in default, so `$populate` went out with no `context` parameters and every

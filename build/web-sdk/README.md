@@ -27,12 +27,16 @@ npm ci --ignore-scripts
 node copy-bundle.mjs
 ```
 
-Building `Tiro.Health.FormFiller.WebView2` without staging **fails hard** with
-a message pointing here. That is deliberate: under the no-opt-out embedding
-design a package without the bundle is a broken control, so there is no silent
-skip. In CI the ephemeral `GITHUB_TOKEN` (with `permissions: packages: read`)
-does the same; the package must grant this repo Actions read access
-(GitHub Packages → package → *Manage Actions access*).
+Building `Tiro.Health.FormFiller.WebView2` **fails hard** when the bundle is
+missing *or* staged from a different version than the pin — re-run
+`copy-bundle.mjs` after every pin change. Stale staging is self-consistent
+(bundle and manifest agree with each other), so nothing downstream can catch
+it. Under the no-opt-out embedding design a package without the right bundle is
+a broken control, so there is no silent skip.
+
+CI stages via `.github/actions/stage-web-sdk` using the ephemeral `GITHUB_TOKEN`
+(`permissions: packages: read`); the package must grant this repo Actions read
+access (GitHub Packages → package → *Manage Actions access*).
 
 ## Bumping the pin
 

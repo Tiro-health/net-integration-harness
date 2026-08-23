@@ -481,7 +481,8 @@
     // ============================================================
 
     // The embedded, validated @tiro-health/web-sdk served by the host (GH-60).
-    // Must match TiroFormViewer.SdkVirtualHostName — hardcoded both sides.
+    // Must match WebSdkAssets.VirtualHostName — pinned together by
+    // TestEmbeddedWebAssets.Bridge_LoadsSdkFromTheMappedVirtualHost.
     const SDK_URL = "https://tiro-sdk.example/tiro-web-sdk.iife.js";
 
     // Resolves with the SDK source reported at handshake: "embedded" | "collision"
