@@ -186,6 +186,24 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
+        public async Task Requests_PreserveAConsumerUserAgentAddedWithoutValidation()
+        {
+            // TryAddWithoutValidation is a common idiom precisely because it bypasses the
+            // UA parser — such a value never appears in the typed UserAgent collection, so
+            // copying that collection alone would silently drop it.
+            var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"resourceType":"OperationOutcome","issue":[]}""");
+            var http = new HttpClient(handler);
+            http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Acme EHR v7.3 [prod]");
+            var client = new SdcClient(BaseAddress, http);
+
+            await client.ValidateAsync(SampleResponse());
+
+            var sent = string.Join(" ", handler.LastRequest!.Headers.GetValues("User-Agent"));
+            StringAssert.Contains(sent, "Acme EHR v7.3 [prod]");
+            StringAssert.Contains(sent, "Tiro.Health.FormSdk.Client/");
+        }
+
+        [TestMethod]
         public async Task SharedHttpClient_IsNotMutatedByTheUserAgent()
         {
             var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"resourceType":"OperationOutcome","issue":[]}""");
