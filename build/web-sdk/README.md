@@ -17,12 +17,19 @@ integrators or customers make (see the decision record in GH-64).
 ## Staging the bundle (required before any build)
 
 The package lives on **GitHub Packages** (private), so npm needs a token with
-`read:packages`:
+`read:packages`. Put it in your **user-level** `~/.npmrc` once — the `.npmrc`
+files in this repo deliberately carry no credentials (see the note in
+`.npmrc`):
 
 ```sh
-gh auth refresh -h github.com -s read:packages    # one-time, adds the scope
+gh auth refresh -h github.com -s read:packages                        # one-time, adds the scope
+npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"    # one-time, writes ~/.npmrc
+```
+
+Then, after every pin change:
+
+```sh
 cd build/web-sdk
-export NODE_AUTH_TOKEN=$(gh auth token)
 npm ci --ignore-scripts
 node copy-bundle.mjs
 ```
