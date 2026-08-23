@@ -278,10 +278,10 @@ Public Class EhrShell
     End Sub
 
     ' Save the form as a draft without finalizing. The "save-draft" intent maps to
-    ' the frontend's submit({ status: "in-progress" }) (requires tiro-web-sdk >= 0.3.0;
-    ' older versions ignore the option and finalize instead). The QR round-trips back
-    ' through OnFormSubmitted with status In-progress, where we persist it but keep the
-    ' session alive so the doctor can keep filling.
+    ' the frontend's submit({ status: "in-progress" }); the harness embeds an SDK
+    ' that supports it (GH-60), so no page-side version floor applies. The QR
+    ' round-trips back through OnFormSubmitted with status In-progress, where we
+    ' persist it but keep the session alive so the doctor can keep filling.
     Private Async Sub SaveDraftButton_Click(sender As Object, e As EventArgs) Handles SaveDraftButton.Click
         If _viewer Is Nothing Then Return
         Await _viewer.SendFormRequestSubmitAsync(intent:="save-draft")

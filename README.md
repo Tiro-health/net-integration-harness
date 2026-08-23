@@ -179,8 +179,8 @@ run while the form is still dirty, guard with a flag set right before that `Me.C
 `Form1_FormClosing` doesn't re-prompt on its own close — see
 `samples/Tiro.Health.FormFiller.WebView2.ExtractSample/Form1.vb` for the full pattern.
 
-> `IsDirty` needs a frontend that fires `tiro-dirty-change`, which reached the stable
-> `sdk/` channel in `tiro-web-sdk` 0.3.2 — so that sample pins `sdk/v0.3.2`. See
+> `IsDirty` needs a frontend that fires `tiro-dirty-change` (`tiro-web-sdk` >= 0.3.2).
+> The harness embeds an SDK that satisfies this — see
 > [Frontend version compatibility](#frontend-version-compatibility).
 
 `SetContextAsync` returns once the embedded page has handshaken and acknowledged `sdc.displayQuestionnaire`. Pass a `CancellationToken` if the caller may abandon early; in-flight operations also cancel when the viewer is disposed.
@@ -200,9 +200,9 @@ Await TiroFormViewer.SetContextAsync(
 
 ## Shipping your own index.html
 
-The library ships a working default `index.html` so the samples run out-of-the-box, but for production you'll want to host your own page. The bridge and SMART Web Messaging plumbing are auto-injected by the host (regardless of which page is loaded), so your `index.html` stays UI-only — no SDK init, no transport setup, no Sentry CDN tag.
+The library ships a working default `index.html` so the samples run out-of-the-box, but for production you'll want to host your own page. The bridge, the SMART Web Messaging plumbing, **and the `tiro-web-sdk` itself** are auto-injected by the host (regardless of which page is loaded), so your `index.html` stays purely branding — no SDK script tag, no SDK init, no transport setup, no Sentry CDN tag.
 
-Only two things are non-negotiable: the `tiro-web-sdk` `<script>` tag and a `<tiro-form-filler id="form-filler">` element. Everything else (endpoints, `questionnaire`, `launch-context`) is applied at runtime by the host — don't bake it into the page.
+Only one thing is non-negotiable: a `<tiro-form-filler id="form-filler">` element. Everything else (endpoints, `questionnaire`, `launch-context`) is applied at runtime by the host — don't bake it into the page. Do **not** add a `tiro-web-sdk` `<script>` tag: the harness embeds and serves the exact SDK version it was validated against (see [Frontend version compatibility](#frontend-version-compatibility)); a page-loaded copy would collide with it and is reported as an error.
 
 1. Start from this minimal starter template. (You can also get it by running any sample and clicking **Copy starter template** in the default page's yellow banner, but the canonical copy is right here — no need to run anything.)
    ```html
@@ -211,11 +211,8 @@ Only two things are non-negotiable: the `tiro-web-sdk` `<script>` tag and a `<ti
    <head>
        <meta charset="UTF-8">
        <title>Tiro Form Filler</title>
-       <!-- Tracks the latest SDK. If you pin the .NET integration harness (NuGet) to a fixed
-            version, pin a matching tiro-web-sdk version here too (e.g. sdk/vX.Y.Z/) instead of
-            `latest`, so a future frontend release can't drift the bridge contract. Save-draft
-            needs tiro-web-sdk >= 0.3.0. -->
-       <script src="https://cdn.tiro.health/sdk/latest/tiro-web-sdk.iife.js" defer></script>
+       <!-- No SDK script tag: the harness embeds the validated tiro-web-sdk and the
+            bridge injects it (GH-60). Do not add one — the page is branding only. -->
        <style>
            html, body { margin: 0; height: 100%; }
            tiro-form-filler { display: block; height: 100%; }
@@ -227,7 +224,7 @@ Only two things are non-negotiable: the `tiro-web-sdk` `<script>` tag and a `<ti
    </html>
    ```
    For fuller, checked-in examples, see the samples: `ExtractSample/WebContent/index.html` (a lightly-branded single page) and the EhrShell sample's `WebContent/Form/index.html`. Note you don't need a second page for read-only viewing — set the viewer's `ReadOnly` property instead (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host)).
-2. Save it into your project, e.g. `WebContent/index.html`, and tweak it — branding, the `tiro-web-sdk` version, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) below) — don't hardcode them in the page.
+2. Save it into your project, e.g. `WebContent/index.html`, and tweak it — branding, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) below) — don't hardcode them in the page. If the page sets a Content-Security-Policy, `script-src` must allow the SDK's serving origin `https://tiro-sdk.example` (and `frame-src`/defaults per your policy).
 3. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
    ```xml
    <ItemGroup>
@@ -570,7 +567,7 @@ WinForms demos.
   - **Read-only narrative preview** — single-clicking a saved report renders its narrative in a `RichTextBox` (RTF when the SDC's `$generate-narrative` produced one, plain-text fallback otherwise — both via `QuestionnaireResponseHelper`). The preview is decoupled from session state, so the doctor can peek at older reports while a form is in progress.
   - **Reopen a report — edit or read-only** — double-clicking a report (or **Open this report**) prompts how to open it. **Edit** resumes filling it in the main shell's Form tab with the saved QR as `initialResponse`, reusing its report id (blocked while another session is live, to avoid orphaning the active viewer). **Read-only** spawns a separate top-level `ReportConsultationForm` with its own `TiroFormViewerR5` — leaving any live session untouched (showcasing that multiple viewer instances coexist) — setting `ReadOnly = True` so the form renders view-only off the *same* `WebContent/Form/index.html` the editable session uses.
   - **Tabbed embedding with dynamic Form tab** — the Form tab only exists while a session is alive (added to / removed from `TabControl.TabPages` on launch / dispose). A context banner above the form viewer shows what's being filled. Switching tabs while filling *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit **Close session** button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
-  - **Custom `index.html` + host-side role config** — bundles a single `WebContent/Form/index.html`, shared by the editable session and the read-only consultation window. Illustrates where the line sits: the host API owns what the EHR is authoritative about (endpoints, launch context, `ReadOnly`), the page owns static presentation (branding, SDK version, `auto-collapse` / `compact-grouping` / `density-mode`). Roles that differ only in editability share one page instead of forking it. See [Shipping your own index.html](#shipping-your-own-indexhtml) and [Rendering a form read-only](#rendering-a-form-read-only).
+  - **Custom `index.html` + host-side role config** — bundles a single `WebContent/Form/index.html`, shared by the editable session and the read-only consultation window. Illustrates where the line sits: the host API owns what the EHR is authoritative about (endpoints, launch context, `ReadOnly`), the page owns static presentation (branding, `auto-collapse` / `compact-grouping` / `density-mode`). Roles that differ only in editability share one page instead of forking it. See [Shipping your own index.html](#shipping-your-own-indexhtml) and [Rendering a form read-only](#rendering-a-form-read-only).
 - All three: `.NET 4.8` (VB.NET, old-style project format).
 
 ### `Tiro.Health.SmartWebMessaging.Tests` / `Tiro.Health.FormFiller.WebView2.Tests` / `Tiro.Health.FormSdk.Client.Tests`
@@ -605,25 +602,21 @@ The JS that owns the page side of the protocol (`tiro-swm-bridge.js`) ships embe
 
 Reference for integrators customizing their `index.html`. The auto-injected bridge exposes the following to the page:
 
-- **`<tiro-form-filler>`** (from `tiro-web-sdk.iife.js`) — auto-wired by the bridge: questionnaires arrive via the `questionnaire` attribute, user submissions come back via the `tiro-submit` event, and the bridge takes care of marshalling them onto the protocol.
+- **`<tiro-form-filler>`** (from the auto-injected `tiro-web-sdk`) — auto-wired by the bridge: questionnaires arrive via the `questionnaire` attribute, user submissions come back via the `tiro-submit` event, and the bridge takes care of marshalling them onto the protocol.
 - **`window.tiro.cancel()`** — call from a Cancel button to send `ui.done` to the host.
-- **`document` `CustomEvent`s** for status hooks: `tiro-connected`, `tiro-disconnected`, `tiro-submitted`, `tiro-submit-error`, `tiro-cancelled`. Listen if you want a status bar; ignore if you don't.
+- **`document` `CustomEvent`s** for status hooks: `tiro-connected`, `tiro-disconnected`, `tiro-submitted`, `tiro-submit-error`, `tiro-cancelled`, plus `tiro-sdk-error`/`tiro-sdk-collision` for SDK-loading problems. Listen if you want a status bar; ignore if you don't.
 - **`window.SmartWebMessaging.{sendRequest, sendEvent, on}`** — lower-level API for advanced flows that don't fit the auto-wired form-filler model.
 
-The integrator owns the `tiro-web-sdk.iife.js` `<script>` tag in their `index.html`.
+The page carries **no** `tiro-web-sdk` script tag — the harness injects the SDK itself (next section).
 
 ### Frontend version compatibility
 
-The harness is version-agnostic about `tiro-web-sdk` — you choose the `<script>` version.
+The harness **embeds** the exact `tiro-web-sdk` version it was validated against (pinned in `build/web-sdk/package.json`) and serves it to the page itself — there is no SDK version to choose, in the page or anywhere else. Bridge and element ship and are CI-validated as one pair, so the historical skew hazards are gone by construction:
 
-**Pinning recommendation:** if you pin the .NET integration harness (NuGet package) to a fixed version, pin a matching `tiro-web-sdk` version in your `index.html` too (`sdk/vX.Y.Z/`) rather than tracking floating `sdk/latest`. A pinned harness ships a fixed bridge that was validated against a specific frontend (each harness release records the version it validated against); tracking `latest` lets a future frontend release drift the bridge contract out from under your pinned bridge. Track `latest` only if you also track the latest harness.
+- **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) needs `submit({ status })` (web-sdk >= 0.3.0) — the embedded SDK satisfies this. On the old page-pinned model, an older SDK silently **finalized** instead of saving a draft; that failure mode can no longer occur.
+- **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** needs [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) (web-sdk >= 0.3.2) — likewise satisfied by the embedded SDK.
 
-Two floors to know:
-
-- **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) requires **`tiro-web-sdk` >= 0.3.0**. It maps to the frontend's `submit({ status: "in-progress" })`, an option added in 0.3.0. On older versions the option is ignored and the form **finalizes** instead of saving a draft. Plain finalize (`SendFormRequestSubmitAsync()`) works on all versions.
-- **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** requires [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) on `<tiro-form-filler>`, which requires **`tiro-web-sdk` >= 0.3.2** on the stable `sdk/` channel. (It first appeared in the `0.3.1-dev.*` pre-releases; 0.3.1 itself never deployed, so 0.3.2 is the first stable version carrying it.) On versions without it the bridge's listener is simply never invoked — the frontend never fires the event — so `IsDirty` silently stays `false` rather than erroring. There is no way to detect this from the page: `addEventListener` succeeds against every version.
-
-The `build/bridge-contract/` type-check guards this contract against the live `tiro-web-sdk@latest`; see its README.
+A page that still loads its own `tiro-web-sdk` copy collides with the embedded one: the bridge skips injection, logs an error, and fires `tiro-sdk-collision` — remove the script tag. The `build/bridge-contract/` type-check gates every PR and release against the pinned version; the version story for integrators is one line: **pin the harness NuGet, done**.
 
 ## Troubleshooting
 

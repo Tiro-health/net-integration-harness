@@ -93,6 +93,11 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private const string VirtualHostName = "appassets.example"; // https://github.com/MicrosoftEdge/WebView2Feedback/issues/2381
 
+        // Serves the embedded web-sdk bundle (GH-60) — separate host because
+        // VirtualHostName can map to the consumer's folder. Must match SDK_URL
+        // in WebAssets/tiro-swm-bridge.js.
+        private const string SdkVirtualHostName = "tiro-sdk.example";
+
         // Tracks if WebView is initialized
         private Task _initializationTask;
 
@@ -403,6 +408,9 @@ namespace Tiro.Health.FormFiller.WebView2
                 : DefaultWebContent.FolderPath;
 
             _browser.MapVirtualHost(VirtualHostName, contentFolder);
+            // Embedded web-sdk on its own host, mapped before Navigate. DenyCors is fine
+            // for a plain <script src>; the bridge must not add a crossorigin attribute.
+            _browser.MapVirtualHost(SdkVirtualHostName, WebSdkAssets.FolderPath);
             _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
         }
 

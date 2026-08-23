@@ -7,12 +7,16 @@
  * Messaging, doesn't know about WebView2 transport.
  *
  * What the bridge exposes to the page:
+ *   - tiro-web-sdk auto-injected            — the bridge loads the embedded, validated
+ *                                              @tiro-health/web-sdk bundle from the host
+ *                                              (GH-60); the page has NO SDK script tag
  *   - window.tiro.cancel()                  — fires ui.done (user closed without submit)
  *   - <tiro-form-filler> auto-wired         — bridge sets questionnaire on display,
  *                                              forwards user submissions to host
  *   - document CustomEvents (status hooks)  — tiro-connected, tiro-submitted,
  *                                              tiro-submit-error, tiro-cancelled,
- *                                              tiro-disconnected
+ *                                              tiro-disconnected, tiro-sdk-error,
+ *                                              tiro-sdk-collision
  *   - window.SmartWebMessaging              — lower-level API for advanced consumers
  *                                              (sendRequest/sendEvent/on); the documented
  *                                              path is the hooks above.
@@ -464,11 +468,48 @@
     }
 
     // ============================================================
-    // 6. Bootstrap on DOMContentLoaded
+    // 6. Embedded web-sdk injection (GH-60)
+    // ============================================================
+
+    // The embedded, validated @tiro-health/web-sdk served by the host (GH-60).
+    // Must match TiroFormViewer.SdkVirtualHostName — hardcoded both sides.
+    const SDK_URL = "https://tiro-sdk.example/tiro-web-sdk.iife.js";
+
+    function bootSdk() {
+        // Foreign definition = the page still carries its own SDK script tag.
+        // Don't inject a second copy (double customElements.define throws); wire
+        // the foreign element so the handshake and its version report still happen.
+        if (typeof customElements !== "undefined" && customElements.get("tiro-form-filler")) {
+            console.error(
+                "[bridge] <tiro-form-filler> is already defined by a script the page loaded itself. " +
+                "Remove the tiro-web-sdk <script> tag from your index.html — the harness embeds and " +
+                "serves its own validated copy (GH-60).");
+            fire("tiro-sdk-collision");
+            return Promise.resolve(false);
+        }
+        return new Promise(resolve => {
+            const script = document.createElement("script");
+            script.src = SDK_URL;
+            // No crossorigin attribute: the virtual-host mapping is DenyCors, which a
+            // plain no-cors script load passes and a CORS-mode load would not.
+            script.onload = () => resolve(true);
+            script.onerror = () => {
+                console.error("[bridge] failed to load the embedded tiro-web-sdk from " + SDK_URL +
+                    " — the form cannot render. Is the page hosted by the .NET harness?");
+                fire("tiro-sdk-error");
+                resolve(false);
+            };
+            document.head.appendChild(script);
+        });
+    }
+
+    // ============================================================
+    // 7. Bootstrap on DOMContentLoaded
     // ============================================================
 
     function bootstrap() {
-        bootSentry().then(() => {
+        // SDK loads before wiring, so elements are upgraded when wireFormFiller runs.
+        Promise.all([bootSentry(), bootSdk()]).then(() => {
             wireAllFormFillers();
 
             const transportOk = SmartWebMessaging.init();

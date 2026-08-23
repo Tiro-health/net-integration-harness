@@ -30,12 +30,32 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Tiro.Health.FormFiller.WebView2.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="WebAssets\index.html">
       <LogicalName>$(RootNamespace).WebAssets.index.html</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="WebAssets\tiro-swm-bridge.js">
       <LogicalName>$(RootNamespace).WebAssets.tiro-swm-bridge.js</LogicalName>
     </EmbeddedResource>
+    <!-- Staged by `cd build/web-sdk && npm ci && node copy-bundle.mjs` (GH-59/GH-60);
+         gitignored. The harness embeds the exact web-sdk it was validated against and
+         serves it to the page itself — the page carries no SDK script tag. -->
+    <EmbeddedResource Include="WebAssets\tiro-web-sdk.iife.js">
+      <LogicalName>$(RootNamespace).WebAssets.tiro-web-sdk.iife.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="WebAssets\web-sdk.version.json">
+      <LogicalName>$(RootNamespace).WebAssets.web-sdk.version.json</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
+
+  <!-- A package without the pinned bundle is a broken control (no-opt-out embedding,
+       GH-60), so a build without it must fail loudly rather than skip silently. -->
+  <Target Name="EnsureWebSdkBundleStaged" BeforeTargets="BeforeBuild;GenerateNuspec">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\WebAssets\tiro-web-sdk.iife.js') Or !Exists('$(MSBuildProjectDirectory)\WebAssets\web-sdk.version.json')"
+           Text="The pinned tiro-web-sdk bundle is not staged. Run: cd build/web-sdk &amp;&amp; npm ci &amp;&amp; node copy-bundle.mjs (needs GitHub Packages read auth — see build/web-sdk/README.md). GH-59/GH-60." />
+  </Target>
 
 </Project>

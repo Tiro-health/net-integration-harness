@@ -3,13 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Tiro Form Filler</title>
-    <!-- This sample tracks the floating `latest` SDK channel.
-         Recommendation: if you pin the .NET integration harness (NuGet) to a fixed version,
-         pin a matching tiro-web-sdk version here too (e.g. sdk/vX.Y.Z/) instead of `latest`.
-         A pinned harness ships a fixed bridge validated against a specific frontend, and a
-         future `latest` could drift the contract out from under it. Track `latest` only if
-         you also track the latest harness. Save-draft (intent="save-draft") needs >= 0.3.0. -->
-    <script src="https://cdn.tiro.health/sdk/latest/tiro-web-sdk.iife.js" defer></script>
+    <!-- No SDK script tag: the harness embeds the validated tiro-web-sdk and the
+         bridge injects it (GH-60). Do not add one — the page is branding only. -->
     <style>
         html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; display: flex; flex-direction: column; }
         tiro-form-filler { display: block; flex: 1; }
@@ -39,7 +34,7 @@
         // (sdc-endpoint-address, launch-context, questionnaire) and the
         // tiro-web-sdk has injected its own runtime <style> blocks (audio-recorder
         // etc.). A static template gives the integrator the bare scaffolding —
-        // doctype, SDK script, a few CSS rules to make the element fill the
+        // doctype, a few CSS rules to make the element fill the
         // viewport, and the element itself. No <html>/<head>/<body> wrappers
         // (HTML5 makes them optional) so the result is essentially just the
         // <tiro-form-filler> element with the minimum to make it render.
@@ -54,11 +49,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Tiro Form Filler</title>
-    <!-- Tracks the latest SDK. If you pin the .NET integration harness (NuGet) to a fixed
-         version, pin a matching tiro-web-sdk version here too (e.g. sdk/vX.Y.Z/) instead of
-         `latest`, so a future frontend release can't drift the bridge contract. Save-draft
-         needs tiro-web-sdk >= 0.3.0. -->
-    <script src="https://cdn.tiro.health/sdk/latest/tiro-web-sdk.iife.js" defer><\/script>
+    <!-- No SDK script tag: the harness embeds the validated tiro-web-sdk and the
+         bridge injects it (GH-60). Do not add one — the page is branding only. -->
     <style>
         html, body { margin: 0; height: 100%; }
         tiro-form-filler { display: block; height: 100%; }

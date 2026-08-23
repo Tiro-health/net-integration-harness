@@ -17,7 +17,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const BRIDGE_PATH = resolve(here, "../../src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js");
 
 /** Flush pending microtasks (the bridge bootstraps through a promise chain). */
-export const flush = async (turns = 6) => {
+export const flush = async (turns = 8) => {
     for (let i = 0; i < turns; i++) await Promise.resolve();
 };
 
@@ -37,12 +37,26 @@ export const plain = value => (value === undefined ? undefined : JSON.parse(JSON
 
 /**
  * @param {object[]} formFillers stub elements returned by querySelectorAll("tiro-form-filler")
+ * @param {object} [opts]
+ * @param {boolean} [opts.host] install a stub WebView2 transport
+ * @param {"ok"|"fail"} [opts.sdkLoad] how the injected web-sdk script "loads" (GH-60)
+ * @param {string} [opts.sdkVersion] static version the loaded element class exposes (GH-61)
+ * @param {object} [opts.predefinedElement] pre-registers tiro-form-filler, as a leftover page script tag would
  * @returns {Promise<{window: any, document: any, warnings: string[]}>}
  */
-export async function loadBridge(formFillers, { host = false } = {}) {
+export async function loadBridge(formFillers, { host = false, sdkLoad = "ok", sdkVersion, predefinedElement } = {}) {
     const warnings = [];
     const errors = [];
     let uuidCounter = 0;
+
+    // customElements registry: bootSdk checks it for collisions and the "loaded"
+    // SDK script defines the element class in it.
+    const registry = new Map();
+    if (predefinedElement) registry.set("tiro-form-filler", predefinedElement);
+    const customElements = { get: name => registry.get(name) };
+
+    // Scripts the bridge injected via document.head.appendChild, in order.
+    const injectedScripts = [];
 
     // Outbound envelopes the bridge posted to the host, in order. Only captured when
     // a transport is installed; without one SmartWebMessaging.init() returns false and
@@ -62,10 +76,26 @@ export async function loadBridge(formFillers, { host = false } = {}) {
         },
         querySelector() { return null; },
         createElement() { return { setAttribute() {} }; },
-        head: { appendChild() {} },
+        // Simulates script loading: the web-sdk script "defines" the element class
+        // (with the configured static version) then fires onload — or onerror when
+        // sdkLoad is "fail". Non-script appends (Sentry meta tags) are inert.
+        head: {
+            appendChild(el) {
+                if (!el || typeof el.src !== "string") return;
+                injectedScripts.push(el);
+                queueMicrotask(() => {
+                    if (el.src.includes("tiro-web-sdk")) {
+                        if (sdkLoad === "fail") { el.onerror && el.onerror(); return; }
+                        registry.set("tiro-form-filler",
+                            sdkVersion !== undefined ? { version: sdkVersion } : {});
+                    }
+                    el.onload && el.onload();
+                });
+            },
+        },
     };
 
-    const window = { document };
+    const window = { document, customElements };
     window.window = window;
 
     // Minimal WebView2 transport. Installing it makes isWebView2() true, so the bridge
@@ -85,6 +115,7 @@ export async function loadBridge(formFillers, { host = false } = {}) {
     const sandbox = {
         window,
         document,
+        customElements,
         console: {
             log() {},
             warn: (...a) => warnings.push(a.join(" ")),
@@ -130,6 +161,7 @@ export async function loadBridge(formFillers, { host = false } = {}) {
         errors,
         outbound,
         documentEvents,
+        injectedScripts,
         /** Outbound envelopes of one messageType, newest last. */
         sent: messageType => outbound.filter(m => m.messageType === messageType),
         /** Response envelopes the bridge posted (acks and errors carry no messageType). */

@@ -3,10 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Extract sample — embedded form</title>
-    <!-- Stable channel. IsDirty / FormDirtyChanged needs isDirty + tiro-dirty-change on
-         <tiro-form-filler>, which first reached the stable sdk/ channel in 0.3.2. This
-         sample previously had to load the pre-release sdk-dev channel for it. -->
-    <script src="https://cdn.tiro.health/sdk/v0.3.2/tiro-web-sdk.iife.js" defer></script>
+    <!-- No SDK script tag: the harness embeds the validated tiro-web-sdk and the
+         bridge injects it (GH-60). Do not add one — the page is branding only. -->
     <style>
         /* Light blue background so it's obvious this page is served from the
            sample's WebContentFolder rather than the viewer's built-in assets. */
