@@ -44,8 +44,8 @@ jobs:
       run:
         working-directory: build/bridge-contract
 
-    # The project .npmrc references ${NODE_AUTH_TOKEN}; set it for every step so npm
-    # never trips on an unset var. It's the ephemeral job token — no stored secret.
+    # Consumed by the npmrc actions/setup-node writes (the project .npmrc carries no
+    # credentials — see build/bridge-contract/.npmrc). Ephemeral job token, no secret.
     env:
       NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

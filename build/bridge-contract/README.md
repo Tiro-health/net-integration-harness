@@ -33,12 +33,14 @@ The **nightly** run still checks `@latest`, as an advisory heads-up only: a red 
 
 ## Running locally
 
-The package is on **GitHub Packages**, so npm needs a token with `read:packages`. Using the GitHub CLI:
+The package is on **GitHub Packages**, so npm needs a token with `read:packages` in your
+**user-level** `~/.npmrc` (the repo's `.npmrc` files carry no credentials — see the note in `.npmrc`):
 
 ```sh
-gh auth refresh -h github.com -s read:packages    # one-time, adds the scope
+gh auth refresh -h github.com -s read:packages                        # one-time, adds the scope
+npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"    # one-time, writes ~/.npmrc
+
 cd build/bridge-contract
-export NODE_AUTH_TOKEN=$(gh auth token)
 npm ci --ignore-scripts
 VER=$(node -p "require('../web-sdk/package.json').dependencies['@tiro-health/web-sdk']")
 npm install --no-save --ignore-scripts "@tiro-health/web-sdk@$VER"  # what CI gates on; @latest to preview the next bump
