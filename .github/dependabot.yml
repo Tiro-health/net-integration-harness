@@ -1,0 +1,27 @@
+# Dependabot watches the web-sdk pin (build/web-sdk/package.json) so bumps of the
+# embedded @tiro-health/web-sdk arrive as reviewable PRs gated by CI — the
+# bridge-contract type-check runs against the pin, and the bridge behavioral
+# suite + (once GH-26 lands) the e2e smoke gate the pairing. See GH-59.
+#
+# The package is on the private GitHub Packages registry. Dependabot cannot use
+# the workflows' ephemeral GITHUB_TOKEN, so the registry entry below needs a
+# classic PAT with read:packages stored as a **Dependabot secret** named
+# DEPENDABOT_GITHUB_PACKAGES_TOKEN (repo Settings -> Secrets and variables ->
+# Dependabot). Until that secret exists, Dependabot logs an auth error for this
+# ecosystem and simply proposes nothing — CI is unaffected.
+#
+# GitHub Actions SHA bumps stay manual by design; see the note atop
+# .github/workflows/ci.yml.
+version: 2
+registries:
+  github-npm:
+    type: npm-registry
+    url: https://npm.pkg.github.com
+    token: ${{ secrets.DEPENDABOT_GITHUB_PACKAGES_TOKEN }}
+updates:
+  - package-ecosystem: "npm"
+    directory: "/build/web-sdk"
+    schedule:
+      interval: "weekly"
+    registries:
+      - github-npm

@@ -7,12 +7,16 @@
  * Messaging, doesn't know about WebView2 transport.
  *
  * What the bridge exposes to the page:
+ *   - tiro-web-sdk auto-injected            — the bridge loads the embedded, validated
+ *                                              @tiro-health/web-sdk bundle from the host
+ *                                              (GH-60); the page has NO SDK script tag
  *   - window.tiro.cancel()                  — fires ui.done (user closed without submit)
  *   - <tiro-form-filler> auto-wired         — bridge sets questionnaire on display,
  *                                              forwards user submissions to host
  *   - document CustomEvents (status hooks)  — tiro-connected, tiro-submitted,
  *                                              tiro-submit-error, tiro-cancelled,
- *                                              tiro-disconnected
+ *                                              tiro-disconnected, tiro-sdk-error,
+ *                                              tiro-sdk-collision
  *   - window.SmartWebMessaging              — lower-level API for advanced consumers
  *                                              (sendRequest/sendEvent/on); the documented
  *                                              path is the hooks above.
@@ -102,7 +106,7 @@
             });
         },
 
-        retryHandshake(retryIntervalMs = 1000, timeoutMs = 30000) {
+        retryHandshake(payload = {}, retryIntervalMs = 1000, timeoutMs = 30000) {
             return new Promise((resolve, reject) => {
                 const start = Date.now();
                 const attemptIds = [];
@@ -115,16 +119,25 @@
                     resolve(payload);
                 };
 
+                // An error ack means the host REFUSED the session (GH-61) — terminal,
+                // so stop retrying and report immediately instead of timing out.
+                const onError = err => {
+                    if (resolved) return;
+                    resolved = true;
+                    attemptIds.forEach(id => this.pendingRequests.delete(id));
+                    reject(err);
+                };
+
                 const attempt = () => {
                     if (resolved) return;
                     const messageId = this.generateMessageId();
                     attemptIds.push(messageId);
-                    this.pendingRequests.set(messageId, { resolve: onSuccess, reject: () => {} });
+                    this.pendingRequests.set(messageId, { resolve: onSuccess, reject: onError });
                     this.sendMessage({
                         messageId,
                         messagingHandle: this.messagingHandle,
                         messageType: "status.handshake",
-                        payload: {},
+                        payload,
                     });
                     setTimeout(() => {
                         if (!resolved && (Date.now() - start) < timeoutMs) attempt();
@@ -464,11 +477,54 @@
     }
 
     // ============================================================
-    // 6. Bootstrap on DOMContentLoaded
+    // 6. Embedded web-sdk injection (GH-60)
+    // ============================================================
+
+    // The embedded, validated @tiro-health/web-sdk served by the host (GH-60).
+    // Must match WebSdkAssets.VirtualHostName — pinned together by
+    // TestEmbeddedWebAssets.Bridge_LoadsSdkFromTheMappedVirtualHost.
+    const SDK_URL = "https://tiro-sdk.example/tiro-web-sdk.iife.js";
+
+    // Resolves with the SDK source reported at handshake: "embedded" | "collision"
+    // | "error". The host refuses the session on the latter two (GH-61).
+    function bootSdk() {
+        // Foreign definition or a page-level SDK script tag = the page still loads
+        // its own SDK. Don't inject a second copy (double customElements.define
+        // throws); wire what's there so the handshake report reaches the host.
+        const foreignElement = typeof customElements !== "undefined" && customElements.get("tiro-form-filler");
+        const foreignTag = typeof document.querySelector === "function"
+            && document.querySelector('script[src*="tiro-web-sdk"]');
+        if (foreignElement || foreignTag) {
+            console.error(
+                "[bridge] the page loads its own tiro-web-sdk copy. " +
+                "Remove the tiro-web-sdk <script> tag from your index.html — the harness embeds and " +
+                "serves its own validated copy (GH-60).");
+            fire("tiro-sdk-collision");
+            return Promise.resolve("collision");
+        }
+        return new Promise(resolve => {
+            const script = document.createElement("script");
+            script.src = SDK_URL;
+            // No crossorigin attribute: the virtual-host mapping is DenyCors, which a
+            // plain no-cors script load passes and a CORS-mode load would not.
+            script.onload = () => resolve("embedded");
+            script.onerror = () => {
+                console.error("[bridge] failed to load the embedded tiro-web-sdk from " + SDK_URL +
+                    " — the form cannot render. Is the page hosted by the .NET harness?");
+                fire("tiro-sdk-error");
+                resolve("error");
+            };
+            document.head.appendChild(script);
+        });
+    }
+
+    // ============================================================
+    // 7. Bootstrap on DOMContentLoaded
     // ============================================================
 
     function bootstrap() {
-        bootSentry().then(() => {
+        // SDK loads before wiring, so elements are upgraded when wireFormFiller runs.
+        Promise.all([bootSentry(), bootSdk()]).then(([, sdkSource]) => {
             wireAllFormFillers();
 
             const transportOk = SmartWebMessaging.init();
@@ -479,7 +535,19 @@
             // queueMicrotask so any same-tick page-side wiring is in place before the
             // first message dispatch reaches the bridge.
             queueMicrotask(() => {
-                SmartWebMessaging.retryHandshake().then(
+                // GH-61: report the element's build-time version (static on the class);
+                // null = SDK predates the version field, failed to load, or is foreign.
+                // Typed loosely until the SDK declares `static version` (atticus-frontend#2927).
+                const cls = /** @type {{ version?: unknown } | undefined} */ (
+                    typeof customElements !== "undefined"
+                        ? customElements.get("tiro-form-filler")
+                        : undefined);
+                const client = {
+                    name: "tiro-web-sdk",
+                    version: cls && typeof cls.version === "string" ? cls.version : null,
+                    source: sdkSource,
+                };
+                SmartWebMessaging.retryHandshake({ client }).then(
                     () => fire("tiro-connected"),
                     err => fire("tiro-disconnected", { error: err })
                 );

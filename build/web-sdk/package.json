@@ -1,0 +1,11 @@
+{
+  "name": "web-sdk-pin",
+  "private": true,
+  "description": "Pins the exact @tiro-health/web-sdk version embedded in Tiro.Health.FormFiller.WebView2 (GH-59/GH-60). Single source of truth: copy-bundle.mjs stages this version's bundle for embedding, and CI type-checks the shipped bridge against it. tiro.expectedElementVersion arms the host-side handshake version assert (GH-61) — keep it null until the pin reaches the first web-sdk release that exposes a static element version (atticus-frontend#2927), then keep it equal to the pinned version.",
+  "dependencies": {
+    "@tiro-health/web-sdk": "0.3.2"
+  },
+  "tiro": {
+    "expectedElementVersion": null
+  }
+}

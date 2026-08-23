@@ -361,3 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Staged web-sdk bundle + generated version manifest (GH-59/GH-60).
+# Produced by `cd build/web-sdk && npm ci && node copy-bundle.mjs`; embedded as
+# resources at build time. Never commit the bundle — the pin in
+# build/web-sdk/package.json is the source of truth.
+src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-web-sdk.iife.js
+src/Tiro.Health.FormFiller.WebView2/WebAssets/web-sdk.version.json

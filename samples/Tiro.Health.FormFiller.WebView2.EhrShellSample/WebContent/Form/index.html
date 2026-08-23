@@ -3,12 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>EHR Shell — embedded form</title>
-    <!-- Must stay >= 0.3.0: the shell's "Save in progress" button calls
-         SendFormRequestSubmitAsync(intent:="save-draft"), which maps to the frontend's
-         submit({ status: "in-progress" }) — an option added in 0.3.0. On an older SDK the
-         option is silently ignored and the form FINALIZES instead of saving a draft.
-         Was pinned to v0.2.1, which demonstrated exactly that bug. -->
-    <script src="https://cdn.tiro.health/sdk/v0.3.0/tiro-web-sdk.iife.js" defer></script>
+    <!-- No SDK script tag: the harness embeds the validated tiro-web-sdk and the
+         bridge injects it (GH-60). Do not add one — the page is branding only. -->
     <style>
         html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; display: flex; flex-direction: column; }
         header { padding: 8px 16px; background: #f1f5f9; border-bottom: 1px solid #cbd5e1; font-size: 0.85rem; color: #334155; }

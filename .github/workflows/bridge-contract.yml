@@ -1,9 +1,15 @@
 name: Bridge contract
 
-# Static type-check of the shipped tiro-swm-bridge.js against the live
+# Static type-check of the shipped tiro-swm-bridge.js against the
 # @tiro-health/web-sdk (<tiro-form-filler>) types. Catches bridge<->frontend
 # drift such as the submit({ intent }) vs submit({ status }) bug. See
 # build/bridge-contract/README.md.
+#
+# On PRs and pushes the check runs against the PINNED version from
+# build/web-sdk/package.json — the exact bundle the harness embeds and ships
+# (GH-59/GH-60). The nightly schedule instead checks @latest as an ADVISORY
+# heads-up: a red nightly means the next pin bump needs bridge work, not that
+# anything shipped is broken (nothing fielded consumes `latest` anymore).
 #
 # Actions are pinned to full commit SHAs (GH-53); see .github/workflows/ci.yml for the
 # rationale and the bump procedure.
@@ -13,11 +19,12 @@ on:
     paths:
       - 'src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js'
       - 'build/bridge-contract/**'
+      - 'build/web-sdk/**'
       - 'tests/bridge/**'
       - '.github/workflows/bridge-contract.yml'
   push:
     branches: [master]
-  # Nightly drift alarm against whatever @tiro-health/web-sdk@latest currently is.
+  # Nightly advisory run against whatever @tiro-health/web-sdk@latest currently is.
   schedule:
     - cron: '0 6 * * *'
   workflow_dispatch:
@@ -52,12 +59,25 @@ jobs:
           scope: '@tiro-health'
 
       - name: Install tooling
-        run: npm ci
+        run: npm ci --ignore-scripts
 
-      # Floating: always check against the current published `latest`, so a frontend
-      # release that moves the contract turns this red.
-      - name: Install @tiro-health/web-sdk@latest
-        run: npm install --no-save @tiro-health/web-sdk@latest
+      # PR/push: check against the pinned version — the exact bundle the harness
+      # embeds (build/web-sdk/package.json is the single source of truth).
+      - name: Install pinned @tiro-health/web-sdk
+        if: github.event_name != 'schedule'
+        run: |
+          VER=$(node -p "require('../web-sdk/package.json').dependencies['@tiro-health/web-sdk']")
+          echo "Checking bridge against pinned tiro-web-sdk@$VER"
+          npm install --no-save --ignore-scripts "@tiro-health/web-sdk@$VER"
+
+      # Nightly: advisory heads-up against `latest`. Red here = the NEXT pin bump
+      # needs bridge work; nothing shipped consumes `latest`.
+      - name: Install @tiro-health/web-sdk@latest (nightly advisory)
+        if: github.event_name == 'schedule'
+        run: |
+          VER=$(npm view @tiro-health/web-sdk version)
+          echo "Advisory check against tiro-web-sdk@$VER (latest dist-tag)"
+          npm install --no-save --ignore-scripts @tiro-health/web-sdk@latest
 
       - name: Type-check bridge against frontend contract
         run: npm run typecheck

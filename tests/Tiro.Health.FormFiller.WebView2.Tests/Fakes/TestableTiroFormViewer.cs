@@ -23,6 +23,14 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         protected override SmartMessageHandlerBase<Resource, QuestionnaireResponse, OperationOutcome> CreateMessageHandler()
             => throw new NotSupportedException("Tests use the DI ctor; the factory should never be called.");
 
+        /// <summary>
+        /// GH-61 assert arming for tests: null (default) = unarmed, keeping tests
+        /// hermetic from the embedded manifest. Set before raising the handshake.
+        /// </summary>
+        public string ExpectedWebSdkVersionOverride { get; set; }
+
+        internal override string ExpectedWebSdkElementVersion => ExpectedWebSdkVersionOverride;
+
         protected override bool IsOutcomeSuccessful(OperationOutcome outcome)
             => outcome == null || outcome.Success;
     }
