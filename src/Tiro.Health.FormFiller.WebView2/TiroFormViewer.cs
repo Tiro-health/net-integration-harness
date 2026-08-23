@@ -133,6 +133,19 @@ namespace Tiro.Health.FormFiller.WebView2
         public TiroFormViewerState State => (TiroFormViewerState)Volatile.Read(ref _state);
 
         /// <summary>
+        /// The tiro-web-sdk version the page reported at handshake (GH-61), or null when
+        /// the running SDK predates the version field. Diagnostics only.
+        /// </summary>
+        public string PageWebSdkVersion { get; private set; }
+
+        /// <summary>
+        /// The element version the handshake must report, or null to skip the assert.
+        /// Defaults to the embedded bundle's expectedElementVersion (GH-61); the assert
+        /// arms itself when the pin bumps to a version-exposing SDK.
+        /// </summary>
+        protected virtual string ExpectedWebSdkElementVersion => WebSdkAssets.ExpectedElementVersion;
+
+        /// <summary>
         /// Whether the user has made any changes to the displayed form since it loaded.
         /// Kept in sync from the page's <c>ui.form.dirtyChanged</c> notifications; also
         /// raised as <see cref="FormDirtyChanged"/>. Pre-populated/auto-<c>$populate</c>d
@@ -473,11 +486,40 @@ namespace Tiro.Health.FormFiller.WebView2
             }
         }
 
-        private void OnHandshakeReceived(object sender, EventArgs e)
+        private void OnHandshakeReceived(object sender, HandshakeReceivedEventArgs e)
         {
+            var reported = ExtractClientVersion(e?.Payload);
+            PageWebSdkVersion = reported;
+
+            // GH-61: the page must run exactly the embedded bundle. Armed only when the
+            // pinned SDK exposes a static version (build/web-sdk expectedElementVersion).
+            var expected = ExpectedWebSdkElementVersion;
+            if (expected != null && !string.Equals(reported, expected, StringComparison.Ordinal))
+            {
+                var mismatch = new WebSdkVersionMismatchException(expected, reported);
+                _telemetry.CaptureException(mismatch);
+                _session?.AddBreadcrumb("lifecycle", "Handshake rejected: " + mismatch.Message);
+                // Awaiters of the handshake (SetContextAsync, SendFormRequestSubmitAsync)
+                // throw instead of proceeding; state stays Initializing.
+                _handshakeReceivedSource.TrySetException(mismatch);
+                return;
+            }
+
             TryTransition(TiroFormViewerState.Initializing, TiroFormViewerState.Ready);
             _handshakeReceivedSource.TrySetResult(true);
-            _session?.AddBreadcrumb("lifecycle", "Handshake received");
+            _session?.AddBreadcrumb("lifecycle",
+                reported == null ? "Handshake received" : $"Handshake received (tiro-web-sdk {reported})");
+        }
+
+        private static string ExtractClientVersion(RequestPayload payload)
+        {
+            if (payload?.ExtraFields == null) return null;
+            if (!payload.ExtraFields.TryGetValue("client", out var client)
+                || client.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            return client.TryGetProperty("version", out var version)
+                && version.ValueKind == System.Text.Json.JsonValueKind.String
+                ? version.GetString()
+                : null;
         }
 
         private void OnCloseApplication(object sender, CloseApplicationEventArgs e)

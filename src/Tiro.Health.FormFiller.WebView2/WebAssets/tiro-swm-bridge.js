@@ -106,7 +106,7 @@
             });
         },
 
-        retryHandshake(retryIntervalMs = 1000, timeoutMs = 30000) {
+        retryHandshake(payload = {}, retryIntervalMs = 1000, timeoutMs = 30000) {
             return new Promise((resolve, reject) => {
                 const start = Date.now();
                 const attemptIds = [];
@@ -128,7 +128,7 @@
                         messageId,
                         messagingHandle: this.messagingHandle,
                         messageType: "status.handshake",
-                        payload: {},
+                        payload,
                     });
                     setTimeout(() => {
                         if (!resolved && (Date.now() - start) < timeoutMs) attempt();
@@ -520,7 +520,18 @@
             // queueMicrotask so any same-tick page-side wiring is in place before the
             // first message dispatch reaches the bridge.
             queueMicrotask(() => {
-                SmartWebMessaging.retryHandshake().then(
+                // GH-61: report the element's build-time version (static on the class);
+                // null = SDK predates the version field, failed to load, or is foreign.
+                // Typed loosely until the SDK declares `static version` (atticus-frontend#2927).
+                const cls = /** @type {{ version?: unknown } | undefined} */ (
+                    typeof customElements !== "undefined"
+                        ? customElements.get("tiro-form-filler")
+                        : undefined);
+                const client = {
+                    name: "tiro-web-sdk",
+                    version: cls && typeof cls.version === "string" ? cls.version : null,
+                };
+                SmartWebMessaging.retryHandshake({ client }).then(
                     () => fire("tiro-connected"),
                     err => fire("tiro-disconnected", { error: err })
                 );
