@@ -564,9 +564,13 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void OnFormSubmitted(object sender, FormSubmittedEventArgs<TQR, TOO> e)
         {
-            // Advance to Submitted from any non-terminal state. Preserves Disposed if the
-            // handler races with Dispose (terminal invariant).
-            AdvanceUnlessDisposed(TiroFormViewerState.Submitted);
+            // A draft leaves the session usable: the doctor keeps filling and submits later,
+            // which is the documented save-draft flow. Advancing to Submitted here made the
+            // next SendFormRequestSubmitAsync throw "already been submitted", so save-draft
+            // was effectively one-shot. Only a final response is terminal. Preserves Disposed
+            // if the handler races with Dispose (terminal invariant).
+            var isFinal = IsResponseFinal(e.Response);
+            if (isFinal) AdvanceUnlessDisposed(TiroFormViewerState.Submitted);
 
             var success = IsOutcomeSuccessful(e.Outcome);
             _session?.AddBreadcrumb("lifecycle", success ? "Form submitted (success)" : "Form submitted (validation errors)");
@@ -602,6 +606,15 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <c>OperationOutcome.Success</c>.
         /// </summary>
         protected virtual bool IsOutcomeSuccessful(TOO outcome) => true;
+
+        /// <summary>
+        /// Returns true if the submitted response ends the session — i.e. it is not a draft.
+        /// A draft (<c>QuestionnaireResponse.status = in-progress</c>, produced by
+        /// <c>SendFormRequestSubmitAsync(intent: "save-draft")</c>) keeps the viewer usable so
+        /// the user can keep filling and submit later. Default: treat every response as final.
+        /// Version-specific subclasses override this to inspect the FHIR status.
+        /// </summary>
+        protected virtual bool IsResponseFinal(TQR response) => true;
 
         /// <summary>
         /// Displays the questionnaire at <paramref name="questionnaireCanonicalUrl"/> and sets the

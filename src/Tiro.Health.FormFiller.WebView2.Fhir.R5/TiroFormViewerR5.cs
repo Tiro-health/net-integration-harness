@@ -51,5 +51,9 @@ namespace Tiro.Health.FormFiller.WebView2.Fhir.R5
 
         protected override bool IsOutcomeSuccessful(OperationOutcome outcome)
             => outcome == null || outcome.Success;
+
+        // A save-draft round-trips status in-progress; the session must stay usable.
+        protected override bool IsResponseFinal(QuestionnaireResponse response)
+            => response?.Status != QuestionnaireResponse.QuestionnaireResponseStatus.InProgress;
     }
 }
