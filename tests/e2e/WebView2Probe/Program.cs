@@ -168,27 +168,45 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             TiroFormViewerR5 viewer, string intent,
             TaskCompletionSource<QuestionnaireResponse> pending, Action resetPending)
         {
-            try
+            // Retried, because a submit requested before the questionnaire has rendered is
+            // silently dropped: the bridge's ui.form.requestSubmit handler returns early when
+            // formFiller.questionnaire is unset, with no error and no response. And
+            // SetContextAsync returns on the page's ACK of sdc.displayQuestionnaire, not on
+            // render — so "context set" does not mean "ready to submit". Nothing in the host
+            // API exposes render-completion, hence polling.
+            var deadline = DateTime.UtcNow + StageTimeout;
+            var attempt = 0;
+            while (DateTime.UtcNow < deadline)
             {
-                await viewer.SendFormRequestSubmitAsync(intent);
-            }
-            catch (Exception ex)
-            {
-                Report("FAIL", "SendFormRequestSubmitAsync(" + (intent ?? "finalize") + ") threw "
-                    + ex.GetType().Name + ": " + ex.Message);
-                return null;
-            }
-
-            using (var cts = new CancellationTokenSource(StageTimeout))
-            {
+                attempt++;
                 try
                 {
-                    var response = await pending.Task.WaitAsync(cts.Token);
-                    resetPending();
-                    return response;
+                    await viewer.SendFormRequestSubmitAsync(intent);
                 }
-                catch (OperationCanceledException) { return null; }
+                catch (Exception ex)
+                {
+                    Report("FAIL", "SendFormRequestSubmitAsync(" + (intent ?? "finalize") + ") threw "
+                        + ex.GetType().Name + ": " + ex.Message);
+                    return null;
+                }
+
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                {
+                    try
+                    {
+                        var response = await pending.Task.WaitAsync(cts.Token);
+                        resetPending();
+                        if (attempt > 1) Report("INFO", "submit landed on attempt " + attempt);
+                        return response;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Form not ready yet; the request was a no-op. Try again.
+                    }
+                }
             }
+
+            return null;
         }
 
         private static Patient SamplePatient() => new Patient

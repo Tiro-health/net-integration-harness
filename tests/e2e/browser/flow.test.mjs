@@ -27,6 +27,9 @@ const BUNDLE_PATH = join(REPO, "src/Tiro.Health.FormFiller.WebView2/WebAssets/ti
 const SDC_ENDPOINT = process.env.SDC_ENDPOINT ?? "https://sdc.tiro.health/fhir/r5";
 const QUESTIONNAIRE = process.env.QUESTIONNAIRE
   ?? "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699";
+// A chip label in the default questionnaire (CHA2DS2-VASc: an age band). Override together
+// with QUESTIONNAIRE.
+const ANSWER_LABEL = process.env.ANSWER_LABEL ?? "65–74";
 
 const MIME = { ".html": "text/html", ".js": "application/javascript" };
 
@@ -80,6 +83,17 @@ async function launch() {
         return !!root && root.querySelectorAll("input, button, textarea, [role=button]").length > 0;
       }, { timeout: 120000 });
     },
+    /**
+     * Clicks an answer chip by its label. Playwright's CSS selectors pierce the element's
+     * open shadow root, so no manual shadowRoot traversal is needed — but the underlying
+     * <input> is hidden behind a styled button, so the button is what must be clicked.
+     */
+    async chooseAnswer(label) {
+      await page.locator("tiro-form-filler button", { hasText: label }).first().click();
+    },
+    dirtyChanges() {
+      return page.evaluate("window.__host.dirtyChanges");
+    },
     async requestSubmit(intent) {
       const before = await page.evaluate("window.__host.submitted.length");
       await page.evaluate(i => window.__hostSend("ui.form.requestSubmit", i ? { intent: i } : {}), intent);
@@ -100,6 +114,45 @@ test("the bridge injects the embedded SDK and reports its identity at handshake"
     // null until the pin reaches an SDK exposing a static version (atticus-frontend#2927).
     assert.ok(handshake.client.version === null || typeof handshake.client.version === "string");
     assert.ok(await h.page.evaluate("!!customElements.get('tiro-form-filler')"));
+  } finally {
+    await h.close();
+  }
+});
+
+/** Every answered item in a QR, depth-first. */
+function answeredItems(item = []) {
+  return item.flatMap(i => [
+    ...(i.answer ? [{ linkId: i.linkId, answer: i.answer }] : []),
+    ...answeredItems(i.item ?? []),
+  ]);
+}
+
+test("a user's answer reaches the host, dirties the form, and drives calculation", async () => {
+  const h = await launch();
+  try {
+    await h.displayQuestionnaire();
+    assert.deepEqual(await h.dirtyChanges(), [], "a populated form is not dirty until edited");
+
+    // A real click on a real widget — the one interaction no other test performs.
+    await h.chooseAnswer(ANSWER_LABEL);
+    await h.page.waitForFunction("window.__host.dirtyChanges.length > 0", { timeout: 60000 });
+
+    // GH-46: tiro-dirty-change -> ui.form.dirtyChanged -> host, from a real edit.
+    assert.deepEqual(await h.dirtyChanges(), [{ isDirty: true }]);
+
+    const submitted = await h.requestSubmit(undefined);
+    const answers = answeredItems(submitted.response.item);
+
+    // The chosen coding survived the round trip to the host...
+    assert.ok(
+      answers.some(a => a.answer.some(v => v.valueCoding?.display === ANSWER_LABEL)),
+      `no answer carrying "${ANSWER_LABEL}": ${JSON.stringify(answers).slice(0, 300)}`);
+    // ...and the questionnaire's calculatedExpression ran off it, producing a score.
+    // Asserted as "some positive number" rather than an exact value, since the template
+    // is live (see README).
+    assert.ok(
+      answers.some(a => a.answer.some(v => typeof v.valueDecimal === "number" && v.valueDecimal > 0)),
+      `no calculated numeric answer: ${JSON.stringify(answers).slice(0, 300)}`);
   } finally {
     await h.close();
   }

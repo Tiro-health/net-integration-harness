@@ -57,6 +57,18 @@ Windows only, needs a WebView2 runtime and a desktop session — hence `windows-
 `.github/workflows/e2e.yml`, which also logs the runtime version so a failure is
 diagnosable.
 
+## Sharp edges these tests exposed
+
+- **A submit requested before the form has rendered is silently dropped.** The bridge's
+  `ui.form.requestSubmit` handler returns early when `formFiller.questionnaire` is unset —
+  no error, no response, the host just never hears back. Compounding it, `SetContextAsync`
+  returns on the page's *ack* of `sdc.displayQuestionnaire`, not on render, so a host that
+  treats its completion as "the form is up" can submit into the void. The probe polls to
+  work around it; an integrator whose Submit button is clicked early gets silence.
+- **A saved draft used to end the session** (fixed here): any `form.submitted` advanced the
+  viewer to `Submitted`, so the documented save-draft-then-keep-filling flow threw on the
+  next send. Found by extending layer 2 to actually submit.
+
 ## Not done here
 
 - The `{MinimumSdcVersion, latest}` server matrix. It belongs on layer 1, where the public
