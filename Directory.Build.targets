@@ -1,0 +1,23 @@
+<Project>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- Building a net48 target off Windows needs the .NET Framework reference assemblies
+         as a package, and the SDK adds this reference implicitly — but only there. It then
+         lands in packages.lock.json, and CI restores in locked mode on Windows, where the
+         implicit reference does not exist: NU1004, naming a package nobody wrote down, on a
+         machine that never ran the build that changed the file (GH-73).
+
+         Declaring it makes both platforms resolve the same graph. PrivateAssets="all" keeps
+         it out of the published packages' dependencies, since it is purely a build-time
+         concern for the compiler's reference assemblies.
+
+         In .targets rather than .props because $(TargetFramework) is not yet set when
+         Directory.Build.props is evaluated for a single-target project. The condition is
+         per-TargetFramework, so it also applies to the net48 half of the multi-targeted
+         projects and not to their netstandard2.0 or net8.0 halves. The old-style VB samples
+         use TargetFrameworkVersion and the installed targeting pack, so they neither match
+         this nor need it. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
