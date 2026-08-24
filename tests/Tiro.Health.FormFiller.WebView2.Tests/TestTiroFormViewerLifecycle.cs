@@ -490,12 +490,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
         private static string BuildHandshakeMessage(string id) => SwmTest.Handshake(id);
 
-        private static string BuildUiDoneMessage(string id) => $@"{{
-            ""messageId"": ""{id}"",
-            ""messagingHandle"": ""smart-web-messaging"",
-            ""messageType"": ""ui.done"",
-            ""payload"": {{}}
-        }}";
+        private static string BuildUiDoneMessage(string id) => SwmTest.UiDone(id);
 
         private static string BuildDirtyChangedMessage(string id, bool isDirty) => $@"{{
             ""messageId"": ""{id}"",

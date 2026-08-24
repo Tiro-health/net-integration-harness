@@ -324,10 +324,15 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             var session = sink.Sessions[0];
             var receiveSpan = session.Transactions.First(t =>
                 t.Operation == "swm.receive" && t.Name == "form.submitted");
-            // The receive transaction is finished by OnFormSubmitted with the outcome status;
-            // the trailing OnBrowserMessageReceived Finish(Ok) is a no-op (idempotency).
+            // OnFormSubmitted finishes this transaction with the outcome status, and
+            // OnBrowserMessageReceived must then leave it alone. Asserting the CALL LIST, not
+            // just the observable status: a trailing Finish(Ok) used to overwrite this in
+            // Sentry, whose Finish is not first-wins, so the failure shipped green.
             Assert.AreEqual(TelemetrySpanStatus.InvalidArgument, receiveSpan.FinalStatus,
                 "form.submitted with an error-severity OperationOutcome must finish with InvalidArgument.");
+            CollectionAssert.AreEqual(
+                new[] { TelemetrySpanStatus.InvalidArgument }, receiveSpan.FinishStatuses.ToList(),
+                "the receive transaction must be finished exactly once.");
         }
 
         [TestMethod]
@@ -403,55 +408,65 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             finally { viewer.Dispose(); }
         }
 
-        // A failed-validation submit finished the receive transaction InvalidArgument in
-        // OnFormSubmitted and then Ok in OnBrowserMessageReceived. The contract makes the
-        // second call a no-op, but SentryTelemetrySpan did not honour that, so Sentry
-        // reported the failure as ok. Callers must finish a span exactly once.
+
+        // A subscriber that pumps the message loop lets a NESTED inbound message run inside
+        // the outer one. The nested frame finishes its own transaction; the outer frame must
+        // still finish its own. Tracking "already finished" in an unrestored field made the
+        // outer transaction never finish — and an unfinished transaction is never captured,
+        // so it vanished from Sentry along with its finished child span.
         [TestMethod]
-        public async Task AFailedValidationSubmit_FinishesItsTransactionExactlyOnce()
+        public async Task ANestedInboundMessage_DoesNotStopTheOuterTransactionFromFinishing()
         {
-            var browser = new FakeEmbeddedBrowser();
             var sink = new FakeTelemetrySink();
-            var viewer = new TestableTiroFormViewer(browser, new R5.SmartMessageHandler(), sink);
-            try
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+
+            // Deliver a form.submitted from inside the ui.done handler, the way a subscriber
+            // showing a modal would: RaiseMessageReceived is synchronous, so this re-enters
+            // OnBrowserMessageReceived exactly as a pumped message loop does.
+            var reentered = false;
+            viewer.CloseApplication += (_, _) =>
             {
-                await PollFor(() => browser.Initialized, TimeSpan.FromSeconds(5));
-                browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
-                browser.RaiseMessageReceived(BuildFailedValidationSubmitMessage("fs-1"));
+                if (reentered) return;
+                reentered = true;
+                browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-nested", outcomeError: true));
+            };
 
-                var receive = await PollForSpan(sink, "form.submitted", TimeSpan.FromSeconds(5));
-                CollectionAssert.AreEqual(
-                    new[] { TelemetrySpanStatus.InvalidArgument }, receive.FinishCalls,
-                    "the receive transaction must be finished once, with the outcome-aware status");
-            }
-            finally { viewer.Dispose(); }
+            browser.RaiseMessageReceived(SwmTest.UiDone("uid-1"));
+
+            var session = sink.Sessions[0];
+            var outer = session.Transactions.First(t => t.Operation == "swm.receive" && t.Name == "ui.done");
+            var nested = session.Transactions.First(t => t.Operation == "swm.receive" && t.Name == "form.submitted");
+
+            Assert.IsTrue(nested.Finished, "the nested transaction should be finished by OnFormSubmitted");
+            CollectionAssert.AreEqual(new[] { TelemetrySpanStatus.InvalidArgument }, nested.FinishStatuses.ToList());
+            Assert.IsTrue(outer.Finished,
+                "the outer transaction must still be finished — an unfinished one is never sent to Sentry");
+            CollectionAssert.AreEqual(new[] { TelemetrySpanStatus.Ok }, outer.FinishStatuses.ToList());
         }
 
-        private static async Task<FakeTelemetrySpan> PollForSpan(FakeTelemetrySink sink, string name, TimeSpan timeout)
+        // OnFormSubmitted rethrows when a subscriber throws, after finishing the transaction
+        // with that exception. The outer path must not then finish it again — the same
+        // green-reporting bug as the failed-outcome case, and previously invisible because the
+        // fake only recorded status finishes.
+        [TestMethod]
+        public async Task AThrowingFormSubmittedSubscriber_FinishesItsTransactionExactlyOnce()
         {
-            FakeTelemetrySpan span = null;
-            await PollFor(
-                () => (span = sink.Sessions[0].Transactions.Find(t => t.Name == name && t.Finished)) != null,
-                timeout);
-            return span;
-        }
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
 
-        private static string BuildFailedValidationSubmitMessage(string id) => $@"{{
-            ""messageId"": ""{id}"",
-            ""messagingHandle"": ""smart-web-messaging"",
-            ""messageType"": ""form.submitted"",
-            ""payload"": {{
-                ""response"": {{
-                    ""resourceType"": ""QuestionnaireResponse"",
-                    ""questionnaire"": ""http://example.org/q"",
-                    ""status"": ""completed""
-                }},
-                ""outcome"": {{
-                    ""resourceType"": ""OperationOutcome"",
-                    ""issue"": [ {{ ""severity"": ""error"", ""code"": ""required"", ""diagnostics"": ""missing answer"" }} ]
-                }}
-            }}
-        }}";
+            viewer.FormSubmitted += (_, _) => throw new InvalidOperationException("subscriber blew up");
+            browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-throw"));
+
+            var receive = sink.Sessions[0].Transactions.First(t =>
+                t.Operation == "swm.receive" && t.Name == "form.submitted");
+            Assert.AreEqual(1, receive.FinishCalls.Count,
+                $"finished {receive.FinishCalls.Count} times; the exception finish must be the only one");
+            Assert.IsNotNull(receive.FinalException);
+        }
 
         private static string BuildHandshakeMessage(string id) => SwmTest.Handshake(id);
 

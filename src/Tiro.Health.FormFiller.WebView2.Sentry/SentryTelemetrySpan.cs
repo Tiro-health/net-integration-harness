@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using global::Sentry;
 using Tiro.Health.FormFiller.WebView2.Telemetry;
 
@@ -11,6 +12,7 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
     internal sealed class SentryTelemetrySpan : ITelemetrySpan
     {
         private readonly ISpan _span;
+        private int _finished;
 
         public SentryTelemetrySpan(ISpan span)
         {
@@ -25,21 +27,38 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
             => new SentryTelemetrySpan(_span.StartChild(operation, description));
 
         /// <summary>
-        /// First finish wins, per the <see cref="ITelemetrySpan"/> contract ("subsequent calls
-        /// are no-ops"). Sentry's own <c>Finish</c> is a bare status assignment and the envelope
-        /// is serialized lazily at flush, so without this guard a later <c>Finish(Ok)</c>
+        /// First finish wins, per the <see cref="ITelemetrySpan"/> contract. Sentry's
+        /// <c>Finish(status)</c> assigns the status BEFORE its own already-finished guard, and
+        /// the captured transaction shares the tracer's trace context by reference while the
+        /// envelope is serialized lazily at flush — so without this a later <c>Finish(Ok)</c>
         /// overwrote an earlier failure status and the trace shipped green.
+        /// <para>
+        /// Interlocked rather than <c>IsFinished</c>: that is a non-atomic check-then-act over
+        /// a plain property, and these calls genuinely race (a round trip's cancellation
+        /// callback against its response handler). One wrapper owns exactly one span, so the
+        /// flag is a complete record of finishes through this adapter.
+        /// </para>
         /// </summary>
         public void Finish(TelemetrySpanStatus status)
         {
-            if (_span.IsFinished) return;
+            if (Interlocked.Exchange(ref _finished, 1) != 0) return;
             _span.Finish(Map(status));
         }
 
-        /// <inheritdoc cref="Finish(TelemetrySpanStatus)"/>
+        /// <summary>
+        /// As <see cref="Finish(TelemetrySpanStatus)"/>, but a repeat call still reaches
+        /// Sentry: <c>Finish(Exception, status)</c> binds the exception to this span before its
+        /// own guard, and that binding is what links the captured error event to the span in
+        /// the trace view. Re-asserting the status it already has keeps the linkage without
+        /// rewriting an outcome that may already have shipped.
+        /// </summary>
         public void Finish(Exception ex)
         {
-            if (_span.IsFinished) return;
+            if (Interlocked.Exchange(ref _finished, 1) != 0)
+            {
+                _span.Finish(ex, _span.Status ?? SpanStatus.UnknownError);
+                return;
+            }
             _span.Finish(ex);
         }
 
@@ -49,7 +68,8 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         /// </summary>
         public void Dispose()
         {
-            if (!_span.IsFinished) _span.Finish(SpanStatus.Ok);
+            if (Interlocked.Exchange(ref _finished, 1) != 0) return;
+            _span.Finish(SpanStatus.Ok);
         }
 
         private static SpanStatus Map(TelemetrySpanStatus status)

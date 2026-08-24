@@ -144,8 +144,9 @@ namespace Tiro.Health.FormFiller.WebView2
         private ITelemetrySpan _currentReceiveTransaction;
 
         // Set when a notification handler finishes the receive transaction itself, so
-        // OnBrowserMessageReceived doesn't finish it a second time. Same thread and lifetime
-        // as _currentReceiveTransaction.
+        // OnBrowserMessageReceived doesn't finish it a second time. Frame-scoped like
+        // _currentReceiveTransaction, and saved/restored with it around each inbound message
+        // so a nested delivery cannot leak its answer into the outer frame.
         private bool _receiveTransactionFinished;
 
         // Explicit lifecycle state. Backed by int so Interlocked CAS/Exchange can transition
@@ -503,6 +504,14 @@ namespace Tiro.Health.FormFiller.WebView2
             // up to. messageType + tracing + timing + exceptions stay enough to diagnose
             // the vast majority of integration issues; if you need payload capture for
             // dev work, do it in a custom ITelemetrySink in your own (non-shared) project.
+            // Saved and restored, not just assigned: a subscriber that pumps the message loop
+            // (MessageBox.Show in a CloseApplication/FormSubmitted handler) lets WebView2
+            // deliver a NESTED message inside this try. Leaving either field as the nested
+            // frame left it made the outer frame either skip finishing its own transaction —
+            // which is never captured, so the whole transaction vanishes — or attach a status
+            // to a span that had already gone.
+            var previousReceiveTransaction = _currentReceiveTransaction;
+            var previousReceiveFinished = _receiveTransactionFinished;
             _currentReceiveTransaction = transaction;
             _receiveTransactionFinished = false;
 
@@ -527,12 +536,16 @@ namespace Tiro.Health.FormFiller.WebView2
             }
             catch (Exception ex)
             {
-                transaction?.Finish(ex);
+                // Guarded like the success path: a handler may already have finished this
+                // transaction, and not double-finishing is what keeps the reported status
+                // independent of any ITelemetrySpan implementation's idempotency.
+                if (!_receiveTransactionFinished) transaction?.Finish(ex);
                 _telemetry.CaptureException(ex);
             }
             finally
             {
-                _currentReceiveTransaction = null;
+                _currentReceiveTransaction = previousReceiveTransaction;
+                _receiveTransactionFinished = previousReceiveFinished;
             }
         }
 
@@ -616,12 +629,12 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 FormSubmitted?.Invoke(this, e);
                 ourReceiveTransaction?.Finish(success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument);
-                if (ourReceiveTransaction != null) _receiveTransactionFinished = true;
+                _receiveTransactionFinished = ourReceiveTransaction != null;
             }
             catch (Exception ex)
             {
                 ourReceiveTransaction?.Finish(ex);
-                if (ourReceiveTransaction != null) _receiveTransactionFinished = true;
+                _receiveTransactionFinished = ourReceiveTransaction != null;
                 _telemetry.CaptureException(ex);
                 // Rethrow so SmartMessageHandlerBase.HandleRequestMessage's catch turns this
                 // into an error response back to the JS bridge. Without the rethrow, the
@@ -812,7 +825,8 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>
         /// Wraps a caller-supplied (or null) response handler so the supplied <paramref name="span"/>
         /// is finished when the response arrives, when caller cancellation fires, or when the
-        /// viewer's lifetime ends. Multi-finish is safe per the <see cref="ITelemetrySpan"/> contract.
+        /// viewer's lifetime ends. Whichever happens first wins: <see cref="ITelemetrySpan"/>
+        /// requires that, and these paths can genuinely race.
         /// Uses a single linked CTS so a long-lived user token doesn't accumulate dead
         /// callbacks across many sends — every exit path disposes the CTS, which releases
         /// its registrations on both source tokens at once.

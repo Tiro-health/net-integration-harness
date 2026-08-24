@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Tiro.Health.FormFiller.WebView2.Telemetry;
 
 namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
@@ -69,12 +70,20 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public Exception FinalException { get; private set; }
 
         /// <summary>
-        /// Every Finish call, in order — including the ones first-wins discards. The
-        /// contract makes repeats no-ops, so the observable status is the first; but a caller
-        /// that finishes twice is a bug (it relies on an idempotency real adapters have not
-        /// always had), and without recording the calls no test could see it.
+        /// Every Finish call, in order — including the ones first-wins discards, and both
+        /// overloads. The contract makes repeats no-ops, so the observable outcome is the
+        /// first; but a caller that finishes twice is a bug (it relies on an idempotency real
+        /// adapters have not always had), and without recording the calls no test could see
+        /// it. Exception finishes are recorded too: the double-finish in OnFormSubmitted's
+        /// catch is exception-first, so a status-only record would have missed it.
+        /// <para>Note a <c>using</c>-scoped span records a trailing Ok, since Dispose finishes.</para>
         /// </summary>
-        public List<TelemetrySpanStatus> FinishCalls { get; } = new List<TelemetrySpanStatus>();
+        public List<(TelemetrySpanStatus? Status, Exception Exception)> FinishCalls { get; }
+            = new List<(TelemetrySpanStatus?, Exception)>();
+
+        /// <summary>Statuses from <see cref="FinishCalls"/>, for terser assertions.</summary>
+        public IEnumerable<TelemetrySpanStatus> FinishStatuses
+            => FinishCalls.Where(c => c.Status.HasValue).Select(c => c.Status.Value);
         public Dictionary<string, string> Tags { get; } = new Dictionary<string, string>();
         public Dictionary<string, object> Extras { get; } = new Dictionary<string, object>();
         public List<FakeTelemetrySpan> Children { get; } = new List<FakeTelemetrySpan>();
@@ -97,7 +106,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 
         public void Finish(TelemetrySpanStatus status)
         {
-            FinishCalls.Add(status);
+            FinishCalls.Add((status, null));
             // ITelemetrySpan contract: Finish must be idempotent (subsequent calls are no-ops).
             if (Finished) return;
             Finished = true;
@@ -106,6 +115,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 
         public void Finish(Exception ex)
         {
+            FinishCalls.Add((null, ex));
             if (Finished) return;
             Finished = true;
             FinalException = ex;
