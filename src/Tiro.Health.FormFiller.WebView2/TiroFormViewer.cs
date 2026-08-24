@@ -30,6 +30,15 @@ namespace Tiro.Health.FormFiller.WebView2
         public event EventHandler<FormDirtyChangedEventArgs> FormDirtyChanged;
 
         /// <summary>
+        /// The embedded page rejected one of the host's requests — its handler threw, or it
+        /// did not recognise the message type. These failures used to be silent: a send
+        /// completes once the message is posted, and nothing inspected the response, so a
+        /// request that the page refused looked successful. Subscribe to log or alert;
+        /// the failure is also captured to telemetry.
+        /// </summary>
+        public event EventHandler<PageErrorEventArgs> PageError;
+
+        /// <summary>
         /// Optional folder containing a consumer-supplied <c>index.html</c> (and any supporting assets).
         /// When null, the <c>index.html</c> shipped with this package is used.
         /// The value is read once, at the first <see cref="SetContextAsync"/> call (the point the page is
@@ -686,9 +695,13 @@ namespace Tiro.Health.FormFiller.WebView2
                         if (ReadOnly) configurationMap["readOnly"] = true;
                         object configuration = configurationMap.Count == 0 ? null : (object)configurationMap;
 
-                        // sdc.configure is fire-and-forget — no response message — so the
-                        // span finishes synchronously on send completion. Mirrors the JS
-                        // bridge's swm.receive span so the trace shows both halves.
+                        // The bridge DOES respond to sdc.configure — it acks every routed
+                        // request, or answers with an error payload when its handler throws or
+                        // the type is unknown. Nothing used to register a handler here, so a
+                        // rejection was invisible: this message carries readOnly, sdcServer and
+                        // dataServer, so a silently refused configure means a read-only launch
+                        // painting an editable form. Wrapped like the other round trips, which
+                        // also finishes the span on the response rather than on the send.
                         var configureSpan = _session?.StartTransaction("sdc.configure", "swm.send");
                         configureSpan?.SetTag("messageType", "sdc.configure");
                         if (!string.IsNullOrEmpty(SdcEndpointAddress)) configureSpan?.SetTag("sdc_server", SdcEndpointAddress);
@@ -701,8 +714,9 @@ namespace Tiro.Health.FormFiller.WebView2
                                 terminologyServer: null,
                                 dataServer: string.IsNullOrEmpty(DataEndpointAddress) ? null : DataEndpointAddress,
                                 configuration: configuration,
+                                responseHandler: WrapForRoundTrip(
+                                    "sdc.configure", configureSpan, cancellationToken, originalHandler: null),
                                 cancellationToken: linkedCts.Token);
-                            configureSpan?.Finish(TelemetrySpanStatus.Ok);
                         }
                         catch (OperationCanceledException)
                         {
@@ -716,7 +730,7 @@ namespace Tiro.Health.FormFiller.WebView2
                         }
                     }
 
-                    var wrappedHandler = WrapForRoundTrip(span, cancellationToken, originalHandler: null);
+                    var wrappedHandler = WrapForRoundTrip("sdc.displayQuestionnaire", span, cancellationToken, originalHandler: null);
 
                     await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
                         questionnaireCanonicalUrl: questionnaireCanonicalUrl,
@@ -766,7 +780,7 @@ namespace Tiro.Health.FormFiller.WebView2
                     await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
                         timeoutMessage: "Handshake timeout during Form Request Submit.");
 
-                    var wrappedHandler = WrapForRoundTrip(span, cancellationToken, originalHandler: responseHandler);
+                    var wrappedHandler = WrapForRoundTrip("ui.form.requestSubmit", span, cancellationToken, originalHandler: responseHandler);
 
                     await _smartWebMessageHandler.SendFormRequestSubmitAsync(intent, wrappedHandler, linkedCts.Token);
                 }
@@ -793,16 +807,15 @@ namespace Tiro.Health.FormFiller.WebView2
         /// its registrations on both source tokens at once.
         /// </summary>
         private Func<SmartMessageResponse, Task> WrapForRoundTrip(
+            string messageType,
             ITelemetrySpan span,
             CancellationToken userToken,
             Func<SmartMessageResponse, Task> originalHandler)
         {
-            if (span == null) return originalHandler;
-
             var sentinel = CancellationTokenSource.CreateLinkedTokenSource(userToken, _lifetimeCts.Token);
             sentinel.Token.Register(() =>
             {
-                try { span.Finish(TelemetrySpanStatus.Cancelled); } catch { /* best-effort */ }
+                try { span?.Finish(TelemetrySpanStatus.Cancelled); } catch { /* best-effort */ }
                 // Dispose-from-callback is allowed; the CTS handles re-entrancy and this
                 // releases the registrations on both source tokens.
                 try { sentinel.Dispose(); } catch { /* best-effort */ }
@@ -814,18 +827,52 @@ namespace Tiro.Health.FormFiller.WebView2
                 // — span will be finished below based on the user handler's outcome.
                 try { sentinel.Dispose(); } catch { /* best-effort */ }
 
+                // A page that threw in its handler, or didn't recognise the message type,
+                // answers with an error payload instead of an ack. Nothing used to inspect
+                // it, so the request looked successful and the failure existed only in the
+                // WebView console. Report before handing the response on.
+                var pageError = response?.Payload as ErrorResponse;
+                if (pageError != null) OnPageError(messageType, response, pageError);
+
                 try
                 {
                     if (originalHandler != null)
                         await originalHandler(response);
-                    span.Finish(TelemetrySpanStatus.Ok);
+                    // Finished ONCE, with the outcome already known: finishing InternalError
+                    // here and Ok a line later shipped "ok" to Sentry, because ITelemetrySpan
+                    // implementations are not all idempotent despite the contract.
+                    span?.Finish(pageError != null ? TelemetrySpanStatus.InternalError : TelemetrySpanStatus.Ok);
                 }
                 catch (Exception ex)
                 {
-                    try { span.Finish(ex); } catch { /* best-effort */ }
+                    try { span?.Finish(ex); } catch { /* best-effort */ }
                     throw;
                 }
             };
+        }
+
+        // Surfaces a page-side rejection two ways, because each reaches a different audience:
+        // telemetry for support, and the PageError event for integrator code. The span status
+        // is set by the caller, which knows the whole outcome. Everything here is guarded:
+        // this method exists so a failure is never silent, so it must not itself be able to
+        // swallow one — a throwing subscriber would otherwise fault the inbound listener task
+        // and be logged into NullLogger.
+        private void OnPageError(string messageType, SmartMessageResponse response, ErrorResponse error)
+        {
+            var failure = new PageOperationException(messageType, error.ErrorType, error.ErrorMessage);
+            try { _telemetry.CaptureException(failure); } catch { /* best-effort */ }
+            try { _session?.AddBreadcrumb("page-error", failure.Message); } catch { /* best-effort */ }
+            try
+            {
+                PageError?.Invoke(this, new PageErrorEventArgs(
+                    messageType, error.ErrorType, error.ErrorMessage, response?.ResponseToMessageId));
+            }
+            catch (Exception ex)
+            {
+                // Swallow rather than rethrow: this is a response, so there is nothing to ack
+                // back to the page — but the subscriber's own failure must still be visible.
+                try { _telemetry.CaptureException(ex); } catch { /* best-effort */ }
+            }
         }
 
         /// <summary>

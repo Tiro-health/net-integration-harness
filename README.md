@@ -84,6 +84,8 @@ Then wire three things:
 
 Optionally, a fourth: `FormDirtyChanged`/`IsDirty` — track whether the user has made unsaved changes, e.g. to warn before closing. See [Warn on unsaved changes](#warn-on-unsaved-changes) below.
 
+And a fifth worth wiring in production: `PageError` — the page **rejected** one of the host's requests (its handler threw, or it didn't recognise the message type). A send completes once the message is posted, so without this a refused request looks successful; the failure is also captured to telemetry. `PageErrorEventArgs` carries the message type, the page's error type and message, and the id of the rejected request. Raised on the UI thread.
+
 The full sample lives at `samples/Tiro.Health.FormFiller.WebView2.Sample/Form1.vb`:
 
 ```vb
