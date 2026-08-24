@@ -8,7 +8,9 @@ Two layers. Neither covers the seam alone, and both run real shipped bytes.
 | `WebView2Probe/` | windows | real harness binary in real WebView2 | form content (no server needed) |
 
 They complete the ladder: `build/bridge-contract` checks types, `tests/bridge` drives a
-transcribed stub, these drive the real thing.
+transcribed stub, these drive the real thing. Both jobs **gate** — a red run blocks, because
+an advisory red on a suite that catches silently-wrong clinical behaviour would just train
+people to ignore it.
 
 ## `browser/` — layer 1
 
@@ -25,7 +27,7 @@ npm test
 ```
 
 Stage the bundle first (`cd build/web-sdk && npm ci --ignore-scripts && node copy-bundle.mjs`),
-or the SDK 404s. `SDC_ENDPOINT` and `QUESTIONNAIRE` override the defaults.
+or the SDK 404s. `SDC_ENDPOINT`, `QUESTIONNAIRE` and `ANSWER_LABEL` override the defaults.
 
 ### Validation replay
 
@@ -56,6 +58,22 @@ so the probe passes a canonical that resolves nowhere and ignores the resulting 
 Windows only, needs a WebView2 runtime and a desktop session — hence `windows-latest` in
 `.github/workflows/e2e.yml`, which also logs the runtime version so a failure is
 diagnosable.
+
+## Which server these run against
+
+**Staging** (`sdc-staging.tiro.health`), both layers, set in the workflow and as the
+in-code default. Two reasons, and the second is easy to overlook:
+
+- Staging runs *ahead* of production (it was on `v0.9.38-rc.0` while prod was `v0.9.37`), so
+  a server regression surfaces here before customers meet it.
+- Never production: these run nightly, and their `SdcClient` traffic carries the
+  `Tiro.Health.FormSdk.Client/<version>` header (GH-63). Against prod, CI would show up as a
+  phantom deployment in the very harness-version telemetry atticus-backend#3568 aggregates
+  to decide what to support.
+
+The `{MinimumSdcVersion, latest}` matrix below is what eventually replaces a shared server
+with pinned ones on layer 1; staging stays the right target for the Windows job, which
+cannot run Linux containers.
 
 ## Sharp edges these tests exposed
 

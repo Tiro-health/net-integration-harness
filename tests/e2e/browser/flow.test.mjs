@@ -24,7 +24,8 @@ const REPO = join(HERE, "..", "..", "..");
 const BRIDGE_PATH = process.env.BRIDGE_PATH
   ?? join(REPO, "src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js");
 const BUNDLE_PATH = join(REPO, "src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-web-sdk.iife.js");
-const SDC_ENDPOINT = process.env.SDC_ENDPOINT ?? "https://sdc.tiro.health/fhir/r5";
+// Staging, never the production demo instance: see tests/e2e/README.md.
+const SDC_ENDPOINT = process.env.SDC_ENDPOINT ?? "https://sdc-staging.tiro.health/fhir/r5";
 const QUESTIONNAIRE = process.env.QUESTIONNAIRE
   ?? "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699";
 // A chip label in the default questionnaire (CHA2DS2-VASc: an age band). Override together

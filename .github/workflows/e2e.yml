@@ -9,9 +9,14 @@ name: E2E (GH-26)
 #                       cannot: the embedded bundle served over its virtual host under
 #                       DenyCors, bridge injection ordering, and the .NET handshake path.
 #
-# Advisory while it earns trust: both jobs are continue-on-error, so a red run reports
-# without blocking (GH-26 stages non-blocking before blocking). Drop continue-on-error to
-# make it a gate — that is the intended end state, notably on web-sdk pin bumps.
+# These gate: a red run blocks, deliberately. The suite catches failures nothing else can
+# (a save-draft that silently finalizes, a bundle the virtual host won't serve), and an
+# advisory red would just train people to ignore it.
+#
+# Both jobs target the STAGING SDC server, which runs ahead of production — so a server
+# regression surfaces here before customers meet it. Never production: these run nightly,
+# and their SdcClient traffic would otherwise show up as a phantom deployment in the
+# harness-version telemetry that atticus-backend#3568 aggregates.
 # Actions are pinned to full commit SHAs (GH-53); see ci.yml for the rationale.
 on:
   pull_request:
@@ -26,10 +31,12 @@ on:
   schedule:
     - cron: '0 5 * * *'
 
+env:
+  SDC_ENDPOINT: https://sdc-staging.tiro.health/fhir/r5
+
 jobs:
   browser:
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
       packages: read
@@ -54,7 +61,6 @@ jobs:
 
   webview2:
     runs-on: windows-latest
-    continue-on-error: true
     permissions:
       contents: read
       packages: read

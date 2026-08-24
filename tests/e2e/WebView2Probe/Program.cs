@@ -24,8 +24,10 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
     /// </summary>
     internal static class Program
     {
+        // Staging, never the production demo instance the viewer defaults to: see
+        // tests/e2e/README.md.
         private static readonly string SdcEndpoint =
-            Environment.GetEnvironmentVariable("SDC_ENDPOINT") ?? TiroFormViewerR5.DefaultSdcEndpointAddress;
+            Environment.GetEnvironmentVariable("SDC_ENDPOINT") ?? "https://sdc-staging.tiro.health/fhir/r5";
         private static readonly string Questionnaire =
             Environment.GetEnvironmentVariable("QUESTIONNAIRE")
             ?? "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699";
