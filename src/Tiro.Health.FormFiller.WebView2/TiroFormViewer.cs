@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -93,6 +94,14 @@ namespace Tiro.Health.FormFiller.WebView2
         public SmartMessageHandlerBase<TResource, TQR, TOO> MessageHandler => _smartWebMessageHandler;
 
         private const string VirtualHostName = "appassets.example"; // https://github.com/MicrosoftEdge/WebView2Feedback/issues/2381
+
+        // Cache key for the navigated page. The assembly's informational version, which the
+        // publish workflow sets from the release tag.
+        private static readonly string HarnessVersion =
+            typeof(TiroFormViewer<TResource, TQR, TOO>).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(TiroFormViewer<TResource, TQR, TOO>).Assembly.GetName().Version?.ToString()
+            ?? "0.0.0";
 
         // Tracks if WebView is initialized
         private Task _initializationTask;
@@ -432,7 +441,14 @@ namespace Tiro.Health.FormFiller.WebView2
                 // Embedded web-sdk on its own host, mapped before Navigate. DenyCors is fine
                 // for a plain <script src>; the bridge must not add a crossorigin attribute.
                 _browser.MapVirtualHost(WebSdkAssets.VirtualHostName, WebSdkAssets.FolderPath);
-                _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
+                // ?v=<harness version> for the same reason the SDK's file name carries its
+                // version: WebView2 caches by URL and virtual-host responses carry no cache
+                // headers, so at a constant URL an upgraded harness could load the previous
+                // release's page. That matters concretely — a cached pre-GH-60 page still
+                // carries a CDN <script> tag, which now collides with the injected SDK. A
+                // query string busts the cache without renaming anyone's files, so it works
+                // for a consumer-supplied WebContentFolder too.
+                _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html?v={Uri.EscapeDataString(HarnessVersion)}"));
             }
             catch
             {

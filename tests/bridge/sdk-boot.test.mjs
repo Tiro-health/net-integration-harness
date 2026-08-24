@@ -10,7 +10,6 @@ import { FormFillerStub } from "./form-filler-stub.mjs";
 
 // What the .NET host injects: the bundle URL with the pinned SDK version in the file name.
 const SDK_URL = "https://tiro-sdk.example/tiro-web-sdk.9.9.9-test.iife.js";
-const FALLBACK_URL = "https://tiro-sdk.example/tiro-web-sdk.iife.js";
 
 test("injects the embedded SDK from the harness virtual host before wiring", async () => {
     const el = new FormFillerStub();
@@ -24,16 +23,17 @@ test("injects the embedded SDK from the harness virtual host before wiring", asy
     assert.equal(h.fired("tiro-sdk-collision").length, 0);
 });
 
-test("without an injected URL it falls back, and says so", async () => {
-    // The .NET host always injects; the unversioned fallback exists only for a page-only
-    // harness, and the host never publishes that path — so a silent 404 would waste a
-    // diagnosis.
+test("no injected URL is a load failure, not a guessed path", async () => {
+    // There is no default URL: only the host knows the versioned file name. A missing
+    // injection must report as a load error, which the host refuses on, rather than
+    // fetching a path nothing publishes.
     const h = await loadBridge([new FormFillerStub()], { host: true, sdkUrl: null });
     await flush();
 
-    assert.deepEqual(h.injectedScripts.map(s => s.src), [FALLBACK_URL]);
+    assert.deepEqual(h.injectedScripts, [], "nothing should be fetched without a URL");
+    assert.equal(h.fired("tiro-sdk-error").length, 1);
     assert.ok(h.errors.some(e => e.includes("__tiroSdkUrl was not injected")),
-        `expected a fallback warning, got: ${JSON.stringify(h.errors)}`);
+        `expected a diagnostic, got: ${JSON.stringify(h.errors)}`);
 });
 
 test("foreign pre-defined element: no injection, hard error, wiring continues", async () => {

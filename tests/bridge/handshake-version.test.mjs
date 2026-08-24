@@ -26,6 +26,14 @@ test("reports version null when the SDK exposes none", async () => {
         { client: { name: "tiro-web-sdk", version: null, source: "embedded" } });
 });
 
+test("reports source 'error' when no SDK URL was injected", async () => {
+    const h = await loadBridge([new FormFillerStub()], { host: true, sdkUrl: null });
+    await flush();
+
+    assert.deepEqual(handshakePayload(h),
+        { client: { name: "tiro-web-sdk", version: null, source: "error" } });
+});
+
 test("reports source 'error' when the SDK failed to load", async () => {
     const h = await loadBridge([new FormFillerStub()], { host: true, sdkLoad: "fail" });
     await flush();

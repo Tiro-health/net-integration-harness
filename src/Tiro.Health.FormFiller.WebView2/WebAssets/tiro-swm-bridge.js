@@ -481,18 +481,12 @@
     // ============================================================
 
     // The embedded, validated @tiro-health/web-sdk served by the host (GH-60). The host
-    // injects the URL as window.__tiroSdkUrl before this script runs: the file name carries
-    // the SDK version for cache-busting, which a static asset cannot know. The fallback host
-    // must stay on WebSdkAssets.VirtualHostName — pinned by
-    // TestEmbeddedWebAssets.Bridge_TakesItsSdkUrlFromTheHost_AndFallsBackToTheMappedVirtualHost.
-    // It only serves a page-only harness (tests/bridge); the .NET host never publishes the
-    // unversioned path, so warn rather than fail quietly on a diagnosis-wasting 404.
-    if (!window.__tiroSdkUrl) {
-        console.error("[bridge] window.__tiroSdkUrl was not injected — falling back to the "
-            + "unversioned path, which the .NET host does not publish. Expect a 404 unless "
-            + "this page is served by a test harness.");
-    }
-    const SDK_URL = window.__tiroSdkUrl || "https://tiro-sdk.example/tiro-web-sdk.iife.js";
+    // injects the URL as window.__tiroSdkUrl before this script runs, because the file name
+    // carries the SDK version for cache-busting and a static asset cannot know it. There is
+    // no default: the only URL that ever works is the one the host publishes, so a missing
+    // injection is a load failure, reported as such rather than sent to a 404 whose message
+    // would blame the page's hosting.
+    const SDK_URL = window.__tiroSdkUrl;
 
     // Resolves with the SDK source reported at handshake: "embedded" | "collision"
     // | "error". The host refuses the session on the latter two (GH-61).
@@ -511,6 +505,14 @@
             fire("tiro-sdk-collision");
             return Promise.resolve("collision");
         }
+        if (!SDK_URL) {
+            console.error("[bridge] window.__tiroSdkUrl was not injected, so there is no SDK to "
+                + "load. The .NET host injects it before this script; a page-only harness must "
+                + "set it too.");
+            fire("tiro-sdk-error");
+            return Promise.resolve("error");
+        }
+
         return new Promise(resolve => {
             const script = document.createElement("script");
             script.src = SDK_URL;

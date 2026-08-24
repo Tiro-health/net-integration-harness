@@ -377,13 +377,15 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             var viewer = new TestableTiroFormViewer(browser, new R5.SmartMessageHandler(), new FakeTelemetrySink());
             try
             {
-                await PollFor(() => browser.InitializationScripts.Count >= 2, TimeSpan.FromSeconds(5));
+                // Wait for the two scripts themselves, not for a count: init also injects
+                // __tiroSentryConfig whenever the sink supplies a bootstrap config (this fake
+                // does), so a count of two is reached before the bridge is registered.
+                int sdkUrlScript = -1, bridgeScript = -1;
+                await PollFor(
+                    () => (sdkUrlScript = browser.InitializationScripts.FindIndex(x => x.Contains("__tiroSdkUrl="))) >= 0
+                        && (bridgeScript = browser.InitializationScripts.FindIndex(x => x.Contains("window.SmartWebMessaging ="))) >= 0,
+                    TimeSpan.FromSeconds(5));
 
-                var sdkUrlScript = browser.InitializationScripts.FindIndex(x => x.Contains("__tiroSdkUrl"));
-                var bridgeScript = browser.InitializationScripts.FindIndex(x => x.Contains("SmartWebMessaging"));
-
-                Assert.IsTrue(sdkUrlScript >= 0, "the host must inject window.__tiroSdkUrl");
-                Assert.IsTrue(bridgeScript >= 0, "the bridge must be injected");
                 Assert.IsTrue(sdkUrlScript < bridgeScript,
                     "the SDK URL must be injected before the bridge, which reads it at module scope");
                 StringAssert.Contains(browser.InitializationScripts[sdkUrlScript], WebSdkAssets.BundleUrl);

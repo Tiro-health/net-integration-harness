@@ -82,9 +82,10 @@ fires `tiro-sdk-collision`; a load failure fires `tiro-sdk-error` but still hand
 the host refuses loudly instead of timing out; a refused handshake (error ack) rejects
 immediately rather than after the 30s retry window.
 
-`handshake-version.test.mjs` (**GH-61**) pins the handshake report the host asserts on:
-`client.version` (the element's static version, `null` when absent) and `client.source`
-(`embedded` / `collision` / `error`).
+`handshake-version.test.mjs` (**GH-61**) pins the handshake report:
+`client.source` (`embedded` / `collision` / `error`), which is what the host refuses a session
+on, and `client.version` (the element's static version, `null` when absent), which it records
+for diagnostics only.
 
 `launch-context.test.mjs` is the regression suite for **GH-48**: launch context was
 dropped whenever the host's `SdcEndpointAddress` differed from the tiro-web-sdk's
