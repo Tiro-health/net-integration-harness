@@ -459,7 +459,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
 
             viewer.FormSubmitted += (_, _) => throw new InvalidOperationException("subscriber blew up");
-            browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-throw"));
+            browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-throw", outcomeError: false));
 
             var receive = sink.Sessions[0].Transactions.First(t =>
                 t.Operation == "swm.receive" && t.Name == "form.submitted");
