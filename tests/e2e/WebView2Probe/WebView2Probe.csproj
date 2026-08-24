@@ -22,4 +22,11 @@
     <ProjectReference Include="..\..\..\src\Tiro.Health.FormSdk.Client.Fhir.R5\Tiro.Health.FormSdk.Client.Fhir.R5.csproj" />
   </ItemGroup>
 
+  <!-- SdcClient's surface mentions HttpClient, which on .NET Framework lives in the
+       framework System.Net.Http assembly that SDK-style net48 projects don't reference by
+       default. Same workaround as the client project itself. -->
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
 </Project>
