@@ -403,6 +403,56 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             finally { viewer.Dispose(); }
         }
 
+        // A failed-validation submit finished the receive transaction InvalidArgument in
+        // OnFormSubmitted and then Ok in OnBrowserMessageReceived. The contract makes the
+        // second call a no-op, but SentryTelemetrySpan did not honour that, so Sentry
+        // reported the failure as ok. Callers must finish a span exactly once.
+        [TestMethod]
+        public async Task AFailedValidationSubmit_FinishesItsTransactionExactlyOnce()
+        {
+            var browser = new FakeEmbeddedBrowser();
+            var sink = new FakeTelemetrySink();
+            var viewer = new TestableTiroFormViewer(browser, new R5.SmartMessageHandler(), sink);
+            try
+            {
+                await PollFor(() => browser.Initialized, TimeSpan.FromSeconds(5));
+                browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+                browser.RaiseMessageReceived(BuildFailedValidationSubmitMessage("fs-1"));
+
+                var receive = await PollForSpan(sink, "form.submitted", TimeSpan.FromSeconds(5));
+                CollectionAssert.AreEqual(
+                    new[] { TelemetrySpanStatus.InvalidArgument }, receive.FinishCalls,
+                    "the receive transaction must be finished once, with the outcome-aware status");
+            }
+            finally { viewer.Dispose(); }
+        }
+
+        private static async Task<FakeTelemetrySpan> PollForSpan(FakeTelemetrySink sink, string name, TimeSpan timeout)
+        {
+            FakeTelemetrySpan span = null;
+            await PollFor(
+                () => (span = sink.Sessions[0].Transactions.Find(t => t.Name == name && t.Finished)) != null,
+                timeout);
+            return span;
+        }
+
+        private static string BuildFailedValidationSubmitMessage(string id) => $@"{{
+            ""messageId"": ""{id}"",
+            ""messagingHandle"": ""smart-web-messaging"",
+            ""messageType"": ""form.submitted"",
+            ""payload"": {{
+                ""response"": {{
+                    ""resourceType"": ""QuestionnaireResponse"",
+                    ""questionnaire"": ""http://example.org/q"",
+                    ""status"": ""completed""
+                }},
+                ""outcome"": {{
+                    ""resourceType"": ""OperationOutcome"",
+                    ""issue"": [ {{ ""severity"": ""error"", ""code"": ""required"", ""diagnostics"": ""missing answer"" }} ]
+                }}
+            }}
+        }}";
+
         private static string BuildHandshakeMessage(string id) => SwmTest.Handshake(id);
 
         private static string BuildFormSubmitMessage(string id, bool outcomeError) =>

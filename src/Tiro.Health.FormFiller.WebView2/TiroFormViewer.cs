@@ -143,6 +143,11 @@ namespace Tiro.Health.FormFiller.WebView2
         // the user handler, so its post-pump Finish call still sees the right span.
         private ITelemetrySpan _currentReceiveTransaction;
 
+        // Set when a notification handler finishes the receive transaction itself, so
+        // OnBrowserMessageReceived doesn't finish it a second time. Same thread and lifetime
+        // as _currentReceiveTransaction.
+        private bool _receiveTransactionFinished;
+
         // Explicit lifecycle state. Backed by int so Interlocked CAS/Exchange can transition
         // it atomically. Reads go through Volatile.Read for visibility across threads.
         private int _state = (int)TiroFormViewerState.Initializing;
@@ -499,6 +504,7 @@ namespace Tiro.Health.FormFiller.WebView2
             // the vast majority of integration issues; if you need payload capture for
             // dev work, do it in a custom ITelemetrySink in your own (non-shared) project.
             _currentReceiveTransaction = transaction;
+            _receiveTransactionFinished = false;
 
             try
             {
@@ -511,10 +517,13 @@ namespace Tiro.Health.FormFiller.WebView2
                     _browser.PostMessage(responseJson);
                 }
 
-                // OnFormSubmitted may have already finished the transaction with an outcome-aware
-                // status; ITelemetrySpan.Finish is required to be idempotent (subsequent calls
-                // are no-ops), so this is safe.
-                transaction?.Finish(TelemetrySpanStatus.Ok);
+                // OnFormSubmitted may already have finished this transaction with an
+                // outcome-aware status. Don't finish it again: the contract says repeat calls
+                // are no-ops, but SentryTelemetrySpan took the last status rather than the
+                // first, so an Ok here overwrote a submit's InvalidArgument and the trace
+                // shipped green. The adapter is fixed too; not double-finishing is the part
+                // that does not depend on every implementation getting it right.
+                if (!_receiveTransactionFinished) transaction?.Finish(TelemetrySpanStatus.Ok);
             }
             catch (Exception ex)
             {
@@ -607,10 +616,12 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 FormSubmitted?.Invoke(this, e);
                 ourReceiveTransaction?.Finish(success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument);
+                if (ourReceiveTransaction != null) _receiveTransactionFinished = true;
             }
             catch (Exception ex)
             {
                 ourReceiveTransaction?.Finish(ex);
+                if (ourReceiveTransaction != null) _receiveTransactionFinished = true;
                 _telemetry.CaptureException(ex);
                 // Rethrow so SmartMessageHandlerBase.HandleRequestMessage's catch turns this
                 // into an error response back to the JS bridge. Without the rethrow, the

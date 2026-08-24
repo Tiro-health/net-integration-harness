@@ -67,6 +67,14 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public bool Finished { get; private set; }
         public TelemetrySpanStatus? FinalStatus { get; private set; }
         public Exception FinalException { get; private set; }
+
+        /// <summary>
+        /// Every Finish call, in order — including the ones first-wins discards. The
+        /// contract makes repeats no-ops, so the observable status is the first; but a caller
+        /// that finishes twice is a bug (it relies on an idempotency real adapters have not
+        /// always had), and without recording the calls no test could see it.
+        /// </summary>
+        public List<TelemetrySpanStatus> FinishCalls { get; } = new List<TelemetrySpanStatus>();
         public Dictionary<string, string> Tags { get; } = new Dictionary<string, string>();
         public Dictionary<string, object> Extras { get; } = new Dictionary<string, object>();
         public List<FakeTelemetrySpan> Children { get; } = new List<FakeTelemetrySpan>();
@@ -89,6 +97,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 
         public void Finish(TelemetrySpanStatus status)
         {
+            FinishCalls.Add(status);
             // ITelemetrySpan contract: Finish must be idempotent (subsequent calls are no-ops).
             if (Finished) return;
             Finished = true;

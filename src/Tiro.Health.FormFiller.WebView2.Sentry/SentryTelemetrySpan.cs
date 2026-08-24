@@ -24,9 +24,24 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         public ITelemetrySpan StartChild(string operation, string description)
             => new SentryTelemetrySpan(_span.StartChild(operation, description));
 
-        public void Finish(TelemetrySpanStatus status) => _span.Finish(Map(status));
+        /// <summary>
+        /// First finish wins, per the <see cref="ITelemetrySpan"/> contract ("subsequent calls
+        /// are no-ops"). Sentry's own <c>Finish</c> is a bare status assignment and the envelope
+        /// is serialized lazily at flush, so without this guard a later <c>Finish(Ok)</c>
+        /// overwrote an earlier failure status and the trace shipped green.
+        /// </summary>
+        public void Finish(TelemetrySpanStatus status)
+        {
+            if (_span.IsFinished) return;
+            _span.Finish(Map(status));
+        }
 
-        public void Finish(Exception ex) => _span.Finish(ex);
+        /// <inheritdoc cref="Finish(TelemetrySpanStatus)"/>
+        public void Finish(Exception ex)
+        {
+            if (_span.IsFinished) return;
+            _span.Finish(ex);
+        }
 
         /// <summary>
         /// Scope-exit finish: completes the span with <see cref="SpanStatus.Ok"/> only if it
