@@ -63,7 +63,8 @@ namespace Tiro.Health.FormFiller.WebView2
         /// Read once when the <c>sdc.configure</c> payload is built, so set it before
         /// <see cref="SetContextAsync"/> — setting it afterwards has no effect. A viewer cannot
         /// be flipped between editable and view-only mid-session; use one viewer per role
-        /// (the form component locks itself after a submit regardless of this property).
+        /// (the form component locks itself after a final submit regardless of this property;
+        /// a saved draft leaves it editable so the user can carry on).
         /// </para>
         /// </summary>
         public bool ReadOnly { get; set; }
@@ -564,13 +565,9 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void OnFormSubmitted(object sender, FormSubmittedEventArgs<TQR, TOO> e)
         {
-            // A draft leaves the session usable: the doctor keeps filling and submits later,
-            // which is the documented save-draft flow. Advancing to Submitted here made the
-            // next SendFormRequestSubmitAsync throw "already been submitted", so save-draft
-            // was effectively one-shot. Only a final response is terminal. Preserves Disposed
-            // if the handler races with Dispose (terminal invariant).
-            var isFinal = IsResponseFinal(e.Response);
-            if (isFinal) AdvanceUnlessDisposed(TiroFormViewerState.Submitted);
+            // Only a final response is terminal — see IsResponseFinal. AdvanceUnlessDisposed
+            // preserves Disposed if the handler races with Dispose (terminal invariant).
+            if (IsResponseFinal(e.Response)) AdvanceUnlessDisposed(TiroFormViewerState.Submitted);
 
             var success = IsOutcomeSuccessful(e.Outcome);
             _session?.AddBreadcrumb("lifecycle", success ? "Form submitted (success)" : "Form submitted (validation errors)");

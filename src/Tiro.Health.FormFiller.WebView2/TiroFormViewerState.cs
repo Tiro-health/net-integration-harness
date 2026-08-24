@@ -28,8 +28,10 @@ namespace Tiro.Health.FormFiller.WebView2
         ContextSet,
 
         /// <summary>
-        /// <c>form.submitted</c> received and the <c>FormSubmitted</c> event has fired.
-        /// No further <c>Send*</c> operations are accepted.
+        /// A <b>final</b> <c>form.submitted</c> received and the <c>FormSubmitted</c> event
+        /// has fired. No further <c>Send*</c> operations are accepted. A saved draft
+        /// (<c>status = in-progress</c>) also raises <c>FormSubmitted</c> but leaves the
+        /// viewer in <see cref="ContextSet"/>, so the user can keep filling and submit later.
         /// </summary>
         Submitted,
 
