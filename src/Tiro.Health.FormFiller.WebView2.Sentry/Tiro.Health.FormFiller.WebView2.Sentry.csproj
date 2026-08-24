@@ -23,6 +23,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Tiro.Health.FormFiller.WebView2.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj" />
   </ItemGroup>
 

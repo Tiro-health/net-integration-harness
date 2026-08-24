@@ -19,6 +19,8 @@
     <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2\Tiro.Health.FormFiller.WebView2.csproj" />
     <ProjectReference Include="..\..\src\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj" />
     <ProjectReference Include="..\..\src\Tiro.Health.SmartWebMessaging.Fhir.R5\Tiro.Health.SmartWebMessaging.Fhir.R5.csproj" />
+    <!-- For TestSentryTelemetrySpan, which pins the Sentry behaviour the adapter relies on. -->
+    <ProjectReference Include="..\..\src\Tiro.Health.FormFiller.WebView2.Sentry\Tiro.Health.FormFiller.WebView2.Sentry.csproj" />
   </ItemGroup>
 
 </Project>
