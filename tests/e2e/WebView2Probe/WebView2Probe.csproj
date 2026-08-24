@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Tiro.Health.FormFiller.WebView2.Fhir.R5\Tiro.Health.FormFiller.WebView2.Fhir.R5.csproj" />
+    <!-- Stage B3 runs $extract over the QR the element produced, like the ExtractSample. -->
+    <ProjectReference Include="..\..\..\src\Tiro.Health.FormSdk.Client.Fhir.R5\Tiro.Health.FormSdk.Client.Fhir.R5.csproj" />
   </ItemGroup>
 
 </Project>
