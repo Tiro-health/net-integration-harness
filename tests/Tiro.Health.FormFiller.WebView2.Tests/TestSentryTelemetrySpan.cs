@@ -64,6 +64,23 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public void ARepeatFinishDoesNotMoveTheEndTimestamp()
+        {
+            var span = NewSpan();
+            var wrapped = new SentryTelemetrySpan(span);
+
+            wrapped.Finish(TelemetrySpanStatus.Ok);
+            var recorded = span.EndTimestamp;
+            wrapped.Finish(new InvalidOperationException("late"));
+
+            // The repeat call reaches Sentry on purpose, to bind the exception. The contract
+            // lets it associate that exception and nothing else, so a moved end timestamp —
+            // silently inflating the span's duration — would be a violation.
+            Assert.AreEqual(recorded, span.EndTimestamp);
+            Assert.IsNotNull(recorded);
+        }
+
+        [TestMethod]
         public void AFirstFinishWithAnExceptionStillSetsAFailureStatus()
         {
             var span = NewSpan();

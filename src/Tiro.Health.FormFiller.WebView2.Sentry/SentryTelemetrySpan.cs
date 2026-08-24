@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using global::Sentry;
 using Tiro.Health.FormFiller.WebView2.Telemetry;
 
@@ -12,7 +11,9 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
     internal sealed class SentryTelemetrySpan : ITelemetrySpan
     {
         private readonly ISpan _span;
-        private int _finished;
+        private readonly object _gate = new object();
+        private bool _finished;
+        private SpanStatus _finalStatus;
 
         public SentryTelemetrySpan(ISpan span)
         {
@@ -30,36 +31,53 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         /// First finish wins, per the <see cref="ITelemetrySpan"/> contract. Sentry's
         /// <c>Finish(status)</c> assigns the status BEFORE its own already-finished guard, and
         /// the captured transaction shares the tracer's trace context by reference while the
-        /// envelope is serialized lazily at flush — so without this a later <c>Finish(Ok)</c>
-        /// overwrote an earlier failure status and the trace shipped green.
+        /// envelope is serialized lazily at flush — so without a guard here a later
+        /// <c>Finish(Ok)</c> overwrote an earlier failure status and the trace shipped green.
         /// <para>
-        /// Interlocked rather than <c>IsFinished</c>: that is a non-atomic check-then-act over
-        /// a plain property, and these calls genuinely race (a round trip's cancellation
-        /// callback against its response handler). One wrapper owns exactly one span, so the
-        /// flag is a complete record of finishes through this adapter.
+        /// A lock rather than <c>IsFinished</c> or an interlocked flag: claiming the finish and
+        /// recording which status won have to happen together. These calls genuinely race — a
+        /// round trip's cancellation callback against its response handler — and with the two
+        /// steps separate, a loser reaching <see cref="Finish(Exception)"/> could read the
+        /// status back before the winner had assigned it and then re-assert the wrong one,
+        /// which is the same overwrite in miniature. One span finishes once, so there is no
+        /// contention worth optimising away.
         /// </para>
         /// </summary>
         public void Finish(TelemetrySpanStatus status)
         {
-            if (Interlocked.Exchange(ref _finished, 1) != 0) return;
-            _span.Finish(Map(status));
+            lock (_gate)
+            {
+                if (_finished) return;
+                _finished = true;
+                _finalStatus = Map(status);
+                _span.Finish(_finalStatus);
+            }
         }
 
         /// <summary>
-        /// As <see cref="Finish(TelemetrySpanStatus)"/>, but a repeat call still reaches
-        /// Sentry: <c>Finish(Exception, status)</c> binds the exception to this span before its
-        /// own guard, and that binding is what links the captured error event to the span in
-        /// the trace view. Re-asserting the status it already has keeps the linkage without
-        /// rewriting an outcome that may already have shipped.
+        /// As <see cref="Finish(TelemetrySpanStatus)"/>, except that a repeat call still
+        /// reaches Sentry: <c>Finish(Exception, status)</c> binds the exception to this span
+        /// before its own guard, and that binding is what links the captured error event to the
+        /// span in the trace view. It re-asserts the status the winning finish recorded, so the
+        /// linkage is added without rewriting an outcome that may already have shipped.
         /// </summary>
         public void Finish(Exception ex)
         {
-            if (Interlocked.Exchange(ref _finished, 1) != 0)
+            lock (_gate)
             {
-                _span.Finish(ex, _span.Status ?? SpanStatus.UnknownError);
-                return;
+                if (_finished)
+                {
+                    _span.Finish(ex, _finalStatus);
+                    return;
+                }
+
+                _finished = true;
+                _span.Finish(ex);
+                // Read back inside the lock, where no other finish can be in flight: whatever
+                // status Sentry derived from the exception is what a later repeat must
+                // re-assert, and hard-coding one here would silently diverge from it.
+                _finalStatus = _span.Status ?? SpanStatus.UnknownError;
             }
-            _span.Finish(ex);
         }
 
         /// <summary>
@@ -68,8 +86,13 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         /// </summary>
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _finished, 1) != 0) return;
-            _span.Finish(SpanStatus.Ok);
+            lock (_gate)
+            {
+                if (_finished) return;
+                _finished = true;
+                _finalStatus = SpanStatus.Ok;
+                _span.Finish(_finalStatus);
+            }
         }
 
         private static SpanStatus Map(TelemetrySpanStatus status)

@@ -81,6 +81,13 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public List<(TelemetrySpanStatus? Status, Exception Exception)> FinishCalls { get; }
             = new List<(TelemetrySpanStatus?, Exception)>();
 
+        /// <summary>
+        /// Exceptions handed to <see cref="Finish(Exception)"/> after the span had already
+        /// finished. The contract allows associating these for trace linkage, so they are kept
+        /// apart from <see cref="FinalException"/> rather than discarded or conflated with it.
+        /// </summary>
+        public List<Exception> LateAssociatedExceptions { get; } = new List<Exception>();
+
         /// <summary>Statuses from <see cref="FinishCalls"/>, for terser assertions.</summary>
         public IEnumerable<TelemetrySpanStatus> FinishStatuses
             => FinishCalls.Where(c => c.Status.HasValue).Select(c => c.Status.Value);
@@ -107,7 +114,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public void Finish(TelemetrySpanStatus status)
         {
             FinishCalls.Add((status, null));
-            // ITelemetrySpan contract: Finish must be idempotent (subsequent calls are no-ops).
+            // ITelemetrySpan contract: first finish wins.
             if (Finished) return;
             Finished = true;
             FinalStatus = status;
@@ -116,7 +123,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public void Finish(Exception ex)
         {
             FinishCalls.Add((null, ex));
-            if (Finished) return;
+            if (Finished)
+            {
+                // Not discarded: the contract lets a repeat exception finish associate its
+                // exception for trace linkage, and the Sentry adapter does exactly that. A
+                // fake that dropped it would disagree with the adapter in precisely the case
+                // FinishCalls exists to make visible — while still leaving FinalStatus and
+                // FinalException, which belong to the winning finish, untouched.
+                LateAssociatedExceptions.Add(ex);
+                return;
+            }
             Finished = true;
             FinalException = ex;
         }

@@ -466,6 +466,8 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreEqual(1, receive.FinishCalls.Count,
                 $"finished {receive.FinishCalls.Count} times; the exception finish must be the only one");
             Assert.IsNotNull(receive.FinalException);
+            // Nothing arrived after the winning finish, so there is nothing to associate late.
+            CollectionAssert.AreEqual(new Exception[0], receive.LateAssociatedExceptions);
         }
 
         private static string BuildHandshakeMessage(string id) => SwmTest.Handshake(id);
