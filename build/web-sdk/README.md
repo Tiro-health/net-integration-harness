@@ -6,10 +6,16 @@ ships the bundle it was validated against — the SDK version is not a choice
 integrators or customers make (see the decision record in GH-64).
 
 - `package.json` — the pin (exact version, no range) plus `tiro.expectedElementVersion`,
-  the version the host asserts the live element reports at handshake (GH-61).
-  Keep it `null` until the pin reaches the first web-sdk release that exposes a
-  static element version (atticus-frontend#2927); from then on keep it equal to
-  the pinned version. `copy-bundle.mjs` enforces both invariants.
+  which arms the host-side version assert (GH-61). **Leave it `null`.** The served
+  URL carries the SDK version, so a cached bundle from a previous release cannot
+  be loaded in the first place; and the virtual host serves from local disk, with
+  no network, proxy or CDN that could substitute other bytes. What refuses a
+  session is the handshake's `source` field (`collision` / `error`), which is
+  entirely ours and needs no SDK support. Setting `expectedElementVersion` adds a
+  way to refuse a working session in exchange for detecting something already
+  prevented — a bad trade here. The element's reported version is kept for
+  diagnostics (`TiroFormViewer.PageWebSdkVersion`, and naming the foreign version
+  in a collision message).
 - `copy-bundle.mjs` — stages the bundle + generated `web-sdk.version.json` into
   `src/Tiro.Health.FormFiller.WebView2/WebAssets/` (gitignored there, embedded
   as resources at build time).
@@ -55,10 +61,6 @@ token). A bump PR is gated by:
 - the `bridge-contract` type-check, which runs against **this pin** (not `latest`),
 - the bridge behavioral suite (`tests/bridge`),
 - the e2e smoke once GH-26 lands.
-
-When bumping to the first release that ships atticus-frontend#2927, set
-`tiro.expectedElementVersion` to the same version in the same PR — that arms
-the host-side handshake assert (GH-61) with no code change.
 
 The nightly `@latest` run in `bridge-contract.yml` is an advisory heads-up for
 the *next* bump — a red nightly means the next bump needs bridge work, not that
