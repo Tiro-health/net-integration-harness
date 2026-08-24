@@ -9,9 +9,19 @@ name: E2E (GH-26)
 #                       cannot: the embedded bundle served over its virtual host under
 #                       DenyCors, bridge injection ordering, and the .NET handshake path.
 #
-# Manual + nightly while it earns trust (GH-26 stages non-blocking before blocking).
+# Advisory while it earns trust: both jobs are continue-on-error, so a red run reports
+# without blocking (GH-26 stages non-blocking before blocking). Drop continue-on-error to
+# make it a gate — that is the intended end state, notably on web-sdk pin bumps.
 # Actions are pinned to full commit SHAs (GH-53); see ci.yml for the rationale.
 on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/Tiro.Health.FormFiller.WebView2/WebAssets/**'
+      - 'src/Tiro.Health.FormFiller.WebView2/**.cs'
+      - 'build/web-sdk/**'
+      - 'tests/e2e/**'
+      - '.github/workflows/e2e.yml'
   workflow_dispatch:
   schedule:
     - cron: '0 5 * * *'
@@ -19,6 +29,7 @@ on:
 jobs:
   browser:
     runs-on: ubuntu-latest
+    continue-on-error: true
     permissions:
       contents: read
       packages: read
@@ -43,6 +54,7 @@ jobs:
 
   webview2:
     runs-on: windows-latest
+    continue-on-error: true
     permissions:
       contents: read
       packages: read
