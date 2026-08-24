@@ -8,6 +8,8 @@ using Tiro.Health.FormFiller.WebView2.Fhir.R5;
 using Tiro.Health.FormSdk.Client.Fhir.R5;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
+// Hl7.Fhir.Model.Task is a FHIR resource, and it shadows the bare Task used below.
+using Task = System.Threading.Tasks.Task;
 
 namespace Tiro.Health.FormFiller.WebView2.E2E
 {
@@ -60,13 +62,10 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
 
         private static async Task<int> RunAsync(TiroFormViewerR5 viewer)
         {
+            // RunAsync is started from Form.Shown and every await below resumes on the UI
+            // thread, so these lists are only ever touched by one thread.
             var submissions = new List<QuestionnaireResponse>();
-            var nextSubmission = new TaskCompletionSource<QuestionnaireResponse>();
-            viewer.FormSubmitted += (_, e) =>
-            {
-                submissions.Add(e.Response);
-                nextSubmission.TrySetResult(e.Response);
-            };
+            viewer.FormSubmitted += (_, e) => submissions.Add(e.Response);
 
             var dirtyChanges = new List<bool>();
             viewer.FormDirtyChanged += (_, e) => dirtyChanges.Add(e.IsDirty);
@@ -81,11 +80,6 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
                 catch (WebSdkLoadException ex)
                 {
                     Report("FAIL", "web-sdk load refused: reason=" + ex.Reason + " :: " + ex.Message);
-                    return 1;
-                }
-                catch (WebSdkVersionMismatchException ex)
-                {
-                    Report("FAIL", "version mismatch: expected=" + ex.ExpectedVersion + " reported=" + ex.ReportedVersion);
                     return 1;
                 }
                 catch (TimeoutException)
@@ -113,7 +107,7 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             // --- Stage B: save-draft, keep filling, finalize, extract ------------------
             // Mirrors the EhrShell + Extract samples. Every assertion here is on a typed
             // FHIR POCO, so it also proves Firely can deserialize what the element emits.
-            var draft = await RequestSubmit(viewer, "save-draft", nextSubmission, () => nextSubmission = new TaskCompletionSource<QuestionnaireResponse>());
+            var draft = await FirstSubmit(viewer, "save-draft", submissions);
             if (draft == null) { Report("FAIL", "no form.submitted after save-draft"); return 1; }
             if (draft.Status != QuestionnaireResponse.QuestionnaireResponseStatus.InProgress)
             {
@@ -128,7 +122,7 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             }
             Report("PASS", "stage B1 — save-draft returned in-progress and the session stayed usable");
 
-            var final = await RequestSubmit(viewer, null, nextSubmission, () => nextSubmission = new TaskCompletionSource<QuestionnaireResponse>());
+            var final = await SubmitOnce(viewer, null, submissions);
             if (final == null) { Report("FAIL", "no form.submitted after finalize"); return 1; }
             if (final.Status != QuestionnaireResponse.QuestionnaireResponseStatus.Completed)
             {
@@ -143,8 +137,7 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             Report("PASS", "stage B2 — finalize returned completed and ended the session");
 
             // $extract over the QR the real element produced, against the same server the
-            // form rendered against — the ExtractSample's flow, and the SdcClient's
-            // User-Agent (GH-63) on a real request.
+            // form rendered against — the ExtractSample's flow.
             using (var client = new SdcClient(new Uri(SdcEndpoint)))
             using (var cts = new CancellationTokenSource(StageTimeout))
             {
@@ -166,46 +159,87 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             return 0;
         }
 
-        private static async Task<QuestionnaireResponse> RequestSubmit(
-            TiroFormViewerR5 viewer, string intent,
-            TaskCompletionSource<QuestionnaireResponse> pending, Action resetPending)
+        /// <summary>
+        /// The first submit of a session, retried until one lands. A submit requested before
+        /// the questionnaire has rendered is silently dropped: the bridge's
+        /// ui.form.requestSubmit handler returns early when formFiller.questionnaire is unset,
+        /// with no error and no response. And SetContextAsync returns on the page's ACK of
+        /// sdc.displayQuestionnaire, not on render — so "context set" does not mean "ready to
+        /// submit", and nothing in the host API exposes render-completion.
+        /// </summary>
+        private static async Task<QuestionnaireResponse> FirstSubmit(
+            TiroFormViewerR5 viewer, string intent, List<QuestionnaireResponse> submissions)
         {
-            // Retried, because a submit requested before the questionnaire has rendered is
-            // silently dropped: the bridge's ui.form.requestSubmit handler returns early when
-            // formFiller.questionnaire is unset, with no error and no response. And
-            // SetContextAsync returns on the page's ACK of sdc.displayQuestionnaire, not on
-            // render — so "context set" does not mean "ready to submit". Nothing in the host
-            // API exposes render-completion, hence polling.
+            var mark = submissions.Count;
             var deadline = DateTime.UtcNow + StageTimeout;
-            var attempt = 0;
+
+            for (var attempt = 1; DateTime.UtcNow < deadline; attempt++)
+            {
+                if (!await Send(viewer, intent)) return null;
+
+                // Short per-attempt wait: a dropped request yields no response at all, so
+                // asking again is the only way to tell "not rendered yet" from "slow".
+                var landed = await WaitForSubmission(submissions, mark, TimeSpan.FromSeconds(10));
+                if (landed == null) continue;
+
+                if (attempt > 1)
+                {
+                    // An attempt that was merely slow rather than dropped still produces a
+                    // response, so a retry can yield two. Let the extras arrive and account
+                    // for them here, or the next stage would read one as its own result.
+                    await Task.Delay(TimeSpan.FromSeconds(2));
+                    var extras = submissions.Count - mark - 1;
+                    Report("INFO", "submit landed on attempt " + attempt
+                        + (extras > 0 ? ", discarding " + extras + " duplicate response(s) from earlier attempts" : ""));
+                }
+                return landed;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// A submit after the form is known to have rendered: sent once, then awaited for the
+        /// full stage timeout. Deliberately not retried — a resubmit races the first request
+        /// rather than replacing it, and once the page has finalized a response it refuses the
+        /// second with an error, which would turn a merely slow finalize into a hard failure.
+        /// </summary>
+        private static async Task<QuestionnaireResponse> SubmitOnce(
+            TiroFormViewerR5 viewer, string intent, List<QuestionnaireResponse> submissions)
+        {
+            var mark = submissions.Count;
+            if (!await Send(viewer, intent)) return null;
+            return await WaitForSubmission(submissions, mark, StageTimeout);
+        }
+
+        private static async Task<bool> Send(TiroFormViewerR5 viewer, string intent)
+        {
+            try
+            {
+                await viewer.SendFormRequestSubmitAsync(intent);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Report("FAIL", "SendFormRequestSubmitAsync(" + (intent ?? "finalize") + ") threw "
+                    + ex.GetType().Name + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Polls for the first submission recorded after <paramref name="mark"/>. Polling
+        /// rather than a TaskCompletionSource because the completion source has to be swapped
+        /// between stages, and a response arriving inside that window is lost.
+        /// </summary>
+        private static async Task<QuestionnaireResponse> WaitForSubmission(
+            List<QuestionnaireResponse> submissions, int mark, TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
             while (DateTime.UtcNow < deadline)
             {
-                attempt++;
-                try
-                {
-                    await viewer.SendFormRequestSubmitAsync(intent);
-                }
-                catch (Exception ex)
-                {
-                    Report("FAIL", "SendFormRequestSubmitAsync(" + (intent ?? "finalize") + ") threw "
-                        + ex.GetType().Name + ": " + ex.Message);
-                    return null;
-                }
-
-                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
-                {
-                    try
-                    {
-                        var response = await pending.Task.WaitAsync(cts.Token);
-                        resetPending();
-                        if (attempt > 1) Report("INFO", "submit landed on attempt " + attempt);
-                        return response;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        // Form not ready yet; the request was a no-op. Try again.
-                    }
-                }
+                if (submissions.Count > mark) return submissions[mark];
+                await Task.Delay(50);
             }
 
             return null;

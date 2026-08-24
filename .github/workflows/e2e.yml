@@ -13,19 +13,33 @@ name: E2E (GH-26)
 # (a save-draft that silently finalizes, a bundle the virtual host won't serve), and an
 # advisory red would just train people to ignore it.
 #
-# Both jobs target the STAGING SDC server, which runs ahead of production — so a server
-# regression surfaces here before customers meet it. Never production: these run nightly,
-# and their SdcClient traffic would otherwise show up as a phantom deployment in the
-# harness-version telemetry that atticus-backend#3568 aggregates.
+# What a pull request gates on is only the part that needs no server — the bundle, the
+# injection order, the handshake. The stages that talk to a live SDC server run nightly and
+# on demand, because a staging outage must not redden a pull request that cannot have caused
+# it; a suite that goes red for reasons outside the author's control gets ignored just as
+# fast as an advisory one.
+#
+# Server-dependent stages target the STAGING SDC server, which runs ahead of production — so
+# a server regression surfaces here before customers meet it. Never production: their
+# SdcClient traffic would otherwise show up as a phantom deployment in the harness-version
+# telemetry that atticus-backend#3568 aggregates.
 # Actions are pinned to full commit SHAs (GH-53); see ci.yml for the rationale.
 on:
   pull_request:
     branches: [master]
+    # Every project the probe links, not just the WebView2 one: a change in the messaging
+    # layer or the SDC client reaches the probe through a ProjectReference and can break the
+    # flow without touching a path listed here.
     paths:
-      - 'src/Tiro.Health.FormFiller.WebView2/WebAssets/**'
-      - 'src/Tiro.Health.FormFiller.WebView2/**.cs'
+      - 'src/Tiro.Health.FormFiller.WebView2/**'
+      - 'src/Tiro.Health.FormFiller.WebView2.Fhir.R5/**'
+      - 'src/Tiro.Health.SmartWebMessaging/**'
+      - 'src/Tiro.Health.SmartWebMessaging.Fhir.R5/**'
+      - 'src/Tiro.Health.FormSdk.Client/**'
+      - 'src/Tiro.Health.FormSdk.Client.Fhir.R5/**'
       - 'build/web-sdk/**'
       - 'tests/e2e/**'
+      - '.github/actions/stage-web-sdk/**'
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
   schedule:
@@ -33,10 +47,15 @@ on:
 
 env:
   SDC_ENDPOINT: https://sdc-staging.tiro.health/fhir/r5
+  # Off for pull requests, on for the nightly and manual runs: see the note above.
+  E2E_SERVER_TESTS: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+  PROBE_SKIP_SERVER_STAGES: ${{ github.event_name == 'pull_request' && '1' || '0' }}
 
 jobs:
   browser:
     runs-on: ubuntu-latest
+    # A hung Playwright wait would otherwise sit on the runner for six hours.
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: read
@@ -52,7 +71,7 @@ jobs:
       - name: Install Playwright
         working-directory: tests/e2e/browser
         run: |
-          npm install --ignore-scripts
+          npm ci --ignore-scripts
           npx playwright install --with-deps chromium-headless-shell
 
       - name: Run browser e2e
@@ -61,6 +80,9 @@ jobs:
 
   webview2:
     runs-on: windows-latest
+    # Windows minutes bill at 2x, and a probe waiting on a form that never renders would
+    # otherwise burn the default six-hour ceiling before anyone noticed.
+    timeout-minutes: 25
     permissions:
       contents: read
       packages: read

@@ -26,11 +26,27 @@ const BRIDGE_PATH = process.env.BRIDGE_PATH
 const BUNDLE_PATH = join(REPO, "src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-web-sdk.iife.js");
 // Staging, never the production demo instance: see tests/e2e/README.md.
 const SDC_ENDPOINT = process.env.SDC_ENDPOINT ?? "https://sdc-staging.tiro.health/fhir/r5";
-const QUESTIONNAIRE = process.env.QUESTIONNAIRE
-  ?? "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699";
-// A chip label in the default questionnaire (CHA2DS2-VASc: an age band). Override together
-// with QUESTIONNAIRE.
+// Version-pinned: the same canonical also carries a mutable draft-1, and an edit to that
+// draft must not be able to change what this test renders. The pin matters more than it
+// looks — staging's Questionnaire search ignores the version parameter (a bogus version
+// still returns every revision, draft first), so it is the SDK that has to honour it. That
+// it does is asserted below, not assumed.
+const DEFAULT_QUESTIONNAIRE =
+  "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699|1.0.0";
+const QUESTIONNAIRE = process.env.QUESTIONNAIRE ?? DEFAULT_QUESTIONNAIRE;
+// A chip label in the default questionnaire (CHA2DS2-VASc, in Dutch: the middle age band).
+// The dash is U+2013 EN DASH, as authored in the template — a hyphen will not match.
+// Override together with QUESTIONNAIRE.
 const ANSWER_LABEL = process.env.ANSWER_LABEL ?? "65–74";
+// Everything past the handshake needs a live SDC server. PR runs skip those tests so a
+// staging outage cannot redden an unrelated pull request, while the nightly and manual runs
+// exercise the whole flow. See .github/workflows/e2e.yml.
+// The pinned revision and the draft behind the same canonical happen to use disjoint
+// linkIds, which is what makes "which revision actually rendered" observable from the QR
+// alone. Only meaningful for the default template.
+const PINNED_LINKID_PREFIX = QUESTIONNAIRE === DEFAULT_QUESTIONNAIRE ? "019cf82c-" : null;
+const SERVER_TESTS = process.env.E2E_SERVER_TESTS !== "0";
+const NEEDS_SERVER = { skip: SERVER_TESTS ? false : "needs a live SDC server" };
 
 const MIME = { ".html": "text/html", ".js": "application/javascript" };
 
@@ -58,11 +74,12 @@ async function launch() {
   page.on("console", m => { if (m.type() === "error") consoleErrors.push(m.text()); });
   page.on("pageerror", e => consoleErrors.push(String(e)));
 
+  // window.__tiroSdkUrl is how the real host tells the bridge where the bundle lives; the
+  // bridge has no fallback URL of its own (GH-71) and refuses to load without it. Set here,
+  // pointing at the stand-in host, exactly as TiroFormViewer sets it before injecting.
+  await page.addInitScript(`window.__tiroSdkUrl = ${JSON.stringify(base + "/tiro-web-sdk.iife.js")};`);
   await page.addInitScript(HOST_SHIM);
-  // The bundle is served by the stand-in host, so point the bridge's SDK_URL at it.
-  await page.addInitScript({
-    content: readFileSync(BRIDGE_PATH, "utf8").replace("https://tiro-sdk.example", base),
-  });
+  await page.addInitScript({ content: readFileSync(BRIDGE_PATH, "utf8") });
   await page.goto(base, { waitUntil: "load" });
   await page.waitForFunction("window.__host?.handshakes.length > 0", { timeout: 60000 });
 
@@ -128,7 +145,7 @@ function answeredItems(item = []) {
   ]);
 }
 
-test("a user's answer reaches the host, dirties the form, and drives calculation", async () => {
+test("a user's answer reaches the host, dirties the form, and drives calculation", NEEDS_SERVER, async () => {
   const h = await launch();
   try {
     await h.displayQuestionnaire();
@@ -143,6 +160,15 @@ test("a user's answer reaches the host, dirties the form, and drives calculation
 
     const submitted = await h.requestSubmit(undefined);
     const answers = answeredItems(submitted.response.item);
+
+    // The version pin was honoured, not merely requested: these linkIds exist only in
+    // 1.0.0. Without this, a server that quietly served draft-1 would still pass every
+    // assertion below, and the suite would be testing a template someone can edit.
+    if (PINNED_LINKID_PREFIX) {
+      assert.ok(
+        answers.length > 0 && answers.every(a => a.linkId.startsWith(PINNED_LINKID_PREFIX)),
+        `answers came from another revision than the pinned one: ${JSON.stringify(answers.map(a => a.linkId))}`);
+    }
 
     // The chosen coding survived the round trip to the host...
     assert.ok(
@@ -159,12 +185,16 @@ test("a user's answer reaches the host, dirties the form, and drives calculation
   }
 });
 
-test("save-draft saves a draft and finalize completes — against the live element", async () => {
+test("save-draft saves a draft and finalize completes — against the live element", NEEDS_SERVER, async () => {
   const h = await launch();
   try {
     await h.displayQuestionnaire();
 
     const draft = await h.requestSubmit("save-draft");
+    // The QR echoes the canonical it was filled from, so this is where a dropped version
+    // pin would show up — the difference between rendering 1.0.0 and rendering whatever
+    // draft-1 happens to say today.
+    assert.equal(draft.response.questionnaire, QUESTIONNAIRE);
     // The bug this whole workstream exists for: an SDK that ignores the option finalizes
     // here instead, silently. Verified against the pre-fix bridge, which returns
     // "completed" for this call.
