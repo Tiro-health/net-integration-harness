@@ -222,6 +222,13 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             // for it; this asserts the .NET sender side now mirrors that with its own
             // swm.send span — so a unified trace shows both halves and Sentry users
             // can see configure activity in the .NET project, not only in JS.
+            //
+            // The span now closes on the page's RESPONSE, not on send. sdc.configure is a
+            // routed request like any other: the bridge acks it, or answers with an error
+            // payload when its handler throws. Finishing on send meant the span was always
+            // Ok and a rejection went unnoticed — which matters because this message carries
+            // readOnly, so a refused configure means a read-only launch painting an
+            // editable form.
             var sink = new FakeTelemetrySink();
             var viewer = NewViewer(sink, out var browser, out var handler);
             viewer.SdcEndpointAddress = "https://sdc.example.test/fhir/r5";
@@ -236,7 +243,19 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             var configureSpan = session.Transactions.FirstOrDefault(t =>
                 t.Operation == "swm.send" && t.Name == "sdc.configure");
             Assert.IsNotNull(configureSpan, "Expected an swm.send transaction named sdc.configure.");
-            Assert.IsTrue(configureSpan.Finished, "sdc.configure is fire-and-forget; the span should finish synchronously.");
+            Assert.IsFalse(configureSpan.Finished,
+                "sdc.configure is a round trip now; its span must stay open until the page responds.");
+
+            // Ack it the way the bridge does, and the span closes Ok.
+            var configureId = JsonProbe.ExtractStringField(
+                browser.PostedMessages.FindLast(m => m.Contains("\"messageType\":\"sdc.configure\"")), "messageId");
+            browser.RaiseMessageReceived($@"{{
+                ""messageId"": ""resp-cfg"",
+                ""responseToMessageId"": ""{configureId}"",
+                ""additionalResponsesExpected"": false,
+                ""payload"": {{ ""$type"": ""base"" }}
+            }}");
+            await PollFor(() => configureSpan.Finished, TimeSpan.FromSeconds(5));
             Assert.AreEqual(TelemetrySpanStatus.Ok, configureSpan.FinalStatus);
             Assert.IsTrue(configureSpan.Tags.TryGetValue("messageType", out var mt) && mt == "sdc.configure");
             Assert.IsTrue(configureSpan.Tags.TryGetValue("sdc_server", out var sdc) && sdc == "https://sdc.example.test/fhir/r5",
