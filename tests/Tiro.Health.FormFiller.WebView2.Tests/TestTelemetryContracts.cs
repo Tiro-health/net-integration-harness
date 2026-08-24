@@ -367,6 +367,30 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.Fail($"Predicate did not become true within {timeout}.");
         }
 
+        // The bridge resolves window.__tiroSdkUrl at module scope, so the host must register
+        // that script BEFORE the bridge. Deleting the injection would otherwise leave every
+        // test green while the page silently fell back to a path the host never publishes.
+        [TestMethod]
+        public async Task SdkUrlIsInjectedBeforeTheBridge()
+        {
+            var browser = new FakeEmbeddedBrowser();
+            var viewer = new TestableTiroFormViewer(browser, new R5.SmartMessageHandler(), new FakeTelemetrySink());
+            try
+            {
+                await PollFor(() => browser.InitializationScripts.Count >= 2, TimeSpan.FromSeconds(5));
+
+                var sdkUrlScript = browser.InitializationScripts.FindIndex(x => x.Contains("__tiroSdkUrl"));
+                var bridgeScript = browser.InitializationScripts.FindIndex(x => x.Contains("SmartWebMessaging"));
+
+                Assert.IsTrue(sdkUrlScript >= 0, "the host must inject window.__tiroSdkUrl");
+                Assert.IsTrue(bridgeScript >= 0, "the bridge must be injected");
+                Assert.IsTrue(sdkUrlScript < bridgeScript,
+                    "the SDK URL must be injected before the bridge, which reads it at module scope");
+                StringAssert.Contains(browser.InitializationScripts[sdkUrlScript], WebSdkAssets.BundleUrl);
+            }
+            finally { viewer.Dispose(); }
+        }
+
         private static string BuildHandshakeMessage(string id) => SwmTest.Handshake(id);
 
         private static string BuildFormSubmitMessage(string id, bool outcomeError) =>

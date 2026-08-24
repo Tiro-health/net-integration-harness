@@ -133,19 +133,11 @@ namespace Tiro.Health.FormFiller.WebView2
         public TiroFormViewerState State => (TiroFormViewerState)Volatile.Read(ref _state);
 
         /// <summary>
-        /// The tiro-web-sdk version the page reported at handshake (GH-61), or null when
-        /// the running SDK predates the version field. Diagnostics only.
+        /// The tiro-web-sdk version the page reported at handshake, or null when the running
+        /// SDK predates the version field (atticus-frontend#2927). Diagnostics only — it is
+        /// not asserted against; see <c>build/web-sdk/README.md</c>.
         /// </summary>
         public string PageWebSdkVersion { get; private set; }
-
-        /// <summary>
-        /// The element version the handshake must report, or null to skip the assert.
-        /// Defaults to the embedded bundle's expectedElementVersion (GH-61); the assert
-        /// arms itself when the pin bumps to a version-exposing SDK. Internal so
-        /// consumer subclasses cannot opt out of the assert; tests override via
-        /// InternalsVisibleTo.
-        /// </summary>
-        internal virtual string ExpectedWebSdkElementVersion => WebSdkAssets.ExpectedElementVersion;
 
         /// <summary>
         /// Whether the user has made any changes to the displayed form since it loaded.
@@ -520,7 +512,7 @@ namespace Tiro.Health.FormFiller.WebView2
             var existing = _webSdkFailure;
             if (existing != null) throw existing;
 
-            var failure = EvaluateWebSdkReport(reported, source);
+            var failure = EvaluateWebSdkReport(source);
             if (failure != null)
             {
                 _webSdkFailure = failure;
@@ -539,15 +531,15 @@ namespace Tiro.Health.FormFiller.WebView2
                 reported == null ? "Handshake received" : $"Handshake received (tiro-web-sdk {reported})");
         }
 
-        // GH-61: collision/load-error always refuse the session; a version mismatch
-        // refuses only when armed (build/web-sdk expectedElementVersion non-null).
-        private Exception EvaluateWebSdkReport(string reported, string source)
+        // The page must be running the bundle we served. `source` is what proves it:
+        // "collision" means the page loaded its own copy, "error" that ours never loaded.
+        // The reported VERSION is not compared — the served URL carries the version, so a
+        // stale bundle cannot load, and the virtual host reads from local disk with no
+        // network or proxy that could substitute other bytes. See build/web-sdk/README.md.
+        private Exception EvaluateWebSdkReport(string source)
         {
             if (source == "collision" || source == "error")
                 return new WebSdkLoadException(source);
-            var expected = ExpectedWebSdkElementVersion;
-            if (expected != null && !string.Equals(reported, expected, StringComparison.Ordinal))
-                return new WebSdkVersionMismatchException(expected, reported);
             return null;
         }
 

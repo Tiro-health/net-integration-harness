@@ -7,12 +7,14 @@ using R5 = Tiro.Health.SmartWebMessaging.Fhir.R5;
 namespace Tiro.Health.FormFiller.WebView2.Tests
 {
     /// <summary>
-    /// GH-61: the handshake reports the element's version and how the SDK loaded.
-    /// Collision/load-error refuse the session unconditionally; a version mismatch
-    /// refuses when the expected version is armed. Refusal is terminal and loud.
+    /// The page reports at handshake how the web-sdk got there (<c>source</c>) and which
+    /// version it is running. <c>source</c> is the guard: the session is refused when the
+    /// page loaded its own copy, or when ours failed to load. The version is recorded for
+    /// diagnostics and deliberately not asserted — the served URL carries it, so a stale
+    /// bundle cannot load (see build/web-sdk/README.md).
     /// </summary>
     [TestClass]
-    public class TestWebSdkVersionAssert
+    public class TestWebSdkHandshakeReport
     {
         private FakeEmbeddedBrowser _browser = null!;
         private TestableTiroFormViewer _viewer = null!;
@@ -43,67 +45,58 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
-        public async Task ArmedAndMatching_SessionProceeds()
+        public async Task EmbeddedSource_SessionProceeds_AndTheVersionIsRecorded()
         {
-            _viewer.ExpectedWebSdkVersionOverride = "0.4.0";
-
             var setContext = await StartSetContextAsync();
-            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload("0.4.0")));
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload("0.3.2")));
             await setContext.Within5s();
 
-            Assert.AreEqual("0.4.0", _viewer.PageWebSdkVersion);
+            Assert.AreEqual("0.3.2", _viewer.PageWebSdkVersion);
             Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
         }
 
         [TestMethod]
-        public async Task ArmedAndDifferent_SetContextThrowsMismatch()
+        public async Task AnyReportedVersion_IsAccepted_BecauseTheUrlCarriesTheVersion()
         {
-            _viewer.ExpectedWebSdkVersionOverride = "0.4.0";
-
+            // A version unlike the embedded one is NOT a refusal: the URL is what prevents a
+            // stale bundle, and an armed equality assert would only add a way to refuse a
+            // working session.
             var setContext = await StartSetContextAsync();
             _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload("0.2.1")));
+            await setContext.Within5s();
 
-            await Assert.ThrowsExceptionAsync<WebSdkVersionMismatchException>(() => setContext.Within5s());
-            Assert.AreEqual(TiroFormViewerState.Initializing, _viewer.State,
-                "A rejected handshake must not advance the state machine.");
+            Assert.AreEqual("0.2.1", _viewer.PageWebSdkVersion);
+            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
         }
 
         [TestMethod]
-        public async Task ArmedAndNoVersionReported_SetContextThrowsMismatch()
+        public async Task LegacyEmptyPayload_SessionProceeds_WithNoVersion()
         {
-            _viewer.ExpectedWebSdkVersionOverride = "0.4.0";
-
-            var setContext = await StartSetContextAsync();
-            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload(null)));
-
-            await Assert.ThrowsExceptionAsync<WebSdkVersionMismatchException>(() => setContext.Within5s());
-        }
-
-        [TestMethod]
-        public async Task ArmedAndLegacyEmptyPayload_SetContextThrowsMismatch()
-        {
-            _viewer.ExpectedWebSdkVersionOverride = "0.4.0";
-
+            // An SDK predating the static version field (atticus-frontend#2927) reports none.
             var setContext = await StartSetContextAsync();
             _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+            await setContext.Within5s();
 
-            await Assert.ThrowsExceptionAsync<WebSdkVersionMismatchException>(() => setContext.Within5s());
+            Assert.IsNull(_viewer.PageWebSdkVersion);
+            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
         }
 
         [TestMethod]
-        public async Task CollisionSource_RefusesSession_EvenUnarmed()
+        public async Task CollisionSource_RefusesTheSession()
         {
-            // Page loaded its own SDK copy — refused regardless of version arming.
+            // The page loaded its own SDK copy: the pairing is unvalidated, so refuse.
             var setContext = await StartSetContextAsync();
             _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload("0.3.2", source: "collision")));
 
             await Assert.ThrowsExceptionAsync<WebSdkLoadException>(() => setContext.Within5s());
+            Assert.AreEqual(TiroFormViewerState.Initializing, _viewer.State,
+                "a refused handshake must not advance the state machine");
         }
 
         [TestMethod]
-        public async Task ErrorSource_RefusesSession_EvenUnarmed()
+        public async Task ErrorSource_RefusesTheSession()
         {
-            // Embedded SDK failed to load — the form can never render; fail, don't blank.
+            // Our bundle never loaded, so the form can never render; fail, don't blank.
             var setContext = await StartSetContextAsync();
             _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload(null, source: "error")));
 
@@ -125,32 +118,18 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
-        public async Task LateMismatch_AfterSuccessfulHandshake_FailsSubsequentOperations()
+        public async Task LateCollision_AfterASuccessfulHandshake_FailsSubsequentOperations()
         {
-            _viewer.ExpectedWebSdkVersionOverride = "0.4.0";
-
             var setContext = await StartSetContextAsync();
-            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload("0.4.0")));
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload("0.3.2")));
             await setContext.Within5s();
 
-            // A second, mismatching handshake (page reload with a foreign bundle) can't
-            // fault the one-shot TCS but must still fail everything after it.
-            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-2", ClientPayload("0.2.1")));
+            // A page reload that swapped the SDK cannot fault the one-shot handshake TCS,
+            // but must still fail everything after it.
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-2", ClientPayload("0.2.1", source: "collision")));
 
-            await Assert.ThrowsExceptionAsync<WebSdkVersionMismatchException>(
+            await Assert.ThrowsExceptionAsync<WebSdkLoadException>(
                 () => _viewer.SendFormRequestSubmitAsync());
-        }
-
-        [TestMethod]
-        public async Task Unarmed_VersionIsRecordedButNotAsserted()
-        {
-            // Default override is null — the assert is unarmed (pinned SDK predates #2927).
-            var setContext = await StartSetContextAsync();
-            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1", ClientPayload("0.2.1")));
-            await setContext.Within5s();
-
-            Assert.AreEqual("0.2.1", _viewer.PageWebSdkVersion);
-            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
         }
     }
 }

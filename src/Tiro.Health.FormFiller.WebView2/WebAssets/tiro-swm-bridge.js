@@ -481,13 +481,18 @@
     // ============================================================
 
     // The embedded, validated @tiro-health/web-sdk served by the host (GH-60). The host
-    // injects the URL as window.__tiroSdkUrl before this script runs, because the file name
-    // carries the SDK version for cache-busting and a static asset cannot know it. The
-    // fallback keeps the bridge usable in a page-only harness (see tests/e2e/browser) and
+    // injects the URL as window.__tiroSdkUrl before this script runs: the file name carries
+    // the SDK version for cache-busting, which a static asset cannot know. The fallback host
     // must stay on WebSdkAssets.VirtualHostName — pinned by
-    // TestEmbeddedWebAssets.Bridge_LoadsSdkFromTheMappedVirtualHost.
-    const SDK_URL = (typeof window !== "undefined" && window.__tiroSdkUrl)
-        || "https://tiro-sdk.example/tiro-web-sdk.iife.js";
+    // TestEmbeddedWebAssets.Bridge_TakesItsSdkUrlFromTheHost_AndFallsBackToTheMappedVirtualHost.
+    // It only serves a page-only harness (tests/bridge); the .NET host never publishes the
+    // unversioned path, so warn rather than fail quietly on a diagnosis-wasting 404.
+    if (!window.__tiroSdkUrl) {
+        console.error("[bridge] window.__tiroSdkUrl was not injected — falling back to the "
+            + "unversioned path, which the .NET host does not publish. Expect a 404 unless "
+            + "this page is served by a test harness.");
+    }
+    const SDK_URL = window.__tiroSdkUrl || "https://tiro-sdk.example/tiro-web-sdk.iife.js";
 
     // Resolves with the SDK source reported at handshake: "embedded" | "collision"
     // | "error". The host refuses the session on the latter two (GH-61).

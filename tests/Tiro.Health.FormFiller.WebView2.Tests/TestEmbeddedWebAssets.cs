@@ -1,4 +1,6 @@
+using System;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -95,6 +97,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             StringAssert.Contains(WebSdkAssets.BundleUrl, WebSdkAssets.Version);
             StringAssert.StartsWith(WebSdkAssets.BundleUrl, $"https://{WebSdkAssets.VirtualHostName}/");
             StringAssert.EndsWith(WebSdkAssets.BundleUrl, ".iife.js");
+        }
+
+        // The URL the page fetches and the file the host publishes are derived separately;
+        // if they ever disagree the SDK 404s at runtime and the form never renders.
+        [TestMethod]
+        public void BundleUrl_ResolvesToThePublishedFile()
+        {
+            Assert.AreEqual(WebSdkAssets.BundleFileName, new Uri(WebSdkAssets.BundleUrl).Segments.Last());
+            Assert.IsTrue(File.Exists(Path.Combine(WebSdkAssets.FolderPath, WebSdkAssets.BundleFileName)),
+                $"the bundle was not published as '{WebSdkAssets.BundleFileName}' in {WebSdkAssets.FolderPath}");
         }
 
         // The bridge handles the protocol's sdc.configure message: it stashes the
