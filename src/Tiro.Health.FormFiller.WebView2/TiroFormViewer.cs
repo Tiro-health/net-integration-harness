@@ -143,11 +143,13 @@ namespace Tiro.Health.FormFiller.WebView2
         // the user handler, so its post-pump Finish call still sees the right span.
         private ITelemetrySpan _currentReceiveTransaction;
 
-        // Set when a notification handler finishes the receive transaction itself, so
-        // OnBrowserMessageReceived doesn't finish it a second time. Frame-scoped like
-        // _currentReceiveTransaction, and saved/restored with it around each inbound message
-        // so a nested delivery cannot leak its answer into the outer frame.
-        private bool _receiveTransactionFinished;
+        // The receive transaction a notification handler finished itself, so
+        // OnBrowserMessageReceived doesn't finish it a second time. Compared by identity
+        // rather than tracked with a flag: a flag says "some frame's handler finished its
+        // transaction" and a nested delivery could answer for the outer frame, which is a
+        // representation problem no invariant fixes. An identity cannot be mistaken for
+        // another frame's.
+        private ITelemetrySpan _finishedReceiveTransaction;
 
         // Explicit lifecycle state. Backed by int so Interlocked CAS/Exchange can transition
         // it atomically. Reads go through Volatile.Read for visibility across threads.
@@ -506,14 +508,11 @@ namespace Tiro.Health.FormFiller.WebView2
             // dev work, do it in a custom ITelemetrySink in your own (non-shared) project.
             // Saved and restored, not just assigned: a subscriber that pumps the message loop
             // (MessageBox.Show in a CloseApplication/FormSubmitted handler) lets WebView2
-            // deliver a NESTED message inside this try. Leaving either field as the nested
-            // frame left it made the outer frame either skip finishing its own transaction —
-            // which is never captured, so the whole transaction vanishes — or attach a status
-            // to a span that had already gone.
+            // deliver a NESTED message inside this try, and the outer frame still needs the
+            // span a later handler attaches its status to. Not load-bearing for the
+            // finished-transaction check below, which compares identities.
             var previousReceiveTransaction = _currentReceiveTransaction;
-            var previousReceiveFinished = _receiveTransactionFinished;
             _currentReceiveTransaction = transaction;
-            _receiveTransactionFinished = false;
 
             try
             {
@@ -527,25 +526,25 @@ namespace Tiro.Health.FormFiller.WebView2
                 }
 
                 // OnFormSubmitted may already have finished this transaction with an
-                // outcome-aware status. Don't finish it again: the contract says repeat calls
-                // are no-ops, but SentryTelemetrySpan took the last status rather than the
-                // first, so an Ok here overwrote a submit's InvalidArgument and the trace
-                // shipped green. The adapter is fixed too; not double-finishing is the part
-                // that does not depend on every implementation getting it right.
-                if (!_receiveTransactionFinished) transaction?.Finish(TelemetrySpanStatus.Ok);
+                // outcome-aware status; an Ok here overwrote it and the trace shipped green.
+                // Skipped rather than relying on the adapter's first-wins guard because this
+                // call is unconditional and avoidable — unlike the send paths, where a cancel
+                // callback and a response handler genuinely race and that guard is the only
+                // answer.
+                if (!ReferenceEquals(_finishedReceiveTransaction, transaction))
+                    transaction?.Finish(TelemetrySpanStatus.Ok);
             }
             catch (Exception ex)
             {
                 // Guarded like the success path: a handler may already have finished this
-                // transaction, and not double-finishing is what keeps the reported status
-                // independent of any ITelemetrySpan implementation's idempotency.
-                if (!_receiveTransactionFinished) transaction?.Finish(ex);
+                // transaction with a status that says more than "an exception escaped".
+                if (!ReferenceEquals(_finishedReceiveTransaction, transaction))
+                    transaction?.Finish(ex);
                 _telemetry.CaptureException(ex);
             }
             finally
             {
                 _currentReceiveTransaction = previousReceiveTransaction;
-                _receiveTransactionFinished = previousReceiveFinished;
             }
         }
 
@@ -622,19 +621,20 @@ namespace Tiro.Health.FormFiller.WebView2
             // active receive transaction is _currentReceiveTransaction. Capture into a
             // local before invoking the user handler: if the handler pumps the message
             // loop (e.g. MessageBox.Show), a nested inbound will overwrite then null the
-            // field, but our local still points at the right span. OnBrowserMessageReceived's
-            // final Finish(Ok) will be a no-op since Finish is idempotent.
+            // field, but our local still points at the right span. Recording it in
+            // _finishedReceiveTransaction is what stops OnBrowserMessageReceived finishing it
+            // a second time with Ok.
             var ourReceiveTransaction = _currentReceiveTransaction;
             try
             {
                 FormSubmitted?.Invoke(this, e);
                 ourReceiveTransaction?.Finish(success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument);
-                _receiveTransactionFinished = ourReceiveTransaction != null;
+                _finishedReceiveTransaction = ourReceiveTransaction;
             }
             catch (Exception ex)
             {
                 ourReceiveTransaction?.Finish(ex);
-                _receiveTransactionFinished = ourReceiveTransaction != null;
+                _finishedReceiveTransaction = ourReceiveTransaction;
                 _telemetry.CaptureException(ex);
                 // Rethrow so SmartMessageHandlerBase.HandleRequestMessage's catch turns this
                 // into an error response back to the JS bridge. Without the rethrow, the

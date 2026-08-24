@@ -12,8 +12,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
     /// The adapter against the real SDK. Every other telemetry test asserts through
     /// FakeTelemetrySink, which by construction cannot see the behaviour the adapter exists to
     /// contain: that Sentry assigns a span's status BEFORE its own already-finished guard, so a
-    /// later Finish rewrites an outcome that has not been serialized yet. These tests fail on
-    /// the unguarded adapter, and will fail again if a Sentry upgrade changes that behaviour.
+    /// later Finish rewrites an outcome that has not been serialized yet.
+    /// <para>
+    /// Two kinds of test here, worth not confusing. Regression tests, which fail on the
+    /// unguarded adapter: <see cref="ASecondFinishDoesNotRewriteTheOutcome"/> and
+    /// <see cref="ARepeatExceptionFinishKeepsTheEarlierStatus"/>. And pins on SDK behaviour the
+    /// adapter relies on but does not implement, which passed before this guard existed and
+    /// exist to fail if a Sentry upgrade moves the ground: the end timestamp being write-once,
+    /// an exception finish producing a failure status, and a finish that happened outside the
+    /// wrapper being left alone.
+    /// </para>
     /// <para>
     /// A DisabledHub tracer is a real ISpan that touches no network.
     /// </para>
@@ -61,6 +69,21 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             wrapped.Finish(new InvalidOperationException("late failure"));
 
             Assert.AreEqual(SpanStatus.DeadlineExceeded, span.Status);
+        }
+
+        [TestMethod]
+        public void AFinishFromOutsideTheWrapperIsNotOverwritten()
+        {
+            var span = NewSpan();
+            var wrapped = new SentryTelemetrySpan(span);
+
+            // What an idle-timeout transaction does: the SDK finishes the span and the wrapper
+            // never hears about it, so its own flag is no guide.
+            span.Finish(SpanStatus.Aborted);
+            wrapped.Finish(TelemetrySpanStatus.Ok);
+            wrapped.Dispose();
+
+            Assert.AreEqual(SpanStatus.Aborted, span.Status);
         }
 
         [TestMethod]

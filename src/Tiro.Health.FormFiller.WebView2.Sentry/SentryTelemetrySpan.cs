@@ -47,7 +47,10 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         {
             lock (_gate)
             {
-                if (_finished) return;
+                // _span.IsFinished as well as our own flag: the SDK can finish a span behind
+                // the wrapper (an idle-timeout transaction), and writing a status through to
+                // one that has already gone is the same overwrite from the other direction.
+                if (_finished || _span.IsFinished) return;
                 _finished = true;
                 _finalStatus = Map(status);
                 _span.Finish(_finalStatus);
@@ -72,6 +75,8 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
                 }
 
                 _finished = true;
+                // No IsFinished check on this path: the exception binding has to happen even
+                // if the SDK finished the span behind us, and there is no bind-only API.
                 _span.Finish(ex);
                 // Read back inside the lock, where no other finish can be in flight: whatever
                 // status Sentry derived from the exception is what a later repeat must
@@ -88,7 +93,7 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         {
             lock (_gate)
             {
-                if (_finished) return;
+                if (_finished || _span.IsFinished) return;
                 _finished = true;
                 _finalStatus = SpanStatus.Ok;
                 _span.Finish(_finalStatus);
