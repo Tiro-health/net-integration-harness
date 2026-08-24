@@ -7,7 +7,9 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <RuntimeIdentifiers>win</RuntimeIdentifiers>
+    <!-- win-x86 as well as win: a net48 executable gets a 32-bit RID implicitly on Windows,
+         which a library does not, and a lock file generated without it is rejected there. -->
+    <RuntimeIdentifiers>win;win-x86</RuntimeIdentifiers>
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <!-- In the solution so a breaking change to a referenced project fails the build (one
