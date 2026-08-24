@@ -1,0 +1,91 @@
+name: E2E (GH-26)
+
+# Two layers, because neither alone covers the seam:
+#
+#   browser (ubuntu)  — real <tiro-form-filler> + real bridge + real SDC server. Catches
+#                       what the stub in tests/bridge cannot: save-draft actually coming
+#                       back in-progress rather than merely calling a method named submit.
+#   webview2 (windows)— real harness binary in real WebView2. Catches what a plain browser
+#                       cannot: the embedded bundle served over its virtual host under
+#                       DenyCors, bridge injection ordering, and the .NET handshake path.
+#
+# Manual + nightly while it earns trust (GH-26 stages non-blocking before blocking).
+# Actions are pinned to full commit SHAs (GH-53); see ci.yml for the rationale.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Stage pinned web-sdk bundle
+        uses: ./.github/actions/stage-web-sdk
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Playwright
+        working-directory: tests/e2e/browser
+        run: |
+          npm install --ignore-scripts
+          npx playwright install --with-deps chromium-headless-shell
+
+      - name: Run browser e2e
+        working-directory: tests/e2e/browser
+        run: npm test
+
+  webview2:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Stage pinned web-sdk bundle
+        uses: ./.github/actions/stage-web-sdk
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2.0.0
+
+      - name: Build probe
+        run: msbuild tests/e2e/WebView2Probe/WebView2Probe.csproj -t:Restore,Build -p:Configuration=Release
+
+      # Records what the runner actually provides, so a failure below is diagnosable
+      # rather than a mystery: the probe needs a WebView2 runtime and a desktop session.
+      - name: Report WebView2 runtime
+        shell: pwsh
+        run: |
+          $keys = @(
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+            'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          )
+          $found = $false
+          foreach ($k in $keys) {
+            if (Test-Path $k) { "WebView2 runtime: $((Get-ItemProperty $k).pv)"; $found = $true }
+          }
+          if (-not $found) { "WebView2 runtime: NOT FOUND in the usual registry keys" }
+
+      - name: Run WebView2 probe
+        shell: pwsh
+        run: |
+          $exe = "tests/e2e/WebView2Probe/bin/Release/net48/WebView2Probe.exe"
+          & $exe
+          $code = $LASTEXITCODE
+          Write-Host "probe exit code: $code"
+          exit $code

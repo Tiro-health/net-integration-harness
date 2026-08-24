@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RuntimeIdentifiers>win</RuntimeIdentifiers>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Tiro.Health.FormFiller.WebView2.E2E</RootNamespace>
+    <AssemblyName>WebView2Probe</AssemblyName>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Tiro.Health.FormFiller.WebView2.Fhir.R5\Tiro.Health.FormFiller.WebView2.Fhir.R5.csproj" />
+  </ItemGroup>
+
+</Project>
