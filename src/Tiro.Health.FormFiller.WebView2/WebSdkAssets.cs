@@ -16,11 +16,20 @@ namespace Tiro.Health.FormFiller.WebView2
     {
         private const string BundleResourceName = "Tiro.Health.FormFiller.WebView2.WebAssets.tiro-web-sdk.iife.js";
         private const string VersionResourceName = "Tiro.Health.FormFiller.WebView2.WebAssets.web-sdk.version.json";
-        internal const string BundleFileName = "tiro-web-sdk.iife.js";
+        // The virtual host serves this by name, so the name is what the browser caches
+        // against. Versioned: the bytes change with every pin bump while the host stays
+        // constant, and a constant URL let WebView2 serve a previous release's bundle after
+        // an upgrade. Cache-busting by URL prevents that rather than detecting it.
+        internal static string BundleFileName => $"tiro-web-sdk.{Version}.iife.js";
 
-        // Must match SDK_URL in WebAssets/tiro-swm-bridge.js — pinned together by
-        // TestEmbeddedWebAssets.Bridge_LoadsSdkFromTheMappedVirtualHost.
         internal const string VirtualHostName = "tiro-sdk.example";
+
+        /// <summary>
+        /// Absolute URL the bridge loads the bundle from. Injected into the page as
+        /// <c>window.__tiroSdkUrl</c> before the bridge runs, because the bridge is a static
+        /// asset and cannot know the version.
+        /// </summary>
+        internal static string BundleUrl => $"https://{VirtualHostName}/{BundleFileName}";
 
         private static readonly Lazy<string> _folderPath = new Lazy<string>(
             Extract, LazyThreadSafetyMode.ExecutionAndPublication);

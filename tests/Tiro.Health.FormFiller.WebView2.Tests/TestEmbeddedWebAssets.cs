@@ -75,14 +75,26 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.IsFalse(string.IsNullOrEmpty(WebSdkAssets.Version));
         }
 
-        // The bridge's SDK_URL and the host's virtual-host mapping are hardcoded on
-        // both sides of a runtime boundary; this pins them together.
+        // The bridge reads its SDK URL from window.__tiroSdkUrl, which the host injects, and
+        // falls back to the same virtual host. Both sides of that runtime boundary are
+        // hardcoded, so pin them together.
         [TestMethod]
-        public void Bridge_LoadsSdkFromTheMappedVirtualHost()
+        public void Bridge_TakesItsSdkUrlFromTheHost_AndFallsBackToTheMappedVirtualHost()
         {
             var bridge = ReadEmbeddedString("Tiro.Health.FormFiller.WebView2.WebAssets.tiro-swm-bridge.js");
 
-            StringAssert.Contains(bridge, $"https://{WebSdkAssets.VirtualHostName}/{WebSdkAssets.BundleFileName}");
+            StringAssert.Contains(bridge, "window.__tiroSdkUrl");
+            StringAssert.Contains(bridge, $"https://{WebSdkAssets.VirtualHostName}/");
+        }
+
+        // The served file name carries the SDK version: the virtual host caches by URL, so a
+        // constant name let WebView2 serve a previous release's bundle after an upgrade.
+        [TestMethod]
+        public void BundleUrl_CarriesTheEmbeddedSdkVersion()
+        {
+            StringAssert.Contains(WebSdkAssets.BundleUrl, WebSdkAssets.Version);
+            StringAssert.StartsWith(WebSdkAssets.BundleUrl, $"https://{WebSdkAssets.VirtualHostName}/");
+            StringAssert.EndsWith(WebSdkAssets.BundleUrl, ".iife.js");
         }
 
         // The bridge handles the protocol's sdc.configure message: it stashes the

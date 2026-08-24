@@ -386,6 +386,13 @@ namespace Tiro.Health.FormFiller.WebView2
                 // longer pre-injected here. It now travels as a protocol-conformant
                 // sdc.configure message sent after handshake — see SetContextAsync.
 
+                // Tell the bridge where to load the embedded web-sdk from. Injected rather
+                // than hardcoded because the file name carries the SDK version (cache-busting
+                // across pin bumps) and the bridge is a static asset. Must precede the
+                // bridge, which reads it at module scope.
+                await _browser.AddInitializationScriptAsync(
+                    "window.__tiroSdkUrl=" + System.Text.Json.JsonSerializer.Serialize(WebSdkAssets.BundleUrl) + ";");
+
                 // Inject the SMART Web Messaging bridge — owns protocol, transport,
                 // telemetry instrumentation, and <tiro-form-filler> auto-wiring on the
                 // page side. Page is UI-only; it interacts via window.tiro, the
