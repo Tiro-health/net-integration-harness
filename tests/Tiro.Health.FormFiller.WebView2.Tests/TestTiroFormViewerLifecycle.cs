@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Tiro.Health.FormFiller.WebView2.Tests.Fakes;
+using static Tiro.Health.FormFiller.WebView2.Tests.Fakes.SwmTest;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
 using Tiro.Health.SmartWebMessaging.Message.Payload;
@@ -486,16 +487,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             return matches[0];
         }
 
-        private static async Task PollFor(Func<bool> predicate, TimeSpan timeout)
-        {
-            var deadline = DateTime.UtcNow + timeout;
-            while (DateTime.UtcNow < deadline)
-            {
-                if (predicate()) return;
-                await Task.Delay(10);
-            }
-            Assert.Fail($"Predicate did not become true within {timeout}.");
-        }
 
         private static string BuildHandshakeMessage(string id) => SwmTest.Handshake(id);
 

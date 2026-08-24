@@ -4,8 +4,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Tiro.Health.FormFiller.WebView2.Tests.Fakes;
+using static Tiro.Health.FormFiller.WebView2.Tests.Fakes.SwmTest;
 using Tiro.Health.SmartWebMessaging;
-using Tiro.Health.SmartWebMessaging.Events;
 using R5 = Tiro.Health.SmartWebMessaging.Fhir.R5;
 
 namespace Tiro.Health.FormFiller.WebView2.Tests
@@ -49,10 +49,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             }}
         }}";
 
-        /// <summary>The messageId of the last request the viewer posted to the page.</summary>
-        private string LastPostedMessageId()
+        /// <summary>
+        /// The messageId of the last request of a given type the viewer posted. Indexing
+        /// positionally would race: SetContextAsync's post-handshake continuation runs on a
+        /// pool thread while OnBrowserMessageReceived posts the handshake ack, so "the last
+        /// message" is not deterministic.
+        /// </summary>
+        private string PostedMessageId(string messageType)
         {
-            var json = _browser.PostedMessages[_browser.PostedMessages.Count - 1];
+            var json = _browser.PostedMessages.FindLast(m => m.Contains($"\"messageType\":\"{messageType}\""));
+            Assert.IsNotNull(json, $"no {messageType} was posted; saw {_browser.PostedMessages.Count} messages");
             return JsonProbe.ExtractStringField(json, "messageId");
         }
 
@@ -69,7 +75,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             await _viewer.SendFormRequestSubmitAsync().Within5s();
             _browser.RaiseMessageReceived(
-                ErrorResponseTo(LastPostedMessageId(), "HandlerException", "form not ready"));
+                ErrorResponseTo(PostedMessageId("ui.form.requestSubmit"), "HandlerException", "form not ready"));
 
             await PollFor(() => errors.Count == 1, TimeSpan.FromSeconds(5));
             Assert.AreEqual("ui.form.requestSubmit", errors[0].MessageType);
@@ -95,7 +101,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             await _viewer.SendFormRequestSubmitAsync().Within5s();
             _browser.RaiseMessageReceived($@"{{
                 ""messageId"": ""resp-ok"",
-                ""responseToMessageId"": ""{LastPostedMessageId()}"",
+                ""responseToMessageId"": ""{PostedMessageId("ui.form.requestSubmit")}"",
                 ""additionalResponsesExpected"": false,
                 ""payload"": {{ ""$type"": ""base"" }}
             }}");
@@ -115,26 +121,79 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
             await setContext.Within5s();
 
-            // The display request is the last thing SetContextAsync posted.
             _browser.RaiseMessageReceived(
-                ErrorResponseTo(LastPostedMessageId(), "UnknownMessageTypeException", "no handler"));
+                ErrorResponseTo(PostedMessageId("sdc.displayQuestionnaire"), "UnknownMessageTypeException", "no handler"));
 
             await PollFor(() => errors.Count == 1, TimeSpan.FromSeconds(5));
             Assert.AreEqual("sdc.displayQuestionnaire", errors[0].MessageType);
         }
 
+        [TestMethod]
+        public async Task PageRejectsSdcConfigure_RaisesPageError()
+        {
+            // sdc.configure carries readOnly / sdcServer / dataServer. Nothing used to
+            // register a response handler for it, so a rejection was invisible — and a
+            // silently refused configure means a read-only launch painting an editable form.
+            var errors = new List<PageErrorEventArgs>();
+            _viewer.PageError += (_, e) => errors.Add(e);
+
+            await DelayUntilBrowserInitialized();
+            _viewer.SdcEndpointAddress = "https://sdc.example/fhir/r5";
+            _viewer.ReadOnly = true;
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+            await setContext.Within5s();
+
+            _browser.RaiseMessageReceived(
+                ErrorResponseTo(PostedMessageId("sdc.configure"), "HandlerException", "bad config"));
+
+            await PollFor(() => errors.Count == 1, TimeSpan.FromSeconds(5));
+            Assert.AreEqual("sdc.configure", errors[0].MessageType);
+        }
+
+        [TestMethod]
+        public async Task AThrowingSubscriber_IsCapturedNotSwallowed()
+        {
+            // The invoke sits on the inbound listener path, whose exceptions are logged into
+            // NullLogger by default. A reporting mechanism must not be able to lose a failure.
+            _viewer.PageError += (_, _) => throw new InvalidOperationException("subscriber blew up");
+
+            await DelayUntilBrowserInitialized();
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+            await setContext.Within5s();
+
+            await _viewer.SendFormRequestSubmitAsync().Within5s();
+            _browser.RaiseMessageReceived(
+                ErrorResponseTo(PostedMessageId("ui.form.requestSubmit"), "HandlerException", "nope"));
+
+            await PollFor(
+                () => _sink.CapturedExceptions.Exists(ex => ex.Message.Contains("subscriber blew up")),
+                TimeSpan.FromSeconds(5));
+        }
+
+        [TestMethod]
+        public async Task PageError_CarriesTheRejectedMessageId()
+        {
+            // A host that issued a save-draft and a finalize must be able to tell which failed.
+            var errors = new List<PageErrorEventArgs>();
+            _viewer.PageError += (_, e) => errors.Add(e);
+
+            await DelayUntilBrowserInitialized();
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+            await setContext.Within5s();
+
+            await _viewer.SendFormRequestSubmitAsync("save-draft").Within5s();
+            var rejected = PostedMessageId("ui.form.requestSubmit");
+            _browser.RaiseMessageReceived(ErrorResponseTo(rejected, "HandlerException", "not ready"));
+
+            await PollFor(() => errors.Count == 1, TimeSpan.FromSeconds(5));
+            Assert.AreEqual(rejected, errors[0].MessageId);
+        }
+
         private async Task DelayUntilBrowserInitialized()
             => await PollFor(() => _browser.Initialized, TimeSpan.FromSeconds(5));
 
-        private static async Task PollFor(Func<bool> condition, TimeSpan timeout)
-        {
-            var deadline = DateTime.UtcNow + timeout;
-            while (DateTime.UtcNow < deadline)
-            {
-                if (condition()) return;
-                await Task.Delay(20);
-            }
-            Assert.Fail($"Condition did not become true within {timeout}.");
-        }
     }
 }

@@ -695,9 +695,13 @@ namespace Tiro.Health.FormFiller.WebView2
                         if (ReadOnly) configurationMap["readOnly"] = true;
                         object configuration = configurationMap.Count == 0 ? null : (object)configurationMap;
 
-                        // sdc.configure is fire-and-forget — no response message — so the
-                        // span finishes synchronously on send completion. Mirrors the JS
-                        // bridge's swm.receive span so the trace shows both halves.
+                        // The bridge DOES respond to sdc.configure — it acks every routed
+                        // request, or answers with an error payload when its handler throws or
+                        // the type is unknown. Nothing used to register a handler here, so a
+                        // rejection was invisible: this message carries readOnly, sdcServer and
+                        // dataServer, so a silently refused configure means a read-only launch
+                        // painting an editable form. Wrapped like the other round trips, which
+                        // also finishes the span on the response rather than on the send.
                         var configureSpan = _session?.StartTransaction("sdc.configure", "swm.send");
                         configureSpan?.SetTag("messageType", "sdc.configure");
                         if (!string.IsNullOrEmpty(SdcEndpointAddress)) configureSpan?.SetTag("sdc_server", SdcEndpointAddress);
@@ -710,8 +714,9 @@ namespace Tiro.Health.FormFiller.WebView2
                                 terminologyServer: null,
                                 dataServer: string.IsNullOrEmpty(DataEndpointAddress) ? null : DataEndpointAddress,
                                 configuration: configuration,
+                                responseHandler: WrapForRoundTrip(
+                                    "sdc.configure", configureSpan, cancellationToken, originalHandler: null),
                                 cancellationToken: linkedCts.Token);
-                            configureSpan?.Finish(TelemetrySpanStatus.Ok);
                         }
                         catch (OperationCanceledException)
                         {
@@ -826,14 +831,17 @@ namespace Tiro.Health.FormFiller.WebView2
                 // answers with an error payload instead of an ack. Nothing used to inspect
                 // it, so the request looked successful and the failure existed only in the
                 // WebView console. Report before handing the response on.
-                if (response?.Payload is ErrorResponse error)
-                    OnPageError(messageType, error, span);
+                var pageError = response?.Payload as ErrorResponse;
+                if (pageError != null) OnPageError(messageType, response, pageError);
 
                 try
                 {
                     if (originalHandler != null)
                         await originalHandler(response);
-                    span?.Finish(TelemetrySpanStatus.Ok);
+                    // Finished ONCE, with the outcome already known: finishing InternalError
+                    // here and Ok a line later shipped "ok" to Sentry, because ITelemetrySpan
+                    // implementations are not all idempotent despite the contract.
+                    span?.Finish(pageError != null ? TelemetrySpanStatus.InternalError : TelemetrySpanStatus.Ok);
                 }
                 catch (Exception ex)
                 {
@@ -843,16 +851,28 @@ namespace Tiro.Health.FormFiller.WebView2
             };
         }
 
-        // Surfaces a page-side rejection three ways, because each reaches a different
-        // audience: the PageError event for integrator code, telemetry for support, and an
-        // error span status so the trace isn't misleadingly green.
-        private void OnPageError(string messageType, ErrorResponse error, ITelemetrySpan span)
+        // Surfaces a page-side rejection two ways, because each reaches a different audience:
+        // telemetry for support, and the PageError event for integrator code. The span status
+        // is set by the caller, which knows the whole outcome. Everything here is guarded:
+        // this method exists so a failure is never silent, so it must not itself be able to
+        // swallow one — a throwing subscriber would otherwise fault the inbound listener task
+        // and be logged into NullLogger.
+        private void OnPageError(string messageType, SmartMessageResponse response, ErrorResponse error)
         {
             var failure = new PageOperationException(messageType, error.ErrorType, error.ErrorMessage);
             try { _telemetry.CaptureException(failure); } catch { /* best-effort */ }
-            try { span?.Finish(TelemetrySpanStatus.InternalError); } catch { /* best-effort */ }
-            _session?.AddBreadcrumb("lifecycle", failure.Message);
-            PageError?.Invoke(this, new PageErrorEventArgs(messageType, error.ErrorType, error.ErrorMessage));
+            try { _session?.AddBreadcrumb("page-error", failure.Message); } catch { /* best-effort */ }
+            try
+            {
+                PageError?.Invoke(this, new PageErrorEventArgs(
+                    messageType, error.ErrorType, error.ErrorMessage, response?.ResponseToMessageId));
+            }
+            catch (Exception ex)
+            {
+                // Swallow rather than rethrow: this is a response, so there is nothing to ack
+                // back to the page — but the subscriber's own failure must still be visible.
+                try { _telemetry.CaptureException(ex); } catch { /* best-effort */ }
+            }
         }
 
         /// <summary>

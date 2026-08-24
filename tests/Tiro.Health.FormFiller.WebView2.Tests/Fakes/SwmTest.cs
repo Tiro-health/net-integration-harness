@@ -16,6 +16,19 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
             ""payload"": {payloadJson}
         }}";
 
+        /// <summary>Polls until the predicate holds, failing the test on timeout.</summary>
+        public static async Task PollFor(Func<bool> predicate, TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (predicate()) return;
+                await Task.Delay(10);
+            }
+            Microsoft.VisualStudio.TestTools.UnitTesting.Assert.Fail(
+                $"Predicate did not become true within {timeout}.");
+        }
+
         /// <summary>Awaits with the tests' standard 5s deadline.</summary>
         public static Task Within5s(this Task task)
             => task.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
