@@ -10,6 +10,11 @@
     <RuntimeIdentifiers>win</RuntimeIdentifiers>
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
+    <!-- In the solution so a breaking change to a referenced project fails the build (one
+         already slipped through: a reference to an exception type deleted in GH-71). But not
+         a test project — `dotnet test` on the solution must not launch it, since it opens a
+         window and talks to a live server. The e2e workflow runs it deliberately. -->
+    <IsTestProject>false</IsTestProject>
     <RootNamespace>Tiro.Health.FormFiller.WebView2.E2E</RootNamespace>
     <AssemblyName>WebView2Probe</AssemblyName>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
