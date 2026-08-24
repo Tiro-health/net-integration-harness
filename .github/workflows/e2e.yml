@@ -93,11 +93,21 @@ jobs:
           }
           if (-not $found) { "WebView2 runtime: NOT FOUND in the usual registry keys" }
 
+      # Start-Process -Wait -PassThru rather than `& $exe`: it yields the exit code even if
+      # the process ever detaches from the console, which silently turned this step green
+      # once already. An absent or non-zero code must fail the step, never pass it.
       - name: Run WebView2 probe
         shell: pwsh
         run: |
-          $exe = "tests/e2e/WebView2Probe/bin/Release/net48/WebView2Probe.exe"
-          & $exe
-          $code = $LASTEXITCODE
-          Write-Host "probe exit code: $code"
-          exit $code
+          $dir = "tests/e2e/WebView2Probe/bin/Release/net48"
+          $log = Join-Path $dir "probe-report.log"
+          if (Test-Path $log) { Remove-Item $log }
+          $p = Start-Process -FilePath (Join-Path $dir "WebView2Probe.exe") -Wait -PassThru -NoNewWindow
+          Write-Host "--- probe report ---"
+          if (Test-Path $log) { Get-Content $log } else { Write-Host "(no report written)" }
+          Write-Host "--- probe exit code: $($p.ExitCode) ---"
+          if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0) { exit 1 }
+          if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern 'PASS' -Quiet)) {
+            Write-Host "probe exited 0 but never reported PASS"
+            exit 1
+          }

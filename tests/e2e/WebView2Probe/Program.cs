@@ -115,8 +115,18 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
 
         private static void Report(string level, string message)
         {
-            Console.WriteLine("[probe] " + level + ": " + message);
+            var line = "[probe] " + level + ": " + message;
+            Console.WriteLine(line);
             Console.Out.Flush();
+            // Also to a file: stdout from a windowed process is easy to lose, and a probe
+            // whose verdict vanished is indistinguishable from a probe that passed.
+            try
+            {
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "probe-report.log"),
+                    line + Environment.NewLine);
+            }
+            catch { /* best-effort */ }
         }
     }
 }

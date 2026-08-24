@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+    <!-- Exe, not WinExe: a WinExe detaches from the console, so the runner loses both the
+         probe's report and its exit code (observed as an empty $LASTEXITCODE). A console
+         app can still create windows and run a WinForms message pump. -->
+    <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <RuntimeIdentifiers>win</RuntimeIdentifiers>
