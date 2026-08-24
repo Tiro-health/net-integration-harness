@@ -33,5 +33,9 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 
         protected override bool IsOutcomeSuccessful(OperationOutcome outcome)
             => outcome == null || outcome.Success;
+
+        // Mirrors the R5/R4 bindings, so lifecycle tests see production draft semantics.
+        protected override bool IsResponseFinal(QuestionnaireResponse response)
+            => response?.Status != QuestionnaireResponse.QuestionnaireResponseStatus.InProgress;
     }
 }

@@ -63,7 +63,8 @@ namespace Tiro.Health.FormFiller.WebView2
         /// Read once when the <c>sdc.configure</c> payload is built, so set it before
         /// <see cref="SetContextAsync"/> — setting it afterwards has no effect. A viewer cannot
         /// be flipped between editable and view-only mid-session; use one viewer per role
-        /// (the form component locks itself after a submit regardless of this property).
+        /// (the form component locks itself after a final submit regardless of this property;
+        /// a saved draft leaves it editable so the user can carry on).
         /// </para>
         /// </summary>
         public bool ReadOnly { get; set; }
@@ -564,9 +565,9 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void OnFormSubmitted(object sender, FormSubmittedEventArgs<TQR, TOO> e)
         {
-            // Advance to Submitted from any non-terminal state. Preserves Disposed if the
-            // handler races with Dispose (terminal invariant).
-            AdvanceUnlessDisposed(TiroFormViewerState.Submitted);
+            // Only a final response is terminal — see IsResponseFinal. AdvanceUnlessDisposed
+            // preserves Disposed if the handler races with Dispose (terminal invariant).
+            if (IsResponseFinal(e.Response)) AdvanceUnlessDisposed(TiroFormViewerState.Submitted);
 
             var success = IsOutcomeSuccessful(e.Outcome);
             _session?.AddBreadcrumb("lifecycle", success ? "Form submitted (success)" : "Form submitted (validation errors)");
@@ -602,6 +603,15 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <c>OperationOutcome.Success</c>.
         /// </summary>
         protected virtual bool IsOutcomeSuccessful(TOO outcome) => true;
+
+        /// <summary>
+        /// Returns true if the submitted response ends the session — i.e. it is not a draft.
+        /// A draft (<c>QuestionnaireResponse.status = in-progress</c>, produced by
+        /// <c>SendFormRequestSubmitAsync(intent: "save-draft")</c>) keeps the viewer usable so
+        /// the user can keep filling and submit later. Default: treat every response as final.
+        /// Version-specific subclasses override this to inspect the FHIR status.
+        /// </summary>
+        protected virtual bool IsResponseFinal(TQR response) => true;
 
         /// <summary>
         /// Displays the questionnaire at <paramref name="questionnaireCanonicalUrl"/> and sets the

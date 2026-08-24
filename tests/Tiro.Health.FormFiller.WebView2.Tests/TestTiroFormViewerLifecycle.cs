@@ -77,6 +77,47 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreEqual(TiroFormViewerState.Submitted, _viewer.State);
         }
 
+        // A save-draft round-trips status in-progress. The session must survive it: the
+        // documented EhrShell flow is save a draft, keep filling, submit later. Advancing to
+        // Submitted here made every later send throw "already been submitted".
+        [TestMethod]
+        public async Task DraftSubmit_KeepsTheSessionUsable_ThenAFinalSubmitEndsIt()
+        {
+            var responses = new List<HL7Model.QuestionnaireResponse>();
+            _viewer.FormSubmitted += (_, args) => responses.Add(args.Response);
+
+            await DelayUntilBrowserInitialized();
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContext.Within5s();
+
+            _browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-draft", status: "in-progress"));
+            await PollFor(() => responses.Count == 1, TimeSpan.FromSeconds(5));
+
+            Assert.AreEqual(HL7Model.QuestionnaireResponse.QuestionnaireResponseStatus.InProgress, responses[0].Status);
+            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State,
+                "a draft must not end the session");
+
+            // The call that used to throw: submitting after a saved draft.
+            await _viewer.SendFormRequestSubmitAsync().Within5s();
+
+            // A second draft is equally non-terminal.
+            _browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-draft-2", status: "in-progress"));
+            await PollFor(() => responses.Count == 2, TimeSpan.FromSeconds(5));
+            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
+
+            _browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-final"));
+            await PollFor(() => responses.Count == 3, TimeSpan.FromSeconds(5));
+            Assert.AreEqual(TiroFormViewerState.Submitted, _viewer.State,
+                "a completed response ends the session");
+
+            // A late draft must not reopen a finished session.
+            _browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-late-draft", status: "in-progress"));
+            await PollFor(() => responses.Count == 4, TimeSpan.FromSeconds(5));
+            Assert.AreEqual(TiroFormViewerState.Submitted, _viewer.State,
+                "Submitted is terminal — a late draft must not downgrade it");
+        }
+
         [TestMethod]
         public async Task UiDoneMessage_FiresCloseApplication_StateUnchanged()
         {
@@ -451,7 +492,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             ""payload"": {{ ""isDirty"": {(isDirty ? "true" : "false")} }}
         }}";
 
-        private static string BuildFormSubmitMessage(string id) => $@"{{
+        private static string BuildFormSubmitMessage(string id, string status = "completed") => $@"{{
             ""messageId"": ""{id}"",
             ""messagingHandle"": ""smart-web-messaging"",
             ""messageType"": ""form.submitted"",
@@ -459,7 +500,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 ""response"": {{
                     ""resourceType"": ""QuestionnaireResponse"",
                     ""questionnaire"": ""http://example.org/q"",
-                    ""status"": ""completed""
+                    ""status"": ""{status}""
                 }},
                 ""outcome"": {{
                     ""resourceType"": ""OperationOutcome"",
