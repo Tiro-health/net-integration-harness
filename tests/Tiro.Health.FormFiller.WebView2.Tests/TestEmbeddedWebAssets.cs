@@ -77,16 +77,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.IsFalse(string.IsNullOrEmpty(WebSdkAssets.Version));
         }
 
-        // The bridge reads its SDK URL from window.__tiroSdkUrl, which the host injects, and
-        // falls back to the same virtual host. Both sides of that runtime boundary are
-        // hardcoded, so pin them together.
+        // The bridge must take its SDK URL from the host and hardcode none: only the host
+        // knows the versioned file name, so any literal here could only ever be wrong.
         [TestMethod]
-        public void Bridge_TakesItsSdkUrlFromTheHost_AndFallsBackToTheMappedVirtualHost()
+        public void Bridge_TakesItsSdkUrlFromTheHost()
         {
             var bridge = ReadEmbeddedString("Tiro.Health.FormFiller.WebView2.WebAssets.tiro-swm-bridge.js");
 
             StringAssert.Contains(bridge, "window.__tiroSdkUrl");
-            StringAssert.Contains(bridge, $"https://{WebSdkAssets.VirtualHostName}/");
+            Assert.IsFalse(bridge.Contains($"https://{WebSdkAssets.VirtualHostName}/tiro-web-sdk"),
+                "the bridge must not hardcode an SDK URL; the host injects the versioned one.");
         }
 
         // The served file name carries the SDK version: the virtual host caches by URL, so a
