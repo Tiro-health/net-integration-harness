@@ -16,41 +16,45 @@ namespace Tiro.Health.FormFiller.WebView2
     {
         private const string BundleResourceName = "Tiro.Health.FormFiller.WebView2.WebAssets.tiro-web-sdk.iife.js";
         private const string VersionResourceName = "Tiro.Health.FormFiller.WebView2.WebAssets.web-sdk.version.json";
-        internal const string BundleFileName = "tiro-web-sdk.iife.js";
+        // The virtual host serves this by name, so the name is what the browser caches
+        // against. Versioned: the bytes change with every pin bump while the host stays
+        // constant, and a constant URL let WebView2 serve a previous release's bundle after
+        // an upgrade. Cache-busting by URL prevents that rather than detecting it.
+        internal static string BundleFileName => $"tiro-web-sdk.{Version}.iife.js";
 
-        // Must match SDK_URL in WebAssets/tiro-swm-bridge.js — pinned together by
-        // TestEmbeddedWebAssets.Bridge_LoadsSdkFromTheMappedVirtualHost.
         internal const string VirtualHostName = "tiro-sdk.example";
+
+        /// <summary>
+        /// Absolute URL the bridge loads the bundle from. Injected into the page as
+        /// <c>window.__tiroSdkUrl</c> before the bridge runs, because the bridge is a static
+        /// asset and cannot know the version.
+        /// </summary>
+        internal static string BundleUrl => $"https://{VirtualHostName}/{BundleFileName}";
 
         private static readonly Lazy<string> _folderPath = new Lazy<string>(
             Extract, LazyThreadSafetyMode.ExecutionAndPublication);
 
-        private static readonly Lazy<(string Version, string Expected)> _manifest =
-            new Lazy<(string, string)>(ReadManifest, LazyThreadSafetyMode.ExecutionAndPublication);
+        private static readonly Lazy<string> _manifest =
+            new Lazy<string>(ReadManifest, LazyThreadSafetyMode.ExecutionAndPublication);
 
         /// <summary>Folder holding the extracted bundle, for the SDK virtual-host mapping.</summary>
         public static string FolderPath => _folderPath.Value;
 
         /// <summary>The embedded bundle's package version. Generated at staging time, never hand-written.</summary>
-        public static string Version => _manifest.Value.Version;
+        public static string Version => _manifest.Value;
 
-        /// <summary>
-        /// The element version the handshake must report (GH-61), or <c>null</c> while
-        /// the pinned SDK predates a static element version (atticus-frontend#2927). The
-        /// assert arms itself on the first pin bump that sets this — no code change.
-        /// </summary>
-        public static string ExpectedElementVersion => _manifest.Value.Expected;
 
         private static string Extract()
         {
             var asm = typeof(WebSdkAssets).Assembly;
-            // Subfolder keyed by the SDK version: a pin switch can never be satisfied by
-            // a stale byte-length-equal bundle left from another pin.
+            // Also keyed by version — belt-and-braces. The versioned FILE NAME is the real
+            // guard (it is what the browser caches against); this keeps a pin switch from
+            // reusing a stale byte-length-equal file on disk.
             var folder = Path.Combine(EmbeddedAssetExtraction.AssemblyVersionFolder(asm), "web-sdk", Version);
             return EmbeddedAssetExtraction.PublishResource(asm, BundleResourceName, folder, BundleFileName);
         }
 
-        private static (string, string) ReadManifest()
+        private static string ReadManifest()
         {
             var asm = typeof(WebSdkAssets).Assembly;
             var bytes = EmbeddedAssetExtraction.ReadResource(asm, VersionResourceName);
@@ -60,7 +64,7 @@ namespace Tiro.Health.FormFiller.WebView2
                 if (string.IsNullOrEmpty(version))
                     throw new InvalidOperationException(
                         "web-sdk.version.json carries no version — staged bundle metadata is corrupt; re-run build/web-sdk/copy-bundle.mjs.");
-                return (version, doc.RootElement.GetStringOrNull("expectedElementVersion"));
+                return version;
             }
         }
     }

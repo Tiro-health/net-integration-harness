@@ -480,10 +480,13 @@
     // 6. Embedded web-sdk injection (GH-60)
     // ============================================================
 
-    // The embedded, validated @tiro-health/web-sdk served by the host (GH-60).
-    // Must match WebSdkAssets.VirtualHostName — pinned together by
-    // TestEmbeddedWebAssets.Bridge_LoadsSdkFromTheMappedVirtualHost.
-    const SDK_URL = "https://tiro-sdk.example/tiro-web-sdk.iife.js";
+    // The embedded, validated @tiro-health/web-sdk served by the host (GH-60). The host
+    // injects the URL as window.__tiroSdkUrl before this script runs, because the file name
+    // carries the SDK version for cache-busting and a static asset cannot know it. There is
+    // no default: the only URL that ever works is the one the host publishes, so a missing
+    // injection is a load failure, reported as such rather than sent to a 404 whose message
+    // would blame the page's hosting.
+    const SDK_URL = window.__tiroSdkUrl;
 
     // Resolves with the SDK source reported at handshake: "embedded" | "collision"
     // | "error". The host refuses the session on the latter two (GH-61).
@@ -502,6 +505,14 @@
             fire("tiro-sdk-collision");
             return Promise.resolve("collision");
         }
+        if (!SDK_URL) {
+            console.error("[bridge] window.__tiroSdkUrl was not injected, so there is no SDK to "
+                + "load. The .NET host injects it before this script; a page-only harness must "
+                + "set it too.");
+            fire("tiro-sdk-error");
+            return Promise.resolve("error");
+        }
+
         return new Promise(resolve => {
             const script = document.createElement("script");
             script.src = SDK_URL;

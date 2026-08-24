@@ -64,8 +64,9 @@
       <_WebSdkPinned>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkPinFile)')), '&quot;@tiro-health/web-sdk&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkPinned>
       <_WebSdkStaged>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkManifest)')), '&quot;version&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkStaged>
     </PropertyGroup>
-    <!-- Stale staging is self-consistent (bundle + manifest agree with each other),
-         so even the GH-61 handshake assert cannot catch it — only this can. -->
+    <!-- Stale staging is self-consistent (bundle + manifest agree with each other), so
+         nothing downstream can catch it: the served URL would carry the stale manifest's
+         version and resolve to the stale bytes. This gate is the only check. -->
     <Error Condition="Exists('$(_WebSdkManifest)') And Exists('$(_WebSdkPinFile)') And '$(_WebSdkPinned)' != '$(_WebSdkStaged)'"
            Text="Staged web-sdk bundle is v$(_WebSdkStaged) but build/web-sdk pins v$(_WebSdkPinned). Re-run: cd build/web-sdk &amp;&amp; npm ci &amp;&amp; node copy-bundle.mjs. GH-59." />
   </Target>

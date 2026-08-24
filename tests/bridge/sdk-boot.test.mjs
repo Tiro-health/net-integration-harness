@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import { loadBridge, flush } from "./load-bridge.mjs";
 import { FormFillerStub } from "./form-filler-stub.mjs";
 
-const SDK_URL = "https://tiro-sdk.example/tiro-web-sdk.iife.js";
+// What the .NET host injects: the bundle URL with the pinned SDK version in the file name.
+const SDK_URL = "https://tiro-sdk.example/tiro-web-sdk.9.9.9-test.iife.js";
 
 test("injects the embedded SDK from the harness virtual host before wiring", async () => {
     const el = new FormFillerStub();
@@ -20,6 +21,19 @@ test("injects the embedded SDK from the harness virtual host before wiring", asy
     assert.ok(h.window.SmartWebMessaging.listeners["ui.form.requestSubmit"]);
     assert.equal(h.fired("tiro-sdk-error").length, 0);
     assert.equal(h.fired("tiro-sdk-collision").length, 0);
+});
+
+test("no injected URL is a load failure, not a guessed path", async () => {
+    // There is no default URL: only the host knows the versioned file name. A missing
+    // injection must report as a load error, which the host refuses on, rather than
+    // fetching a path nothing publishes.
+    const h = await loadBridge([new FormFillerStub()], { host: true, sdkUrl: null });
+    await flush();
+
+    assert.deepEqual(h.injectedScripts, [], "nothing should be fetched without a URL");
+    assert.equal(h.fired("tiro-sdk-error").length, 1);
+    assert.ok(h.errors.some(e => e.includes("__tiroSdkUrl was not injected")),
+        `expected a diagnostic, got: ${JSON.stringify(h.errors)}`);
 });
 
 test("foreign pre-defined element: no injection, hard error, wiring continues", async () => {

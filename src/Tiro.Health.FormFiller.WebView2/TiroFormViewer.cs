@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -94,6 +95,14 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private const string VirtualHostName = "appassets.example"; // https://github.com/MicrosoftEdge/WebView2Feedback/issues/2381
 
+        // Cache key for the navigated page. The assembly's informational version, which the
+        // publish workflow sets from the release tag.
+        private static readonly string HarnessVersion =
+            typeof(TiroFormViewer<TResource, TQR, TOO>).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(TiroFormViewer<TResource, TQR, TOO>).Assembly.GetName().Version?.ToString()
+            ?? "0.0.0";
+
         // Tracks if WebView is initialized
         private Task _initializationTask;
 
@@ -133,19 +142,11 @@ namespace Tiro.Health.FormFiller.WebView2
         public TiroFormViewerState State => (TiroFormViewerState)Volatile.Read(ref _state);
 
         /// <summary>
-        /// The tiro-web-sdk version the page reported at handshake (GH-61), or null when
-        /// the running SDK predates the version field. Diagnostics only.
+        /// The tiro-web-sdk version the page reported at handshake, or null when the running
+        /// SDK predates the version field (atticus-frontend#2927). Diagnostics only — it is
+        /// not asserted against; see <c>build/web-sdk/README.md</c>.
         /// </summary>
         public string PageWebSdkVersion { get; private set; }
-
-        /// <summary>
-        /// The element version the handshake must report, or null to skip the assert.
-        /// Defaults to the embedded bundle's expectedElementVersion (GH-61); the assert
-        /// arms itself when the pin bumps to a version-exposing SDK. Internal so
-        /// consumer subclasses cannot opt out of the assert; tests override via
-        /// InternalsVisibleTo.
-        /// </summary>
-        internal virtual string ExpectedWebSdkElementVersion => WebSdkAssets.ExpectedElementVersion;
 
         /// <summary>
         /// Whether the user has made any changes to the displayed form since it loaded.
@@ -386,6 +387,13 @@ namespace Tiro.Health.FormFiller.WebView2
                 // longer pre-injected here. It now travels as a protocol-conformant
                 // sdc.configure message sent after handshake — see SetContextAsync.
 
+                // Tell the bridge where to load the embedded web-sdk from. Injected rather
+                // than hardcoded because the file name carries the SDK version (cache-busting
+                // across pin bumps) and the bridge is a static asset. Must precede the
+                // bridge, which reads it at module scope.
+                await _browser.AddInitializationScriptAsync(
+                    "window.__tiroSdkUrl=" + System.Text.Json.JsonSerializer.Serialize(WebSdkAssets.BundleUrl) + ";");
+
                 // Inject the SMART Web Messaging bridge — owns protocol, transport,
                 // telemetry instrumentation, and <tiro-form-filler> auto-wiring on the
                 // page side. Page is UI-only; it interacts via window.tiro, the
@@ -433,7 +441,14 @@ namespace Tiro.Health.FormFiller.WebView2
                 // Embedded web-sdk on its own host, mapped before Navigate. DenyCors is fine
                 // for a plain <script src>; the bridge must not add a crossorigin attribute.
                 _browser.MapVirtualHost(WebSdkAssets.VirtualHostName, WebSdkAssets.FolderPath);
-                _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html"));
+                // ?v=<harness version> for the same reason the SDK's file name carries its
+                // version: WebView2 caches by URL and virtual-host responses carry no cache
+                // headers, so at a constant URL an upgraded harness could load the previous
+                // release's page. That matters concretely — a cached pre-GH-60 page still
+                // carries a CDN <script> tag, which now collides with the injected SDK. A
+                // query string busts the cache without renaming anyone's files, so it works
+                // for a consumer-supplied WebContentFolder too.
+                _browser.Navigate(new Uri($"https://{VirtualHostName}/index.html?v={Uri.EscapeDataString(HarnessVersion)}"));
             }
             catch
             {
@@ -513,7 +528,7 @@ namespace Tiro.Health.FormFiller.WebView2
             var existing = _webSdkFailure;
             if (existing != null) throw existing;
 
-            var failure = EvaluateWebSdkReport(reported, source);
+            var failure = EvaluateWebSdkReport(source);
             if (failure != null)
             {
                 _webSdkFailure = failure;
@@ -532,15 +547,15 @@ namespace Tiro.Health.FormFiller.WebView2
                 reported == null ? "Handshake received" : $"Handshake received (tiro-web-sdk {reported})");
         }
 
-        // GH-61: collision/load-error always refuse the session; a version mismatch
-        // refuses only when armed (build/web-sdk expectedElementVersion non-null).
-        private Exception EvaluateWebSdkReport(string reported, string source)
+        // The page must be running the bundle we served. `source` is what proves it:
+        // "collision" means the page loaded its own copy, "error" that ours never loaded.
+        // The reported VERSION is not compared — the served URL carries the version, so a
+        // stale bundle cannot load, and the virtual host reads from local disk with no
+        // network or proxy that could substitute other bytes. See build/web-sdk/README.md.
+        private Exception EvaluateWebSdkReport(string source)
         {
             if (source == "collision" || source == "error")
                 return new WebSdkLoadException(source);
-            var expected = ExpectedWebSdkElementVersion;
-            if (expected != null && !string.Equals(reported, expected, StringComparison.Ordinal))
-                return new WebSdkVersionMismatchException(expected, reported);
             return null;
         }
 

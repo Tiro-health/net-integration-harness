@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -293,6 +294,26 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 @"C:\custom\web\content",
                 "The folder assigned before SetContextAsync must be the one mapped — proving it is " +
                 "read at SetContextAsync, not captured earlier during construction.");
+        }
+
+        // The page URL carries the harness version, for the reason the SDK's file name does:
+        // WebView2 caches by URL and virtual-host responses carry no cache headers, so at a
+        // constant URL an upgraded harness could load the previous release's page — and a
+        // cached pre-GH-60 page still carries a CDN script tag that now collides.
+        [TestMethod]
+        public async Task Navigation_CacheBustsThePageOnTheHarnessVersion()
+        {
+            await DelayUntilBrowserInitialized();
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            await setContext.Within5s();
+
+            var navigated = _browser.NavigatedUrls[0];
+            var version = typeof(TiroFormViewerState).Assembly
+                .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? typeof(TiroFormViewerState).Assembly.GetName().Version?.ToString();
+            StringAssert.Contains(navigated.Query, "v=");
+            StringAssert.Contains(Uri.UnescapeDataString(navigated.Query), version!);
         }
 
         [TestMethod]

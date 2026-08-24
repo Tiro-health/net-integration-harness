@@ -42,10 +42,15 @@ export const plain = value => (value === undefined ? undefined : JSON.parse(JSON
  * @param {"ok"|"fail"} [opts.sdkLoad] how the injected web-sdk script "loads" (GH-60)
  * @param {string} [opts.sdkVersion] static version the loaded element class exposes (GH-61)
  * @param {object} [opts.predefinedElement] pre-registers tiro-form-filler, as an already-executed page script would
+ * @param {string|null} [opts.sdkUrl] value of window.__tiroSdkUrl, which the .NET host injects
+ *   (the versioned bundle URL). Pass null to exercise the bridge's unversioned fallback.
  * @param {boolean} [opts.pageSdkScriptTag] a not-yet-executed page-level SDK <script> tag is present in the DOM
  * @returns {Promise<{window: any, document: any, warnings: string[]}>}
  */
-export async function loadBridge(formFillers, { host = false, sdkLoad = "ok", sdkVersion, predefinedElement, pageSdkScriptTag = false } = {}) {
+export async function loadBridge(formFillers, {
+    host = false, sdkLoad = "ok", sdkVersion, predefinedElement, pageSdkScriptTag = false,
+    sdkUrl = "https://tiro-sdk.example/tiro-web-sdk.9.9.9-test.iife.js",
+} = {}) {
     const warnings = [];
     const errors = [];
     let uuidCounter = 0;
@@ -100,7 +105,9 @@ export async function loadBridge(formFillers, { host = false, sdkLoad = "ok", sd
         },
     };
 
+    // The .NET host injects this before the bridge; null exercises the fallback path.
     const window = { document, customElements };
+    if (sdkUrl !== null) window.__tiroSdkUrl = sdkUrl;
     window.window = window;
 
     // Minimal WebView2 transport. Installing it makes isWebView2() true, so the bridge

@@ -9,6 +9,8 @@ interface Window {
   tiro?: any;
   SmartWebMessaging?: any;
   __tiroSentryConfig?: any;
+  /** Injected by the .NET host before the bridge runs; carries the versioned SDK URL. */
+  __tiroSdkUrl?: string;
 }
 
 declare var Sentry: any;
