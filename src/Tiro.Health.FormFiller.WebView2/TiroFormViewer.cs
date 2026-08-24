@@ -506,6 +506,7 @@ namespace Tiro.Health.FormFiller.WebView2
             // up to. messageType + tracing + timing + exceptions stay enough to diagnose
             // the vast majority of integration issues; if you need payload capture for
             // dev work, do it in a custom ITelemetrySink in your own (non-shared) project.
+
             // Saved and restored, not just assigned: a subscriber that pumps the message loop
             // (MessageBox.Show in a CloseApplication/FormSubmitted handler) lets WebView2
             // deliver a NESTED message inside this try, and the outer frame still needs the
