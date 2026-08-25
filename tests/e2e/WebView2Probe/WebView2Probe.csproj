@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Exe, not WinExe: a WinExe detaches from the console, so the runner loses both the
+         probe's report and its exit code (observed as an empty $LASTEXITCODE). A console
+         app can still create windows and run a WinForms message pump. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- win-x86 as well as win: a net48 executable gets a 32-bit RID implicitly on Windows,
+         which a library does not, and a lock file generated without it is rejected there. -->
+    <RuntimeIdentifiers>win;win-x86</RuntimeIdentifiers>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <!-- In the solution so a breaking change to a referenced project fails the build (one
+         already slipped through: a reference to an exception type deleted in GH-71). But not
+         a test project — `dotnet test` on the solution must not launch it, since it opens a
+         window and talks to a live server. The e2e workflow runs it deliberately. -->
+    <IsTestProject>false</IsTestProject>
+    <RootNamespace>Tiro.Health.FormFiller.WebView2.E2E</RootNamespace>
+    <AssemblyName>WebView2Probe</AssemblyName>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Tiro.Health.FormFiller.WebView2.Fhir.R5\Tiro.Health.FormFiller.WebView2.Fhir.R5.csproj" />
+    <!-- Stage B3 runs $extract over the QR the element produced, like the ExtractSample. -->
+    <ProjectReference Include="..\..\..\src\Tiro.Health.FormSdk.Client.Fhir.R5\Tiro.Health.FormSdk.Client.Fhir.R5.csproj" />
+  </ItemGroup>
+
+  <!-- SdcClient's surface mentions HttpClient, which on .NET Framework lives in the
+       framework System.Net.Http assembly that SDK-style net48 projects don't reference by
+       default. Same workaround as the client project itself. -->
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+</Project>

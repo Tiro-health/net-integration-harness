@@ -368,3 +368,6 @@ FodyWeavers.xsd
 # build/web-sdk/package.json is the source of truth.
 src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-web-sdk.iife.js
 src/Tiro.Health.FormFiller.WebView2/WebAssets/web-sdk.version.json
+# e2e layer 1 deps. package-lock.json IS committed: npm ci needs it, and a floating
+# Playwright is a browser-version change nobody reviewed. See tests/e2e/README.md.
+tests/e2e/browser/node_modules/
