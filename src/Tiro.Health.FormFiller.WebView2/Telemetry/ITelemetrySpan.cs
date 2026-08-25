@@ -13,9 +13,10 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
     /// <para>
     /// One carve-out: a repeat <see cref="Finish(Exception)"/> may <i>associate</i> its
     /// exception with the span, because that association is what links a captured error to
-    /// the span in a trace view. It must still leave the recorded status and end time alone,
-    /// unless the span was finished outside the implementation's view — a backend that offers
-    /// no bind-only API cannot add the linkage without touching the status.
+    /// the span in a trace view, and losing it loses the connection between a failure and
+    /// where it happened. It must still leave the recorded status and end time alone — the
+    /// association is all it may add, and that holds however the span was finished, including
+    /// by the backend behind the implementation's back.
     /// </para>
     /// <para>
     /// Implements <see cref="IDisposable"/> so callers can scope a span with <c>using</c>:

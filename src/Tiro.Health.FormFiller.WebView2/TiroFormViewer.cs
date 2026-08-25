@@ -848,8 +848,11 @@ namespace Tiro.Health.FormFiller.WebView2
                     if (originalHandler != null)
                         await originalHandler(response);
                     // Finished ONCE, with the outcome already known: finishing InternalError
-                    // here and Ok a line later shipped "ok" to Sentry, because ITelemetrySpan
-                    // implementations are not all idempotent despite the contract.
+                    // here and Ok a line later shipped "ok" to Sentry, back when the Sentry
+                    // adapter did not honour the first-wins contract. It does now, so this is
+                    // no longer the only thing standing between a page error and a green trace
+                    // — but finishing once with the outcome in hand is still the clearer way to
+                    // say it, and the cancellation sentinel above races this line.
                     span?.Finish(pageError != null ? TelemetrySpanStatus.InternalError : TelemetrySpanStatus.Ok);
                 }
                 catch (Exception ex)

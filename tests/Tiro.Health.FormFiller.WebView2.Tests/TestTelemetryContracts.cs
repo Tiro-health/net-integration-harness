@@ -324,8 +324,10 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             var session = sink.Sessions[0];
             var receiveSpan = session.Transactions.First(t =>
                 t.Operation == "swm.receive" && t.Name == "form.submitted");
-            // The receive transaction is finished by OnFormSubmitted with the outcome status;
-            // the trailing OnBrowserMessageReceived Finish(Ok) is a no-op (idempotency).
+            // OnFormSubmitted finishes this transaction with the outcome status, and the
+            // trailing OnBrowserMessageReceived Finish(Ok) does not displace it: first finish
+            // wins. It was "a no-op (idempotency)" here only because this fake always was one —
+            // the real Sentry adapter was not, and shipped the trailing Ok.
             Assert.AreEqual(TelemetrySpanStatus.InvalidArgument, receiveSpan.FinalStatus,
                 "form.submitted with an error-severity OperationOutcome must finish with InvalidArgument.");
         }
@@ -347,10 +349,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 "Expected the host to inject the SMART Web Messaging bridge.");
             viewer.Dispose();
         }
-
-        // -----------------------------------------------------------------------------
-        // Helpers
-        // -----------------------------------------------------------------------------
 
         // A send transaction is finished twice on this path, deterministically and on one
         // thread: WaitForHandshakeAsync finishes it InternalError for a terminal web-sdk
@@ -398,9 +396,14 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 // Both calls happened — that is the point — and the first one is what shipped.
                 Assert.AreEqual(TelemetrySpanStatus.InternalError, submitSend.FinalStatus,
                     "the exception finish rewrote the status the refusal path chose");
-                Assert.AreEqual(2, submitSend.FinishCalls.Count,
-                    "expected the documented double finish; if this is now 1 the caller changed "
-                    + "and this test is pinning a sequence that no longer exists");
+                // >= 2, not == 2: ITelemetrySpan permits repeat finishes, so an exact count
+                // pins the caller's structure rather than the contract and would redden on a
+                // legitimate refactor. What matters is that a second finish happens at all —
+                // that is what makes the adapter's guard load-bearing here.
+                Assert.IsTrue(submitSend.FinishCalls.Count >= 2,
+                    $"expected the documented double finish, saw {submitSend.FinishCalls.Count}; "
+                    + "if this is now 1 the caller changed and this test pins a sequence that "
+                    + "no longer exists");
                 Assert.AreEqual(1, submitSend.LateAssociatedExceptions.Count,
                     "the repeat finish should still associate its exception for trace linkage");
             }
@@ -444,6 +447,54 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             }
             finally { viewer.Dispose(); }
         }
+
+        // A send that throws leaves WrapForRoundTrip's cancellation sentinel registered: it is
+        // created before the send and disposed only inside the RESPONSE handler, which never
+        // runs. So the registration survives on _lifetimeCts, and disposing the viewer later
+        // fires Finish(Cancelled) on a span the catch block already finished with the real
+        // error. A REGRESSION, and a deterministic one: pre-fix, Cancelled overwrote the error
+        // in Sentry, so the surviving trace of a failed send blamed a cancellation nobody
+        // requested. Neither the sentinel leak nor this overwrite was noticed before.
+        //
+        // The leak itself is a separate defect and is deliberately not fixed here — this pins
+        // that the contract contains its consequence.
+        [TestMethod]
+        public async Task AFailedSendThenTeardown_KeepsTheErrorNotTheCancellation()
+        {
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            try
+            {
+                await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+                var setContext = viewer.SetContextAsync("http://example.org/q");
+                browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+                await setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+                var boom = new InvalidOperationException("webview torn down mid-send");
+                browser.ThrowOnNextPostMessage = boom;
+                await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+                    () => viewer.SendFormRequestSubmitAsync());
+
+                var send = sink.Sessions[0].Transactions.Last(t =>
+                    t.Operation == "swm.send" && t.Name == "ui.form.requestSubmit");
+                Assert.AreSame(boom, send.FinalException, "the send's own failure is the outcome");
+
+                // Teardown fires the leaked registration.
+                viewer.Dispose();
+
+                CollectionAssert.Contains(send.FinishStatuses.ToList(), TelemetrySpanStatus.Cancelled,
+                    "expected the leaked sentinel to fire on teardown; if it no longer does, the "
+                    + "leak was fixed and this test should assert that instead");
+                Assert.AreSame(boom, send.FinalException,
+                    "teardown's Cancelled overwrote the real error — first finish must win");
+                Assert.IsNull(send.FinalStatus);
+            }
+            finally { viewer.Dispose(); }
+        }
+
+        // -----------------------------------------------------------------------------
+        // Helpers
+        // -----------------------------------------------------------------------------
 
         private static TestableTiroFormViewer NewViewer(FakeTelemetrySink sink)
         {

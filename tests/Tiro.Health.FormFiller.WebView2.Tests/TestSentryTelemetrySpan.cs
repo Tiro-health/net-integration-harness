@@ -15,8 +15,8 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
     /// captured transaction shares the tracer's trace context by reference, so a later Finish
     /// rewrites an outcome whose envelope is already queued.
     /// <para>
-    /// Two kinds of test, worth not confusing, and each one says which it is. Four are
-    /// regressions that fail on the unguarded adapter. Two are pins on SDK behaviour the
+    /// Two kinds of test, worth not confusing, and each one says which it is. Five are
+    /// regressions that fail on the unguarded adapter. Three are pins on SDK behaviour the
     /// adapter relies on but does not implement — they passed before the guard existed, and
     /// are here to fail loudly if a Sentry upgrade moves the ground. A mislabelled pin is
     /// worse than no label, since it reads as evidence the fix works when it never could
@@ -109,9 +109,8 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreEqual(SpanStatus.Aborted, span.Status);
         }
 
-        // A pin: the repeat-exception carve-out re-asserts whatever status Sentry derived from
-        // the exception on the first finish, rather than hard-coding one. That only works while
-        // an exception finish does in fact produce a failure status.
+        // A pin: the FIRST finish with an exception is a real Finish, so it must still produce
+        // a failure status of its own — the carve-out only covers repeats.
         [TestMethod]
         public void AFirstFinishWithAnExceptionStillSetsAFailureStatus()
         {
@@ -122,6 +121,40 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             Assert.IsNotNull(span.Status);
             Assert.AreNotEqual(SpanStatus.Ok, span.Status);
+        }
+
+        // A regression against this adapter's PREVIOUS shape, which bound a repeat exception
+        // with ISpan.Finish(ex, status) — one operation that binds AND assigns. It therefore
+        // could not honour first-wins for a span the SDK had finished behind the wrapper: the
+        // assignment overwrote the SDK's status (Aborted became InternalError). Binding on its
+        // own has nothing to overwrite, so the promise now holds on every path.
+        [TestMethod]
+        public void AnExceptionFinishAfterAnOutsideFinishLeavesTheStatusAlone()
+        {
+            var span = NewSpan();
+            var wrapped = new SentryTelemetrySpan(span);
+
+            span.Finish(SpanStatus.Aborted);
+            wrapped.Finish(new InvalidOperationException("late failure"));
+
+            Assert.AreEqual(SpanStatus.Aborted, span.Status);
+        }
+
+        // A pin: a repeat finish must not silently inflate the span's duration. The repeat
+        // reaches Sentry on purpose (to bind the exception), so this asserts the binding is
+        // ALL it does. Sentry assigns EndTimestamp with ??=, which is what makes it hold.
+        [TestMethod]
+        public void ARepeatFinishDoesNotMoveTheEndTimestamp()
+        {
+            var span = NewSpan();
+            var wrapped = new SentryTelemetrySpan(span);
+
+            wrapped.Finish(TelemetrySpanStatus.Ok);
+            var recorded = span.EndTimestamp;
+            wrapped.Finish(new InvalidOperationException("late"));
+
+            Assert.IsNotNull(recorded);
+            Assert.AreEqual(recorded, span.EndTimestamp);
         }
     }
 }
