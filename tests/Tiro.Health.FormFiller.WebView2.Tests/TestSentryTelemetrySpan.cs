@@ -15,10 +15,12 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
     /// captured transaction shares the tracer's trace context by reference, so a later Finish
     /// rewrites an outcome whose envelope is already queued.
     /// <para>
-    /// Two kinds of test, worth not confusing. Regression tests, which fail on the unguarded
-    /// adapter: the first three. And pins on SDK behaviour the adapter relies on but does not
-    /// implement, which passed before the guard existed and are here to fail if a Sentry
-    /// upgrade moves the ground: the last two.
+    /// Two kinds of test, worth not confusing, and each one says which it is. Four are
+    /// regressions that fail on the unguarded adapter. Two are pins on SDK behaviour the
+    /// adapter relies on but does not implement — they passed before the guard existed, and
+    /// are here to fail loudly if a Sentry upgrade moves the ground. A mislabelled pin is
+    /// worse than no label, since it reads as evidence the fix works when it never could
+    /// have failed.
     /// </para>
     /// <para>A DisabledHub tracer is a real ISpan that touches no network.</para>
     /// </summary>
@@ -73,6 +75,9 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreEqual(SpanStatus.DeadlineExceeded, span.Status);
         }
 
+        // A pin: master's Dispose already checked IsFinished, so this passed before the guard.
+        // It is here because Dispose is now one of three paths through the same flag, and a
+        // future edit to that flag could break the one path that was always correct.
         [TestMethod]
         public void DisposeDoesNotRewriteAnExplicitFailure()
         {
@@ -85,9 +90,10 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreEqual(SpanStatus.InternalError, span.Status);
         }
 
-        // A pin, not a regression: the adapter's IsFinished check exists for this, and the
-        // check is only worth anything if the SDK really does leave an externally-finished
-        // span's status alone.
+        // A regression: master's Finish(status) assigns unconditionally, so the wrapper's Ok
+        // below overwrote the SDK's Aborted. Guarding on _span.IsFinished as well as our own
+        // flag is what fixes it — an idle-timeout transaction is finished behind the wrapper,
+        // where its own flag is no guide.
         [TestMethod]
         public void AFinishFromOutsideTheWrapperIsNotOverwritten()
         {

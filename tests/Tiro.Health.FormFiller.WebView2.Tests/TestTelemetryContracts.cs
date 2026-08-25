@@ -352,6 +352,99 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         // Helpers
         // -----------------------------------------------------------------------------
 
+        // A send transaction is finished twice on this path, deterministically and on one
+        // thread: WaitForHandshakeAsync finishes it InternalError for a terminal web-sdk
+        // failure and throws, and the caller's catch finishes it again with that exception.
+        // Until the Sentry adapter honoured first-wins, the second call rewrote the first, and
+        // a refused session was reported with whatever status Sentry derived from the
+        // exception instead of the one the code chose.
+        //
+        // This is a PIN on the caller sequence, not a regression: FakeTelemetrySpan was always
+        // first-wins, so FinalStatus was already right here — the bug lived only in the real
+        // adapter (see TestSentryTelemetrySpan). What this adds is proof that the double
+        // finish is real and reached, so the adapter's guard is load-bearing rather than
+        // theoretical, and FinishCalls is what makes it visible.
+        //
+        // The handshake TIMEOUT path has the identical shape (Finish(DeadlineExceeded) then
+        // Finish(TimeoutException)) and is not covered separately: HandshakeTimeoutMs is a
+        // 30s const with no seam, and a 30s test is not worth the same evidence.
+        [TestMethod]
+        public async Task ARefusedSessionsSendTransaction_KeepsTheStatusTheCodeChose()
+        {
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            try
+            {
+                await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+                // A good handshake first, so the failure below arrives on an established
+                // session — the one route that reaches the _webSdkFailure branch rather than
+                // faulting the one-shot handshake TCS.
+                var setContext = viewer.SetContextAsync("http://example.org/q");
+                browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+                await setContext.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+                // A page reload that swapped the SDK: terminal, and every later send fails.
+                browser.RaiseMessageReceived(SwmTest.Handshake(
+                    "hs-2",
+                    @"{ ""client"": { ""name"": ""tiro-web-sdk"", ""version"": ""0.2.1"", ""source"": ""collision"" } }"));
+
+                await Assert.ThrowsExceptionAsync<WebSdkLoadException>(
+                    () => viewer.SendFormRequestSubmitAsync());
+
+                var submitSend = sink.Sessions[0].Transactions.Last(t =>
+                    t.Operation == "swm.send" && t.Name == "ui.form.requestSubmit");
+
+                // Both calls happened — that is the point — and the first one is what shipped.
+                Assert.AreEqual(TelemetrySpanStatus.InternalError, submitSend.FinalStatus,
+                    "the exception finish rewrote the status the refusal path chose");
+                Assert.AreEqual(2, submitSend.FinishCalls.Count,
+                    "expected the documented double finish; if this is now 1 the caller changed "
+                    + "and this test is pinning a sequence that no longer exists");
+                Assert.AreEqual(1, submitSend.LateAssociatedExceptions.Count,
+                    "the repeat finish should still associate its exception for trace linkage");
+            }
+            finally { viewer.Dispose(); }
+        }
+
+        // A throwing FormSubmitted subscriber finishes the receive transaction with that
+        // exception, then rethrows so the page gets an error ack — and the outer catch finishes
+        // it again with the same exception. Asserted as first-wins rather than exactly-once:
+        // ITelemetrySpan permits the repeat, so demanding one call would pin a caller detail
+        // and go red on a legitimate refactor.
+        [TestMethod]
+        public async Task AThrowingFormSubmittedSubscriber_KeepsItsExceptionAsTheOutcome()
+        {
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            try
+            {
+                await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+                browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+
+                var thrown = new InvalidOperationException("subscriber blew up");
+                viewer.FormSubmitted += (_, __) => throw thrown;
+                browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-throw", outcomeError: false));
+
+                var receive = sink.Sessions[0].Transactions.First(t =>
+                    t.Operation == "swm.receive" && t.Name == "form.submitted");
+
+                Assert.AreSame(thrown, receive.FinalException,
+                    "the subscriber's exception is the outcome, not a later Ok");
+                // The trailing Ok IS called — SmartMessageHandlerBase turns the rethrow into an
+                // error response, so OnBrowserMessageReceived completes normally and finishes
+                // the transaction. Asserting it never happens would pin a caller design this
+                // branch deliberately does not have. What must hold is that it did not become
+                // the outcome, which is the contract and the adapter's job.
+                CollectionAssert.Contains(receive.FinishStatuses.ToList(), TelemetrySpanStatus.Ok,
+                    "expected the trailing Ok; if it is gone the caller changed and the comment "
+                    + "above is stale");
+                Assert.IsNull(receive.FinalStatus,
+                    "the trailing Ok overwrote the exception outcome — first finish must win");
+            }
+            finally { viewer.Dispose(); }
+        }
+
         private static TestableTiroFormViewer NewViewer(FakeTelemetrySink sink)
         {
             var browser = new FakeEmbeddedBrowser();
