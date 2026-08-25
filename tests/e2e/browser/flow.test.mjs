@@ -14,7 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { join, extname, dirname } from "node:path";
+import { join, extname, dirname, resolve as resolve_ } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { HOST_SHIM } from "./host-shim.mjs";
@@ -46,20 +46,48 @@ const ANSWER_LABEL = process.env.ANSWER_LABEL ?? "65–74";
 // alone. Only meaningful for the default template.
 const PINNED_LINKID_PREFIX = QUESTIONNAIRE === DEFAULT_QUESTIONNAIRE ? "019cf82c-" : null;
 const SERVER_TESTS = process.env.E2E_SERVER_TESTS !== "0";
-const NEEDS_SERVER = { skip: SERVER_TESTS ? false : "needs a live SDC server" };
+
+// Under PAGE_OWNS_SDK the host REFUSES the session, so every test that expects a working one has
+// to sit out — including the handshake test, which asserts source === "embedded". Computed in one
+// place so the two conditions cannot drift apart: a run that silently asserted "embedded" while
+// the page owned the SDK would be testing the opposite of what it says.
+function needs({ server = false } = {}) {
+  if (PAGE_OWNS_SDK) return { skip: "the page owns the SDK in this run — the session is refused by design" };
+  if (server && !SERVER_TESTS) return { skip: "needs a live SDC server" };
+  return { skip: false };
+}
 
 const MIME = { ".html": "text/html", ".js": "application/javascript" };
+
+// Serve the page with its OWN <script src> for the bundle — what an integrator who pasted the
+// pre-GH-60 snippet into index.html ships. Two uses, and both need the page to own the SDK:
+//   1. Asserting the collision refusal, which is the whole "no opt-out" guarantee.
+//   2. Replaying the pre-fix bridge, which predates the embedding and injects nothing, so
+//      without this the element never upgrades and the replay times out at the render wait
+//      instead of failing the assertion it is supposed to fail.
+const PAGE_OWNS_SDK = process.env.PAGE_OWNS_SDK === "1";
+const PUBLIC_DIR = join(HERE, "public");
 
 function startServer() {
   return new Promise(resolve => {
     const server = createServer((req, res) => {
       const path = req.url.split("?")[0];
-      const file = path === "/tiro-web-sdk.iife.js"
-        ? BUNDLE_PATH
-        : join(HERE, "public", path === "/" ? "index.html" : path);
-      if (!existsSync(file)) { res.writeHead(404).end(); return; }
+      if (path === "/tiro-web-sdk.iife.js") {
+        res.writeHead(200, { "content-type": MIME[".js"] });
+        res.end(readFileSync(BUNDLE_PATH));
+        return;
+      }
+      // resolve + prefix check: the path comes straight off the URL, and ".." would otherwise
+      // read outside public/. Test-only and localhost-bound, but not worth leaving open.
+      const file = resolve_(PUBLIC_DIR, "." + (path === "/" ? "/index.html" : path));
+      if (!file.startsWith(PUBLIC_DIR) || !existsSync(file)) { res.writeHead(404).end(); return; }
+      let body = readFileSync(file);
+      if (PAGE_OWNS_SDK && extname(file) === ".html") {
+        body = Buffer.from(String(body).replace(
+          "</head>", `<script src="/tiro-web-sdk.iife.js"></script></head>`));
+      }
       res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
-      res.end(readFileSync(file));
+      res.end(body);
     });
     server.listen(0, "127.0.0.1", () => resolve({ server, base: `http://127.0.0.1:${server.address().port}` }));
   });
@@ -122,16 +150,38 @@ async function launch() {
   };
 }
 
-test("the bridge injects the embedded SDK and reports its identity at handshake", async () => {
+test("the bridge injects the embedded SDK and reports its identity at handshake", needs(), async () => {
   const h = await launch();
   try {
     const [handshake] = await h.page.evaluate("window.__host.handshakes");
     assert.equal(handshake.client.name, "tiro-web-sdk");
     // "embedded" proves the bundle came from the host, not a page-owned script tag.
     assert.equal(handshake.client.source, "embedded");
-    // null until the pin reaches an SDK exposing a static version (atticus-frontend#2927).
-    assert.ok(handshake.client.version === null || typeof handshake.client.version === "string");
+    // Deliberately asserted as still-absent rather than "null or a string", which the bridge
+    // computes as `typeof v === "string" ? v : null` and so could never fail. This breaks the
+    // day the pin picks up an SDK exposing a static version (atticus-frontend#2927) — which is
+    // the point: that is when the version becomes worth asserting against the staged
+    // web-sdk.version.json, and a test that cannot fail would not tell anyone it had arrived.
+    assert.equal(handshake.client.version, null,
+      "the SDK now reports a version — assert it against build/web-sdk/web-sdk.version.json");
     assert.ok(await h.page.evaluate("!!customElements.get('tiro-form-filler')"));
+  } finally {
+    await h.close();
+  }
+});
+
+// GH-60's guarantee is that there is no opt-out: a page carrying its own copy of the bundle is
+// REFUSED, not silently double-loaded. Both ends are unit-tested (tests/bridge/sdk-boot and
+// TestWebSdkHandshakeReport), but nothing proved the real bridge and the real element reach that
+// verdict together on an integrator-shaped page. Without this, deleting the collision branch
+// leaves every other test green.
+test("a page that loads its own SDK is refused, not silently double-loaded",
+  { skip: PAGE_OWNS_SDK ? false : "run with PAGE_OWNS_SDK=1 (the collision step)" }, async () => {
+  const h = await launch();
+  try {
+    const [handshake] = await h.page.evaluate("window.__host.handshakes");
+    assert.equal(handshake.client.source, "collision",
+      "a page-owned script tag must report collision so the host can refuse the session");
   } finally {
     await h.close();
   }
@@ -145,7 +195,7 @@ function answeredItems(item = []) {
   ]);
 }
 
-test("a user's answer reaches the host, dirties the form, and drives calculation", NEEDS_SERVER, async () => {
+test("a user's answer reaches the host, dirties the form, and drives calculation", needs({ server: true }), async () => {
   const h = await launch();
   try {
     await h.displayQuestionnaire();
@@ -185,7 +235,7 @@ test("a user's answer reaches the host, dirties the form, and drives calculation
   }
 });
 
-test("save-draft saves a draft and finalize completes — against the live element", NEEDS_SERVER, async () => {
+test("save-draft saves a draft and finalize completes — against the live element", needs({ server: true }), async () => {
   const h = await launch();
   try {
     await h.displayQuestionnaire();

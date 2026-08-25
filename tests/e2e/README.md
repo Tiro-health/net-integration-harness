@@ -8,9 +8,15 @@ Two layers. Neither covers the seam alone, and both run real shipped bytes.
 | `WebView2Probe/` | windows | real harness binary in real WebView2, typed FHIR round trip | real user input (no clicks) |
 
 They complete the ladder: `build/bridge-contract` checks types, `tests/bridge` drives a
-transcribed stub, these drive the real thing. Both jobs **gate** — a red run blocks, because
-an advisory red on a suite that catches silently-wrong clinical behaviour would just train
-people to ignore it.
+transcribed stub, these drive the real thing. Both jobs **gate when triggered** — a red run
+blocks, because an advisory red on a suite that catches silently-wrong clinical behaviour would
+just train people to ignore it. "When triggered" is load-bearing: the workflow has a `paths`
+filter, so a pull request touching none of those paths never runs it.
+
+The Windows gate requires the probe's *terminal* marker (`PASS: all stages`, or `PASS: stage A`
+when server stages are deliberately skipped). A bare `PASS` grep also matched `PASS: stage A`, so
+a run whose server stages were skipped for any reason passed the gate having asserted nothing
+about save-draft, finalize or `$extract`.
 
 What a *pull request* gates on is only the part that needs no server: the bundle, the
 injection order, the handshake. The stages that talk to a live SDC server run nightly and on
@@ -56,16 +62,33 @@ must. To re-verify after changing the flow:
 
 ```sh
 git show 94fbe8b:src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js > /tmp/prefix.js
-# that bridge predates GH-60, so the page must load the SDK itself for this replay
-BRIDGE_PATH=/tmp/prefix.js npm test    # the save-draft test must FAIL
+# PAGE_OWNS_SDK is not optional here. That bridge predates GH-60 and injects nothing (its only
+# injected script is the Sentry CDN), so without a page-owned <script src> the element never
+# upgrades and the run dies at the render wait — a fixture timeout that LOOKS like the replay
+# working. Verified: with the switch, the run fails on the assertion itself,
+#   AssertionError: expected 'in-progress', actual 'completed'
+PAGE_OWNS_SDK=1 BRIDGE_PATH=/tmp/prefix.js npm test
 ```
+
+Under `PAGE_OWNS_SDK` the host refuses the session, so every test that needs a working one skips
+itself — including the handshake test, which asserts `source === "embedded"`. One helper decides
+that, so the two conditions cannot drift into a run that asserts "embedded" while the page owns
+the SDK.
 
 ## `WebView2Probe/` — layer 2
 
 A minimal WinForms host that boots `TiroFormViewerR5` and asserts the handshake arrives.
-That single assertion is load-bearing: it can only succeed if the second virtual host
-served the ~6 MB embedded bundle, a plain `<script src>` passed the `DenyCors` mapping, the
-element upgraded, and the bridge ran before page scripts — none of which layer 1 can prove.
+That single assertion is load-bearing: it can only succeed if the second virtual host served the
+~6 MB embedded bundle and a plain `<script src>` passed the `DenyCors` mapping — neither of which
+layer 1 can prove, since it serves the bundle over plain HTTP from a stand-in.
+
+It does **not** prove the element upgraded or that the bridge ran before page scripts. Neither is
+asserted, and neither is observable here: `source: "embedded"` means the script's `onload` fired,
+so a bundle that parses and then throws before `customElements.define` still reports `embedded`;
+and the shipped page's only script is the sample banner, which has no bridge dependency. A
+handshake carrying no `client` object at all is also accepted — `EvaluateWebSdkReport(null)`
+returns no failure. Layer 1 covers both on pull requests (`client.name`, `client.source`, and
+`customElements.get`), which is why the two layers gate together rather than separately.
 
 Stage A stops there and needs no server, which is why it is the part a pull request gates
 on; `WebSdkLoadException` (bundle missing, or a page-owned copy colliding) fails it
@@ -76,6 +99,13 @@ Only the first submit of a session is retried, and deliberately so: a submit bef
 silently dropped (see below), but a *resubmit* after render races the first request rather
 than replacing it, and the page refuses a second submit on a finalized response — so retrying
 the finalize would turn a merely slow one into a hard failure.
+
+A retry can still land two responses: an attempt that was merely slow produces one of its own,
+arriving after the one that was returned. No drain delay bounds that, so each stage waits for the
+response whose **status** it expects rather than for whatever arrives next — otherwise a straggler
+from save-draft became the finalize's result and B2 failed with a status the finalize never
+produced. A stage that times out reports what it did see (`saw: completed`), which is the
+silent-finalize signature, so the diagnosis stays in the message.
 
 Windows only, needs a WebView2 runtime and a desktop session — hence `windows-latest` in
 `.github/workflows/e2e.yml`, which also logs the runtime version so a failure is
@@ -115,7 +145,9 @@ cannot run Linux containers.
   image (`europe-docker.pkg.dev/tiroapp-4cb17/docker-ext/form-sdk-backend`) can be pinned
   per cell; layer 2 can't run Linux containers on a Windows runner. The server needs no
   database, so `uvicorn` is a fallback if pulling the image is awkward.
-- A fixture questionnaire in-repo. The canonical is version-pinned now, so an edit to the
-  draft cannot reach the suite, but a *new* version of the pinned revision still could.
+- A fixture questionnaire in-repo. Both layers pin the canonical to `|1.0.0` now — layer 2's
+  default was unpinned for a while, which made the claim below true of half the suite — and both
+  assert the pin held rather than assuming it, so an edit to the draft cannot reach the suite. A
+  *new* version of the pinned revision still could.
 - Running these in atticus-backend CI too, which is the direction that catches a *server*
   change breaking the fielded bridge.

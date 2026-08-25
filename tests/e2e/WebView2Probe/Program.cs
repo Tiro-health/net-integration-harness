@@ -30,9 +30,13 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
         // tests/e2e/README.md.
         private static readonly string SdcEndpoint =
             Environment.GetEnvironmentVariable("SDC_ENDPOINT") ?? "https://sdc-staging.tiro.health/fhir/r5";
+        // Version-pinned, exactly as layer 1 is. The same canonical carries a mutable draft-1 and
+        // staging's Questionnaire search ignores the version parameter (draft first), so without
+        // the pin this layer rendered whatever the draft says today — while the README claimed the
+        // suite was pinned. Half a pinned suite reads as a pinned suite.
         private static readonly string Questionnaire =
             Environment.GetEnvironmentVariable("QUESTIONNAIRE")
-            ?? "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699";
+            ?? "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699|1.0.0";
         private static readonly bool ServerStagesEnabled =
             Environment.GetEnvironmentVariable("PROBE_SKIP_SERVER_STAGES") != "1";
 
@@ -107,12 +111,17 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             // --- Stage B: save-draft, keep filling, finalize, extract ------------------
             // Mirrors the EhrShell + Extract samples. Every assertion here is on a typed
             // FHIR POCO, so it also proves Firely can deserialize what the element emits.
-            var draft = await FirstSubmit(viewer, "save-draft", submissions);
-            if (draft == null) { Report("FAIL", "no form.submitted after save-draft"); return 1; }
-            if (draft.Status != QuestionnaireResponse.QuestionnaireResponseStatus.InProgress)
+            var draftMark = submissions.Count;
+            var draft = await FirstSubmit(viewer, "save-draft", submissions,
+                QuestionnaireResponse.QuestionnaireResponseStatus.InProgress);
+            if (draft == null)
             {
-                // The silent-finalize bug, asserted in typed FHIR rather than a JSON string.
-                Report("FAIL", "save-draft produced status=" + draft.Status + ", expected in-progress");
+                // Both failures land here now that the wait matches on status: nothing came back,
+                // or something came back that was not a draft. Observed() is what tells them
+                // apart, and "saw: completed" IS the silent-finalize signature — the bug this
+                // suite exists for — so the diagnosis has to be in the message, not inferred from
+                // its absence.
+                Report("FAIL", "no in-progress response after save-draft" + Observed(submissions, draftMark));
                 return 1;
             }
             if (viewer.State != TiroFormViewerState.ContextSet)
@@ -122,11 +131,12 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             }
             Report("PASS", "stage B1 — save-draft returned in-progress and the session stayed usable");
 
-            var final = await SubmitOnce(viewer, null, submissions);
-            if (final == null) { Report("FAIL", "no form.submitted after finalize"); return 1; }
-            if (final.Status != QuestionnaireResponse.QuestionnaireResponseStatus.Completed)
+            var finalMark = submissions.Count;
+            var final = await SubmitOnce(viewer, null, submissions,
+                QuestionnaireResponse.QuestionnaireResponseStatus.Completed);
+            if (final == null)
             {
-                Report("FAIL", "finalize produced status=" + final.Status + ", expected completed");
+                Report("FAIL", "no completed response after finalize" + Observed(submissions, finalMark));
                 return 1;
             }
             if (viewer.State != TiroFormViewerState.Submitted)
@@ -134,7 +144,17 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
                 Report("FAIL", "a completed response did not end the session (state=" + viewer.State + ")");
                 return 1;
             }
-            Report("PASS", "stage B2 — finalize returned completed and ended the session");
+            // The pin was honoured, not merely requested: staging's search ignores the version
+            // parameter, so it is the SDK that has to respect it. The QR echoes the canonical it
+            // was filled from, which is where a dropped pin shows up.
+            if (final.Questionnaire != Questionnaire)
+            {
+                Report("FAIL", "the QR was filled from " + (final.Questionnaire ?? "(none)")
+                    + ", not the pinned " + Questionnaire);
+                return 1;
+            }
+            Report("PASS", "stage B2 — finalize returned completed, ended the session, "
+                + "and the QR echoes the pinned canonical");
 
             // $extract over the QR the real element produced, against the same server the
             // form rendered against — the ExtractSample's flow.
@@ -168,7 +188,8 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
         /// submit", and nothing in the host API exposes render-completion.
         /// </summary>
         private static async Task<QuestionnaireResponse> FirstSubmit(
-            TiroFormViewerR5 viewer, string intent, List<QuestionnaireResponse> submissions)
+            TiroFormViewerR5 viewer, string intent, List<QuestionnaireResponse> submissions,
+            QuestionnaireResponse.QuestionnaireResponseStatus wanted)
         {
             var mark = submissions.Count;
             var deadline = DateTime.UtcNow + StageTimeout;
@@ -179,18 +200,16 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
 
                 // Short per-attempt wait: a dropped request yields no response at all, so
                 // asking again is the only way to tell "not rendered yet" from "slow".
-                var landed = await WaitForSubmission(submissions, mark, TimeSpan.FromSeconds(10));
+                var landed = await WaitForSubmission(submissions, mark, TimeSpan.FromSeconds(10), wanted);
                 if (landed == null) continue;
 
                 if (attempt > 1)
                 {
-                    // An attempt that was merely slow rather than dropped still produces a
-                    // response, so a retry can yield two. Let the extras arrive and account
-                    // for them here, or the next stage would read one as its own result.
-                    await Task.Delay(TimeSpan.FromSeconds(2));
-                    var extras = submissions.Count - mark - 1;
+                    // A retry can still yield two responses: an attempt that was merely slow
+                    // produces one of its own. No drain delay bounds that, so the extras are left
+                    // to arrive and the next stage matches on status rather than position.
                     Report("INFO", "submit landed on attempt " + attempt
-                        + (extras > 0 ? ", discarding " + extras + " duplicate response(s) from earlier attempts" : ""));
+                        + "; later stages match on status, so a straggler cannot be read as theirs");
                 }
                 return landed;
             }
@@ -205,11 +224,12 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
         /// second with an error, which would turn a merely slow finalize into a hard failure.
         /// </summary>
         private static async Task<QuestionnaireResponse> SubmitOnce(
-            TiroFormViewerR5 viewer, string intent, List<QuestionnaireResponse> submissions)
+            TiroFormViewerR5 viewer, string intent, List<QuestionnaireResponse> submissions,
+            QuestionnaireResponse.QuestionnaireResponseStatus wanted)
         {
             var mark = submissions.Count;
             if (!await Send(viewer, intent)) return null;
-            return await WaitForSubmission(submissions, mark, StageTimeout);
+            return await WaitForSubmission(submissions, mark, StageTimeout, wanted);
         }
 
         private static async Task<bool> Send(TiroFormViewerR5 viewer, string intent)
@@ -228,21 +248,55 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
         }
 
         /// <summary>
-        /// Polls for the first submission recorded after <paramref name="mark"/>. Polling
-        /// rather than a TaskCompletionSource because the completion source has to be swapped
-        /// between stages, and a response arriving inside that window is lost.
+        /// Polls for the first submission after <paramref name="mark"/> that MATCHES
+        /// <paramref name="wanted"/>, rather than for whatever arrives next. Polling rather than a
+        /// TaskCompletionSource because the completion source has to be swapped between stages,
+        /// and a response arriving inside that window is lost.
+        /// <para>
+        /// Matching, not position, is what keeps the stages honest. A retried first submit can
+        /// still land its earlier attempt's response later — the retry interval is 10s and no
+        /// drain delay can bound that — so a positional read gave the NEXT stage a duplicate from
+        /// the previous one, and B2 failed with "finalize produced status=in-progress" over a
+        /// status the finalize never produced. A stage now ignores anything that isn't the outcome
+        /// it is waiting for, so a straggler is inert instead of misattributed.
+        /// </para>
+        /// <para>
+        /// The risk this trades into: a stage whose real result has the wrong status waits out its
+        /// timeout instead of failing immediately. That is the right way round — a slow red says
+        /// "no matching response", which is true, where the old fast red named a status that
+        /// belonged to another stage.
+        /// </para>
         /// </summary>
         private static async Task<QuestionnaireResponse> WaitForSubmission(
-            List<QuestionnaireResponse> submissions, int mark, TimeSpan timeout)
+            List<QuestionnaireResponse> submissions,
+            int mark,
+            TimeSpan timeout,
+            QuestionnaireResponse.QuestionnaireResponseStatus? wanted)
         {
             var deadline = DateTime.UtcNow + timeout;
             while (DateTime.UtcNow < deadline)
             {
-                if (submissions.Count > mark) return submissions[mark];
+                for (var i = mark; i < submissions.Count; i++)
+                {
+                    if (wanted == null || submissions[i].Status == wanted) return submissions[i];
+                }
                 await Task.Delay(50);
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// What actually arrived after <paramref name="mark"/>, for a FAIL message. A stage that
+        /// timed out because the wrong status came back must say which one, or the message reads
+        /// as a hang.
+        /// </summary>
+        private static string Observed(List<QuestionnaireResponse> submissions, int mark)
+        {
+            if (submissions.Count <= mark) return "; no form.submitted arrived at all";
+            var seen = new List<string>();
+            for (var i = mark; i < submissions.Count; i++) seen.Add(submissions[i].Status.ToString());
+            return "; saw: " + string.Join(", ", seen);
         }
 
         private static Patient SamplePatient() => new Patient

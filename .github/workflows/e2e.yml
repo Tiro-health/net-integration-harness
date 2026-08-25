@@ -45,6 +45,12 @@ on:
   schedule:
     - cron: '0 5 * * *'
 
+# A stacked push supersedes the run in flight rather than holding a second Windows runner
+# (billed at 2x). Never cancels a scheduled run, which has no newer commit to defer to.
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   SDC_ENDPOINT: https://sdc-staging.tiro.health/fhir/r5
   # Off for pull requests, on for the nightly and manual runs: see the note above.
@@ -76,6 +82,17 @@ jobs:
 
       - name: Run browser e2e
         working-directory: tests/e2e/browser
+        run: npm test
+
+      # A second run on a page that carries its own <script src> for the bundle, asserting the
+      # host REFUSES it. GH-60's promise is that there is no opt-out, and that promise had no
+      # end-to-end test: delete the bridge's collision branch and every other test stays green.
+      # Needs no server, so it runs on pull requests too.
+      - name: Run browser e2e — page-owned SDK is refused
+        working-directory: tests/e2e/browser
+        env:
+          PAGE_OWNS_SDK: '1'
+          E2E_SERVER_TESTS: '0'
         run: npm test
 
   webview2:
@@ -135,7 +152,13 @@ jobs:
           if (Test-Path $log) { Get-Content $log } else { Write-Host "(no report written)" }
           Write-Host "--- probe exit code: $($p.ExitCode) ---"
           if ($null -eq $p.ExitCode -or $p.ExitCode -ne 0) { exit 1 }
-          if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern 'PASS' -Quiet)) {
-            Write-Host "probe exited 0 but never reported PASS"
+          # Which marker is required depends on what this run was supposed to do. Matching a bare
+          # "PASS" accepted "PASS: stage A" — so a run whose server stages were skipped for any
+          # reason went green having asserted nothing about save-draft, finalize or $extract. The
+          # terminal marker is the only one that cannot be reached by a partial run.
+          $required = if ($env:PROBE_SKIP_SERVER_STAGES -eq '1') { 'PASS: stage A' } else { 'PASS: all stages' }
+          if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern $required -SimpleMatch -Quiet)) {
+            Write-Host "probe exited 0 but never reported '$required'"
             exit 1
           }
+          Write-Host "gate satisfied: '$required'"
