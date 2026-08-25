@@ -16,6 +16,14 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
             ""payload"": {payloadJson}
         }}";
 
+        /// <summary>A page→host ui.done envelope, which ends the session.</summary>
+        public static string UiDone(string id) => $@"{{
+            ""messageId"": ""{id}"",
+            ""messagingHandle"": ""smart-web-messaging"",
+            ""messageType"": ""ui.done"",
+            ""payload"": {{}}
+        }}";
+
         /// <summary>Polls until the predicate holds, failing the test on timeout.</summary>
         public static async Task PollFor(Func<bool> predicate, TimeSpan timeout)
         {

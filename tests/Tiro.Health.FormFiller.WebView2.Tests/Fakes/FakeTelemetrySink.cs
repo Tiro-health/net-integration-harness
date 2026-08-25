@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Tiro.Health.FormFiller.WebView2.Telemetry;
 
 namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
@@ -67,6 +68,37 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public bool Finished { get; private set; }
         public TelemetrySpanStatus? FinalStatus { get; private set; }
         public Exception FinalException { get; private set; }
+
+        /// <summary>
+        /// Every Finish call, in order — including the ones first-wins discards, and both
+        /// overloads. FinalStatus alone cannot distinguish "finished once" from "finished
+        /// three times and the first one happened to win", and the difference matters: the
+        /// bug this instrumentation was added for was a real adapter that did NOT honour
+        /// first-wins while this fake always did, so the fake absorbed the divergence it was
+        /// standing in for.
+        /// <para>
+        /// Assert on the recorded STATUS, not on the call count, unless the count is what a
+        /// test is genuinely about. ITelemetrySpan permits repeat finishes; a test demanding
+        /// exactly one pins a caller's implementation choice rather than the contract, and
+        /// goes red when a caller legitimately changes.
+        /// </para>
+        /// <para>Note a <c>using</c>-scoped span records a trailing Ok, since Dispose finishes.</para>
+        /// </summary>
+        public List<(TelemetrySpanStatus? Status, Exception Exception)> FinishCalls { get; }
+            = new List<(TelemetrySpanStatus?, Exception)>();
+
+        /// <summary>
+        /// Exceptions handed to <see cref="Finish(Exception)"/> after the span had already
+        /// finished. The contract allows associating these for trace linkage, so they are kept
+        /// apart from <see cref="FinalException"/> rather than discarded or conflated with it —
+        /// which is what the real Sentry adapter does.
+        /// </summary>
+        public List<Exception> LateAssociatedExceptions { get; } = new List<Exception>();
+
+        /// <summary>Statuses from <see cref="FinishCalls"/>, for terser assertions.</summary>
+        public IEnumerable<TelemetrySpanStatus> FinishStatuses
+            => FinishCalls.Where(c => c.Status.HasValue).Select(c => c.Status.Value);
+
         public Dictionary<string, string> Tags { get; } = new Dictionary<string, string>();
         public Dictionary<string, object> Extras { get; } = new Dictionary<string, object>();
         public List<FakeTelemetrySpan> Children { get; } = new List<FakeTelemetrySpan>();
@@ -89,7 +121,8 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 
         public void Finish(TelemetrySpanStatus status)
         {
-            // ITelemetrySpan contract: Finish must be idempotent (subsequent calls are no-ops).
+            FinishCalls.Add((status, null));
+            // ITelemetrySpan contract: first finish wins.
             if (Finished) return;
             Finished = true;
             FinalStatus = status;
@@ -97,7 +130,18 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
 
         public void Finish(Exception ex)
         {
-            if (Finished) return;
+            FinishCalls.Add((null, ex));
+            if (Finished)
+            {
+                // Not discarded: the contract lets a repeat exception finish associate its
+                // exception for trace linkage, and the Sentry adapter does exactly that. A
+                // fake that dropped it would disagree with the adapter in precisely the case
+                // FinishCalls exists to make visible — while still leaving FinalStatus and
+                // FinalException, which belong to the winning finish, untouched.
+                LateAssociatedExceptions.Add(ex);
+                return;
+            }
+
             Finished = true;
             FinalException = ex;
         }

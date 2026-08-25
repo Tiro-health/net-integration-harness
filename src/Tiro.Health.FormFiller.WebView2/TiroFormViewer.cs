@@ -511,9 +511,14 @@ namespace Tiro.Health.FormFiller.WebView2
                     _browser.PostMessage(responseJson);
                 }
 
-                // OnFormSubmitted may have already finished the transaction with an outcome-aware
-                // status; ITelemetrySpan.Finish is required to be idempotent (subsequent calls
-                // are no-ops), so this is safe.
+                // OnFormSubmitted may already have finished this transaction with an
+                // outcome-aware status, and this Ok must not replace it. Safe because
+                // ITelemetrySpan is first-wins, which the Sentry adapter now actually
+                // implements — until it did, this call rewrote a failed validation to green
+                // on every submit. Left unguarded on purpose: the send paths cannot be
+                // guarded caller-side (a cancellation callback races a response handler on
+                // another thread), so the adapter has to be the answer there anyway, and one
+                // mechanism honoured everywhere beats two half-trusted ones.
                 transaction?.Finish(TelemetrySpanStatus.Ok);
             }
             catch (Exception ex)
@@ -601,7 +606,8 @@ namespace Tiro.Health.FormFiller.WebView2
             // local before invoking the user handler: if the handler pumps the message
             // loop (e.g. MessageBox.Show), a nested inbound will overwrite then null the
             // field, but our local still points at the right span. OnBrowserMessageReceived's
-            // final Finish(Ok) will be a no-op since Finish is idempotent.
+            // final Finish(Ok) does not disturb the status set here: ITelemetrySpan is
+            // first-wins.
             var ourReceiveTransaction = _currentReceiveTransaction;
             try
             {
@@ -801,7 +807,10 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>
         /// Wraps a caller-supplied (or null) response handler so the supplied <paramref name="span"/>
         /// is finished when the response arrives, when caller cancellation fires, or when the
-        /// viewer's lifetime ends. Multi-finish is safe per the <see cref="ITelemetrySpan"/> contract.
+        /// viewer's lifetime ends. Whichever happens first wins: <see cref="ITelemetrySpan"/>
+        /// requires that, and these paths can genuinely race — the cancellation callback runs
+        /// on the threadpool while the response handler runs on the UI thread, so no
+        /// caller-side ordering can substitute for the implementation's guard.
         /// Uses a single linked CTS so a long-lived user token doesn't accumulate dead
         /// callbacks across many sends — every exit path disposes the CTS, which releases
         /// its registrations on both source tokens at once.
@@ -839,8 +848,11 @@ namespace Tiro.Health.FormFiller.WebView2
                     if (originalHandler != null)
                         await originalHandler(response);
                     // Finished ONCE, with the outcome already known: finishing InternalError
-                    // here and Ok a line later shipped "ok" to Sentry, because ITelemetrySpan
-                    // implementations are not all idempotent despite the contract.
+                    // here and Ok a line later shipped "ok" to Sentry, back when the Sentry
+                    // adapter did not honour the first-wins contract. It does now, so this is
+                    // no longer the only thing standing between a page error and a green trace
+                    // — but finishing once with the outcome in hand is still the clearer way to
+                    // say it, and the cancellation sentinel above races this line.
                     span?.Finish(pageError != null ? TelemetrySpanStatus.InternalError : TelemetrySpanStatus.Ok);
                 }
                 catch (Exception ex)

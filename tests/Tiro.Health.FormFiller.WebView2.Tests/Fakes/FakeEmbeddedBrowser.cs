@@ -31,7 +31,20 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
             return Task.CompletedTask;
         }
 
-        public void PostMessage(string json) => PostedMessages.Add(json);
+        /// <summary>When set, the next PostMessage call throws this once — what a WebView2
+        /// torn down under a WinForms dispose race does to a send in flight.</summary>
+        public Exception ThrowOnNextPostMessage { get; set; }
+
+        public void PostMessage(string json)
+        {
+            var ex = ThrowOnNextPostMessage;
+            if (ex != null)
+            {
+                ThrowOnNextPostMessage = null;
+                throw ex;
+            }
+            PostedMessages.Add(json);
+        }
 
         /// <summary>When set, the next MapVirtualHost call throws this once.</summary>
         public Exception ThrowOnNextMapVirtualHost { get; set; }

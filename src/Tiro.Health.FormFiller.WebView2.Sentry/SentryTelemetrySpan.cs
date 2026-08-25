@@ -11,6 +11,8 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
     internal sealed class SentryTelemetrySpan : ITelemetrySpan
     {
         private readonly ISpan _span;
+        private readonly object _gate = new object();
+        private bool _finished;
 
         public SentryTelemetrySpan(ISpan span)
         {
@@ -24,9 +26,66 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         public ITelemetrySpan StartChild(string operation, string description)
             => new SentryTelemetrySpan(_span.StartChild(operation, description));
 
-        public void Finish(TelemetrySpanStatus status) => _span.Finish(Map(status));
+        /// <summary>
+        /// First finish wins, per the <see cref="ITelemetrySpan"/> contract. Sentry's
+        /// <c>Finish(status)</c> assigns the status BEFORE its own already-finished guard, and
+        /// the captured transaction shares the tracer's trace context by reference while the
+        /// envelope is serialized lazily at flush — so without a guard here a later
+        /// <c>Finish(Ok)</c> overwrote an earlier failure and the trace shipped green.
+        /// <para>
+        /// The critical section is a test-and-set, so an interlocked flag would do; a lock
+        /// keeps all three finish paths reading the same way, and a span finishes once, so
+        /// there is no contention to optimise.
+        /// </para>
+        /// </summary>
+        public void Finish(TelemetrySpanStatus status)
+        {
+            lock (_gate)
+            {
+                // _span.IsFinished as well as our own flag: the SDK can finish a span behind
+                // the wrapper (an idle-timeout transaction), and writing a status through to
+                // one that has already gone is the same overwrite from the other direction.
+                if (_finished || _span.IsFinished) return;
+                _finished = true;
+                _span.Finish(Map(status));
+            }
+        }
 
-        public void Finish(Exception ex) => _span.Finish(ex);
+        /// <summary>
+        /// As <see cref="Finish(TelemetrySpanStatus)"/>, except that a repeat call still does
+        /// something: it binds the exception, which is what links the captured error event to
+        /// this span in a trace view. Losing that link loses the connection between a failure
+        /// and where it happened.
+        /// <para>
+        /// <c>SentrySdk.BindException</c> rather than <c>ISpan.Finish(ex, status)</c>: the
+        /// latter binds and assigns a status in one operation, so honouring first-wins with it
+        /// meant remembering the winning status and passing it back to be re-asserted — which
+        /// left this adapter unable to keep its own promise for a span the SDK had finished
+        /// behind us, and forced the winning status to be recorded atomically with the finish
+        /// (<see cref="SpanStatus.Ok"/> is the enum's zero value, so a torn read re-asserted
+        /// green). Binding on its own touches neither status nor end timestamp, so none of
+        /// that is needed: every repeat is linkage only.
+        /// </para>
+        /// <para>
+        /// The static façade is the right hub here because these spans are created through
+        /// <c>SentrySdk.StartTransaction</c> (see <c>SentryTelemetrySession</c>), so the span's
+        /// hub IS the global hub. With the SDK uninitialised it is a no-op rather than a throw.
+        /// </para>
+        /// </summary>
+        public void Finish(Exception ex)
+        {
+            lock (_gate)
+            {
+                if (_finished || _span.IsFinished)
+                {
+                    SentrySdk.BindException(ex, _span);
+                    return;
+                }
+
+                _finished = true;
+                _span.Finish(ex);
+            }
+        }
 
         /// <summary>
         /// Scope-exit finish: completes the span with <see cref="SpanStatus.Ok"/> only if it
@@ -34,7 +93,12 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
         /// </summary>
         public void Dispose()
         {
-            if (!_span.IsFinished) _span.Finish(SpanStatus.Ok);
+            lock (_gate)
+            {
+                if (_finished || _span.IsFinished) return;
+                _finished = true;
+                _span.Finish(SpanStatus.Ok);
+            }
         }
 
         private static SpanStatus Map(TelemetrySpanStatus status)

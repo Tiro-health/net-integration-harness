@@ -128,7 +128,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             await DelayUntilBrowserInitialized();
             _browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
-            _browser.RaiseMessageReceived(BuildUiDoneMessage("uid-1"));
+            _browser.RaiseMessageReceived(SwmTest.UiDone("uid-1"));
 
             await fired.Task.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
             // ui.done is informational — it doesn't move the state machine to Submitted.
@@ -489,13 +489,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
 
         private static string BuildHandshakeMessage(string id) => SwmTest.Handshake(id);
-
-        private static string BuildUiDoneMessage(string id) => $@"{{
-            ""messageId"": ""{id}"",
-            ""messagingHandle"": ""smart-web-messaging"",
-            ""messageType"": ""ui.done"",
-            ""payload"": {{}}
-        }}";
 
         private static string BuildDirtyChangedMessage(string id, bool isDirty) => $@"{{
             ""messageId"": ""{id}"",
