@@ -148,7 +148,9 @@ namespace Tiro.Health.FormFiller.WebView2
         // rather than tracked with a flag: a flag says "some frame's handler finished its
         // transaction" and a nested delivery could answer for the outer frame, which is a
         // representation problem no invariant fixes. An identity cannot be mistaken for
-        // another frame's.
+        // another frame's — provided the identities are distinct, which is why
+        // OnBrowserMessageReceived clears this on the way out rather than letting a stale
+        // value outlive the frame that set it.
         private ITelemetrySpan _finishedReceiveTransaction;
 
         // Explicit lifecycle state. Backed by int so Interlocked CAS/Exchange can transition
@@ -546,6 +548,13 @@ namespace Tiro.Health.FormFiller.WebView2
             finally
             {
                 _currentReceiveTransaction = previousReceiveTransaction;
+                // Cleared once this frame is done with it. Identity only distinguishes frames
+                // while spans are distinct objects, and a sink is free to return the same one
+                // every time — NullTelemetrySink does, handing out a NullSpan singleton — so a
+                // value left behind would match every later transaction and skip its finish
+                // forever. Harmless for an inert span, silent for any sink that isn't.
+                if (ReferenceEquals(_finishedReceiveTransaction, transaction))
+                    _finishedReceiveTransaction = null;
             }
         }
 
