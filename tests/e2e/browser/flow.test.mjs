@@ -13,8 +13,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
-import { join, extname, dirname, resolve as resolve_ } from "node:path";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { HOST_SHIM } from "./host-shim.mjs";
@@ -66,7 +66,30 @@ const MIME = { ".html": "text/html", ".js": "application/javascript" };
 //      without this the element never upgrades and the replay times out at the render wait
 //      instead of failing the assertion it is supposed to fail.
 const PAGE_OWNS_SDK = process.env.PAGE_OWNS_SDK === "1";
-const PUBLIC_DIR = join(HERE, "public");
+
+// The page under test is the STARTER TEMPLATE the shipped index.html hands integrators from its
+// "Copy starter template" button — extracted from that file rather than kept as a copy here.
+// A copy drifts silently: someone improves the template an integrator will actually paste, and
+// the suite goes on testing last year's version. Extracting means layer 1 tests the exact markup
+// we tell integrators to ship, and an edit to the template reaches the suite by construction.
+// (Layer 2 navigates to the shipped page itself, so between them both pages are covered.)
+const SHIPPED_PAGE = join(REPO, "src/Tiro.Health.FormFiller.WebView2/WebAssets/index.html");
+
+function starterTemplate() {
+  const shipped = readFileSync(SHIPPED_PAGE, "utf8");
+  const m = shipped.match(/const STARTER_TEMPLATE = `([\s\S]*?)`;/);
+  if (!m) {
+    throw new Error(
+      `could not extract STARTER_TEMPLATE from ${SHIPPED_PAGE}. If the shipped page changed shape, `
+      + "update this extraction — do not reintroduce a hand-copied fixture page, which is what "
+      + "this replaced.");
+  }
+  const html = m[1];
+  if (/<script[^>]+src=/i.test(html)) {
+    throw new Error("the starter template now carries a script src — GH-60 says it must not");
+  }
+  return html;
+}
 
 function startServer() {
   return new Promise(resolve => {
@@ -77,16 +100,12 @@ function startServer() {
         res.end(readFileSync(BUNDLE_PATH));
         return;
       }
-      // resolve + prefix check: the path comes straight off the URL, and ".." would otherwise
-      // read outside public/. Test-only and localhost-bound, but not worth leaving open.
-      const file = resolve_(PUBLIC_DIR, "." + (path === "/" ? "/index.html" : path));
-      if (!file.startsWith(PUBLIC_DIR) || !existsSync(file)) { res.writeHead(404).end(); return; }
-      let body = readFileSync(file);
-      if (PAGE_OWNS_SDK && extname(file) === ".html") {
-        body = Buffer.from(String(body).replace(
-          "</head>", `<script src="/tiro-web-sdk.iife.js"></script></head>`));
+      if (path !== "/") { res.writeHead(404).end(); return; }
+      let body = starterTemplate();
+      if (PAGE_OWNS_SDK) {
+        body = body.replace("</head>", `<script src="/tiro-web-sdk.iife.js"></script></head>`);
       }
-      res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
+      res.writeHead(200, { "content-type": MIME[".html"] });
       res.end(body);
     });
     server.listen(0, "127.0.0.1", () => resolve({ server, base: `http://127.0.0.1:${server.address().port}` }));

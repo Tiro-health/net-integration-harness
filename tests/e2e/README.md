@@ -31,6 +31,13 @@ A static server stands in for the WebView2 virtual hosts (serving the page plus 
 so `tiro-swm-bridge.js` runs **unmodified** — injected via `addInitScript`, which gives the
 same before-any-page-script guarantee as `AddScriptToExecuteOnDocumentCreatedAsync`.
 
+The page served is the **starter template extracted from the shipped `WebAssets/index.html`** —
+the markup its "Copy starter template" button hands integrators — not a copy kept here. A copy
+drifts: someone improves the template people actually paste, and the suite keeps testing the old
+one. Extracting means an edit reaches the suite by construction, and the extraction fails loudly
+if the shipped page changes shape. Layer 2 navigates to the shipped page itself, so between them
+both pages are covered.
+
 ```sh
 cd tests/e2e/browser
 npm ci --ignore-scripts
@@ -106,6 +113,11 @@ response whose **status** it expects rather than for whatever arrives next — o
 from save-draft became the finalize's result and B2 failed with a status the finalize never
 produced. A stage that times out reports what it did see (`saw: completed`), which is the
 silent-finalize signature, so the diagnosis stays in the message.
+
+A UI-thread exception outside the probe's own try — a WebView2 callback, an event handler —
+becomes a FAIL and an exit rather than WinForms' default modal dialog, which on a headless runner
+nobody dismisses: the probe would hang to the job's 25-minute ceiling at 2x Windows billing and
+write no verdict.
 
 Windows only, needs a WebView2 runtime and a desktop session — hence `windows-latest` in
 `.github/workflows/e2e.yml`, which also logs the runtime version so a failure is

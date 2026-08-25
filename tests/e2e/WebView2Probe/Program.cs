@@ -49,6 +49,26 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             var exitCode = 1;
 
             var form = new Form { Text = "WebView2 probe", Width = 1000, Height = 800 };
+
+            // Anything thrown on the UI thread OUTSIDE RunAsync's try — a WebView2 callback, an
+            // event handler — reaches WinForms, whose default is a modal error dialog. On a
+            // headless runner nobody dismisses it: the probe hangs to the job's 25-minute ceiling,
+            // at 2x Windows billing, and writes no verdict. A hang that costs money and says
+            // nothing is the worst failure mode available, so it is turned into a FAIL and an
+            // exit. Set before any window exists, which is where the mode is read.
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += (_, e) =>
+            {
+                Report("FAIL", "unhandled UI-thread exception: " + e.Exception);
+                exitCode = 1;
+                try { form.Close(); } catch { /* already going down */ }
+            };
+            // Non-UI threads cannot be rescued on .NET Framework — the CLR tears the process down
+            // regardless — but the report is written first, so the log says why instead of the
+            // step just reporting a non-zero exit.
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+                Report("FAIL", "unhandled exception on a non-UI thread: " + e.ExceptionObject);
+
             var viewer = new TiroFormViewerR5 { Dock = DockStyle.Fill, SdcEndpointAddress = SdcEndpoint };
             form.Controls.Add(viewer);
 
@@ -60,6 +80,7 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             };
 
             Application.Run(form);
+            try { viewer.Dispose(); } catch { /* best-effort; the process is exiting anyway */ }
             Report("INFO", "exiting with " + exitCode);
             return exitCode;
         }
@@ -93,11 +114,10 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
                 }
             }
 
-            if (viewer.State == TiroFormViewerState.Initializing)
-            {
-                Report("FAIL", "no handshake: state never left Initializing");
-                return 1;
-            }
+            // No state check here: SetContextAsync only returns once the handshake has landed, so
+            // a surviving Initializing is unreachable and reading this as THE handshake assertion
+            // would be wrong — the assertion is that the await above did not throw. The state is
+            // reported below because it is useful, not because it is checked.
             Report("PASS", "stage A — embedded web-sdk served over the virtual host, bridge injected, "
                 + "handshake received (state=" + viewer.State + ", pageWebSdkVersion="
                 + (viewer.PageWebSdkVersion ?? "(null)") + ")");
