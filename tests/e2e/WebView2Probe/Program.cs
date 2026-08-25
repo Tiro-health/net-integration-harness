@@ -45,23 +45,30 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
         [STAThread]
         private static int Main()
         {
-            Application.EnableVisualStyles();
-            var exitCode = 1;
-
-            var form = new Form { Text = "WebView2 probe", Width = 1000, Height = 800 };
-
-            // Anything thrown on the UI thread OUTSIDE RunAsync's try — a WebView2 callback, an
-            // event handler — reaches WinForms, whose default is a modal error dialog. On a
-            // headless runner nobody dismisses it: the probe hangs to the job's 25-minute ceiling,
-            // at 2x Windows billing, and writes no verdict. A hang that costs money and says
-            // nothing is the worst failure mode available, so it is turned into a FAIL and an
-            // exit. Set before any window exists, which is where the mode is read.
+            // FIRST, before anything else touches WinForms. "Thread exception mode cannot be
+            // changed once any Controls are created on the thread" — and constructing the Form is
+            // enough to count, so this call sitting one line below it threw at startup and the
+            // probe died before writing a verdict. The gate caught it, which is the only reason
+            // this was a red run rather than a green one.
+            //
+            // Why it is here at all: anything thrown on the UI thread OUTSIDE RunAsync's try — a
+            // WebView2 callback, an event handler — otherwise reaches WinForms' default modal
+            // error dialog, which nobody dismisses on a headless runner. The probe would hang to
+            // the job's 25-minute ceiling at 2x Windows billing and write nothing. A hang that
+            // costs money and says nothing is the worst failure mode available.
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.EnableVisualStyles();
+
+            var exitCode = 1;
+            // Declared before the handler so the closure can reach it, assigned after: the mode
+            // above must be set while no Control exists.
+            Form form = null;
+
             Application.ThreadException += (_, e) =>
             {
                 Report("FAIL", "unhandled UI-thread exception: " + e.Exception);
                 exitCode = 1;
-                try { form.Close(); } catch { /* already going down */ }
+                try { form?.Close(); } catch { /* already going down */ }
             };
             // Non-UI threads cannot be rescued on .NET Framework — the CLR tears the process down
             // regardless — but the report is written first, so the log says why instead of the
@@ -69,6 +76,7 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
                 Report("FAIL", "unhandled exception on a non-UI thread: " + e.ExceptionObject);
 
+            form = new Form { Text = "WebView2 probe", Width = 1000, Height = 800 };
             var viewer = new TiroFormViewerR5 { Dock = DockStyle.Fill, SdcEndpointAddress = SdcEndpoint };
             form.Controls.Add(viewer);
 
