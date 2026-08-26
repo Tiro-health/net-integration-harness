@@ -28,12 +28,6 @@ namespace Tiro.Health.FormSdk.Abstractions
     /// </summary>
     public sealed class SdcVersionCheckResult
     {
-        /// <summary>Where the version is read from: the base-relative <c>metadata</c> route.</summary>
-        /// <remarks>
-        /// Not a <c>const</c> — see the remarks on <see cref="SdcCompatibility.MinimumSdcVersion"/>.
-        /// </remarks>
-        public static readonly string CapabilityStatementSource = "CapabilityStatement.software.version";
-
         // Longest server-reported string echoed into a message, a log line or a telemetry
         // breadcrumb. The response cap is 2 MB, so without this a server (or anything that can
         // answer as one) could put a megabyte of its choosing into a Sentry breadcrumb on every
@@ -47,14 +41,11 @@ namespace Tiro.Health.FormSdk.Abstractions
         private const int MaxDetailLength = 512;
 
         private SdcVersionCheckResult(
-            SdcVersionCheckOutcome outcome, string reportedVersion, string source, string detail,
-            bool meetsRecommended)
+            SdcVersionCheckOutcome outcome, string reportedVersion, string detail)
         {
             Outcome = outcome;
             ReportedVersion = reportedVersion;
-            Source = source;
             Detail = detail;
-            MeetsRecommendedVersion = meetsRecommended;
         }
 
         /// <summary>
@@ -65,8 +56,7 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// <see cref="SdcVersionCheckOutcome.TooOld"/>.
         /// </summary>
         /// <param name="reportedVersion">The raw string the server reported.</param>
-        /// <param name="source">Where it was read from — see <see cref="CapabilityStatementSource"/>.</param>
-        public static SdcVersionCheckResult FromReportedVersion(string reportedVersion, string source)
+        public static SdcVersionCheckResult FromReportedVersion(string reportedVersion)
         {
             var outcome = SdcCompatibility.Evaluate(reportedVersion);
             var clamped = Clamp(reportedVersion);
@@ -74,9 +64,7 @@ namespace Tiro.Health.FormSdk.Abstractions
                 ? $"The server reported '{clamped}', which is not a release version " +
                   "(dev builds report 'dev', PR builds a checkpoint id, a server with no version.json 'development')."
                 : string.Empty;
-            return new SdcVersionCheckResult(
-                outcome, clamped, source, Truncate(detail, MaxDetailLength),
-                SdcCompatibility.MeetsRecommended(reportedVersion));
+            return new SdcVersionCheckResult(outcome, clamped, Truncate(detail, MaxDetailLength));
         }
 
         /// <summary>
@@ -88,8 +76,7 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// <param name="detail">Why, for the customer's logs.</param>
         public static SdcVersionCheckResult Unavailable(string detail)
             => new SdcVersionCheckResult(
-                SdcVersionCheckOutcome.Unknown, null, null, Truncate(detail ?? string.Empty, MaxDetailLength),
-                meetsRecommended: true);
+                SdcVersionCheckOutcome.Unknown, null, Truncate(detail ?? string.Empty, MaxDetailLength));
 
         /// <summary>
         /// Truncates a server-supplied string to a length that is safe to put in a log line,
@@ -121,12 +108,6 @@ namespace Tiro.Health.FormSdk.Abstractions
         public string ReportedVersion { get; }
 
         /// <summary>
-        /// Which document the version came from — see <see cref="CapabilityStatementSource"/> —
-        /// or <c>null</c> when none answered.
-        /// </summary>
-        public string Source { get; }
-
-        /// <summary>
         /// Why the outcome is what it is, for logs: the failing status code, the transport
         /// error, or the unrecognized version string. Never <c>null</c>.
         /// </summary>
@@ -135,27 +116,6 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// <summary>The floor this was evaluated against.</summary>
         public string MinimumVersion => SdcCompatibility.MinimumSdcVersion;
 
-        /// <summary>The version this harness release would rather the server were on.</summary>
-        public string RecommendedVersion => SdcCompatibility.RecommendedSdcVersion;
-
-        /// <summary>
-        /// <c>false</c> only when the server reported a readable version at or above
-        /// <see cref="MinimumVersion"/> but below <see cref="RecommendedVersion"/> — an advisory,
-        /// not a failure. The session proceeds; the host is warned. <c>true</c> when the version
-        /// could not be read at all, since there is nothing to advise about.
-        /// </summary>
-        public bool MeetsRecommendedVersion { get; }
-
-        /// <summary>
-        /// The advisory line for a <see cref="SdcVersionCheckOutcome.Satisfied"/> result that is
-        /// below <see cref="RecommendedVersion"/>, or <c>null</c> when there is nothing to say.
-        /// </summary>
-        public string RecommendationMessage
-            => Outcome == SdcVersionCheckOutcome.Satisfied && !MeetsRecommendedVersion
-                ? $"SDC server version {ReportedVersion} meets the minimum {MinimumVersion} but is below the " +
-                  $"recommended {RecommendedVersion}. A future harness release is expected to require it; " +
-                  "upgrading the SDC server now avoids a refused session later."
-                : null;
 
         /// <summary>A single line naming the outcome, both versions, and the source.</summary>
         public override string ToString()
@@ -163,9 +123,11 @@ namespace Tiro.Health.FormSdk.Abstractions
             switch (Outcome)
             {
                 case SdcVersionCheckOutcome.Satisfied:
-                    return $"SDC server version {ReportedVersion} satisfies the minimum {MinimumVersion} (read from {Source}).";
+                    return $"SDC server version {ReportedVersion} satisfies the minimum {MinimumVersion} " +
+                           "(read from CapabilityStatement.software.version).";
                 case SdcVersionCheckOutcome.TooOld:
-                    return $"SDC server version {ReportedVersion} is older than the minimum {MinimumVersion} required by this harness (read from {Source}).";
+                    return $"SDC server version {ReportedVersion} is older than the minimum {MinimumVersion} " +
+                           "required by this harness (read from CapabilityStatement.software.version).";
                 default:
                     return $"SDC server version could not be established (minimum required: {MinimumVersion}). {Detail}";
             }

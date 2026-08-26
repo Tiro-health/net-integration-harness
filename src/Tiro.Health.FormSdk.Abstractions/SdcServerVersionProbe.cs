@@ -44,8 +44,9 @@ namespace Tiro.Health.FormSdk.Abstractions
     /// a clinician a form, two strings are all that is needed, <c>CapabilityStatement</c> lives
     /// in <c>Hl7.Fhir.Conformance</c> (which neither consuming core package references), and a
     /// single-field read cannot trip over an element a newer server emits. The document is
-    /// ~530 bytes and sends <c>ETag</c> + <c>Cache-Control: public, max-age=300</c>; conditional
-    /// requests are supported by the server but not worth the complexity for a startup check.
+    /// ~530 bytes, and it is re-fetched per probe: the server sends <c>ETag</c> and
+    /// <c>Cache-Control</c>, but nothing here issues a conditional request and
+    /// <see cref="HttpClient"/> has no response cache, so no caching benefit is claimed.
     /// </para>
     /// </remarks>
     public static class SdcServerVersionProbe
@@ -64,9 +65,10 @@ namespace Tiro.Health.FormSdk.Abstractions
 
         /// <summary>
         /// Hard cap on how much of a response body is read. A safety valve against an unbounded
-        /// or hostile stream, not an expected limit: the real document is ~530 bytes.
+        /// or hostile stream, not an expected limit: the real document is ~530 bytes, so this is
+        /// already two orders of magnitude of headroom.
         /// </summary>
-        private const int MaxResponseBytes = 2 * 1024 * 1024;
+        private const int MaxResponseBytes = 64 * 1024;
 
         /// <summary>
         /// What the SDC server reports as <c>CapabilityStatement.software.name</c>. This is the
@@ -77,6 +79,12 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// document that omits it is by definition non-conformant, which is exactly the class
         /// (a tunnelled response, a hand-written server, a proxy) that must not be trusted to
         /// refuse a session.
+        /// <para>
+        /// Compared case-insensitively and trimmed on purpose. The literal has a lowercase
+        /// <c>h</c> in "health"; a cosmetic capitalization change on the server would otherwise
+        /// disarm this gate in every already-shipped binary, and no reading of the string's
+        /// intent depends on its case.
+        /// </para>
         /// </summary>
         private const string SdcServerSoftwareName = "Tiro.health SDC Server";
 
@@ -114,6 +122,11 @@ namespace Tiro.Health.FormSdk.Abstractions
             HttpClient httpClient = null,
             CancellationToken cancellationToken = default)
         {
+            if (!SdcCompatibility.RefuseUnsupportedServers)
+                return SdcVersionCheckResult.Unavailable(
+                    "The SDC server version check is disabled by the host " +
+                    "(SdcCompatibility.RefuseUnsupportedServers = false).");
+
             if (sdcBaseAddress == null) throw new ArgumentNullException(nameof(sdcBaseAddress));
             if (!sdcBaseAddress.IsAbsoluteUri)
                 throw new ArgumentException("sdcBaseAddress must be an absolute URI.", nameof(sdcBaseAddress));
@@ -133,14 +146,13 @@ namespace Tiro.Health.FormSdk.Abstractions
 
             // Attribution guard; see SdcServerSoftwareName. Reported as "unknown" (fail open),
             // never as "too old" — a document we cannot attribute must not refuse a session.
-            if (!string.Equals(read.Name, SdcServerSoftwareName, StringComparison.Ordinal))
+            if (!string.Equals(read.Name?.Trim(), SdcServerSoftwareName, StringComparison.OrdinalIgnoreCase))
                 return SdcVersionCheckResult.Unavailable(
                     $"GET {requestUri} → a CapabilityStatement whose software.name is " +
                     $"{Describe(read.Name)}, not '{SdcServerSoftwareName}'. " +
                     "Its version is not the SDC server's and was not used.");
 
-            return SdcVersionCheckResult.FromReportedVersion(
-                read.Version, SdcVersionCheckResult.CapabilityStatementSource);
+            return SdcVersionCheckResult.FromReportedVersion(read.Version);
         }
 
         private static string Describe(string name)

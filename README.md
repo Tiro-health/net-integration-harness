@@ -649,7 +649,7 @@ The value is also in each release's notes. It is checked at first use on **both*
 | `TiroFormViewer` (`SdcEndpointAddress`) | first `SetContextAsync`, after the handshake and **before** anything is sent to the page | `SdcServerTooOldException`; no form is configured or displayed |
 | `SdcClient` (`baseAddress`) | first `$validate` / `$extract` | `SdcServerTooOldException`; the operation is never sent |
 
-Both run the check once and cache the verdict — the viewer per configured endpoint (a `SetContextAsync` retried after a failure reuses it, unless you changed `SdcEndpointAddress` in between, which re-probes), the client per instance and shared across concurrent first operations. The viewer starts it while the browser is initializing, so against a server that answers it adds no measurable latency to a form launch; against one that doesn't answer, the launch waits up to the probe's deadline before failing open. The client's is strictly serial in front of the first operation, so that one operation pays a single extra round trip.
+Both run the check once and cache the verdict — the viewer per configured endpoint (a `SetContextAsync` retried after a failure reuses it, unless you changed `SdcEndpointAddress` in between, which re-probes), the client per instance and shared across concurrent first operations. The viewer starts it while the browser is initializing, so against a server that answers it adds no measurable latency to a form launch; against one that doesn't answer, the launch waits up to the probe's 3 s deadline before failing open. The client's is strictly serial in front of the first operation, so that one operation pays a single extra round trip.
 
 **How the version is read.** One source: `GET {sdcEndpoint}/metadata` → `CapabilityStatement.software.version`, accepted only from a document whose `software.name` identifies it as the SDC server. The URL is built by *appending* to the address you configured, so the request reaches the same host the forms and the operations talk to, and a gateway path prefix survives. It's also the FHIR spec's own field for "version of the software running", ~530 bytes, `ETag`ed and cacheable.
 
@@ -668,13 +668,25 @@ Both run the check once and cache the verdict — the viewer per configured endp
 
 **Seeing what it found.** The check's diagnostics land in *your* logs, not Tiro's — you host the server. Three ways to read them:
 
-- `viewer.SdcServerVersionCheck` / `client.ServerVersionCheck` — the `SdcVersionCheckResult` (outcome, reported version, which source answered, and why if it couldn't tell). `null` until the check has run.
-- A `System.Diagnostics.Trace` warning when the check runs and can't establish the version, so a host with a trace listener sees a check that silently stopped working. Written once per verdict; nothing is traced when there's no endpoint to check. Note the default listener routes to `OutputDebugString`, so **configure a `TraceListener` if you want to see it** — without one this is invisible outside a debugger.
+- `viewer.SdcServerVersionCheck` / `client.ServerVersionCheck` — the `SdcVersionCheckResult` (outcome, reported version, and why if it couldn't tell). `null` until the check has run.
+- **A captured telemetry message** on the viewer, via `ITelemetrySink.CaptureMessage` — so with the Sentry adapter installed, a silently-disarmed check arrives in your Sentry project as a warning. This is the channel that works when nothing else is going wrong: a breadcrumb only travels if some *later* event in the session is captured, and on a healthy-but-disarmed deployment nothing ever is.
+- A `System.Diagnostics.Trace` warning, on both surfaces, written once per verdict. The default listener routes to `OutputDebugString`, so configure a `TraceListener` if you want to read it outside a debugger. `SdcClient` has only this channel and `ServerVersionCheck`, deliberately — it takes no telemetry seam.
 - For the viewer, a `sdc.version` breadcrumb on the telemetry session, so the verdict is attached to any error captured later in that session.
 
-**Raising the floor.** When the harness starts depending on newer server behaviour, raise `MinimumSdcVersion` to the release *after* the one carrying that behaviour — not to it. The comparison ignores prerelease suffixes, so `vX.Y.Z-rc.0` satisfies a floor of `vX.Y.Z`, and an rc cut before the feature merged would pass. A floor one patch higher can't be satisfied by a prerelease of the release you actually need.
+**Raising the floor.** When the harness starts depending on newer server behaviour, raise `MinimumSdcVersion` to the release *after* the one carrying that behaviour — not to it. The comparison ignores prerelease suffixes, so `vX.Y.Z-rc.0` satisfies a floor of `vX.Y.Z`, and an rc cut before the feature merged would pass. A floor one patch higher can't be satisfied by a prerelease of the release you actually need. A raise only reaches an integrator when they deliberately upgrade the harness, so the release notes are where it gets announced.
 
-**When it fires.** Upgrade the SDC server to `MinimumSdcVersion` or newer, or run the harness release whose minimum your server satisfies. There is deliberately no opt-out: a wrong pairing has silent clinical failure modes, which is the whole reason this exists. (An override channel gets built only if a real event forces one — the same bet the embedded web-sdk took.)
+**When it fires.** Upgrade the SDC server to `MinimumSdcVersion` or newer, or run the harness release whose minimum your server satisfies.
+
+**The break-glass flag.** `SdcCompatibility.RefuseUnsupportedServers = false` disables the refusal on both surfaces — the version reads as unknown and nothing is blocked.
+
+```vb
+' read from app.config / an environment variable / a registry key — never hardcoded
+SdcCompatibility.RefuseUnsupportedServers = Not hostConfig.DisableSdcVersionCheck
+```
+
+It exists for one specific tail risk, and you should know what it is. The refusal is triggered by `software.version`, a string written by the *server* team, evaluated inside a harness binary that cannot be patched once an EHR release ships. The check requires that field to keep meaning "the SDC server's application version". If it ever came to mean something else — a container image tag, a FHIR version, a component version — a value that still matches `vX.Y.Z` could compare below the floor, and **every deployed harness would refuse every form launch at once**, with no remedy short of a new EHR release per customer. Every other failure in this check degrades to "unknown" and fails open; this is the only one that fails closed on a mistake nobody here can see coming. Hence a flag your operations team can set, rather than a redeployment.
+
+Setting it forfeits the guarantee: an unsupported server then fails later and less clearly, which is the situation this check exists to end. Treat it as an incident tool and follow it with an upgrade.
 
 **Checking it at startup instead.** The check above happens at first use, which for the viewer means a clinician opening a form. A host that would rather learn about a bad pairing at login — where the error reaches IT, not a clinician mid-consult — can run the same probe itself and surface the result:
 
@@ -685,21 +697,14 @@ If verdict.Outcome = SdcVersionCheckOutcome.TooOld Then
 End If
 ```
 
-Recommended for production hosts. It doesn't replace the per-use check, which stays as the backstop.
+Recommended for production hosts. It doesn't replace the per-use check, which stays as the backstop. Pass your own `HttpClient` if the server needs a credential, or to control the connection lifetime — the parameterless overload uses a process-wide client, which is fine for a desktop host but pins DNS for the process on .NET Core.
+
+The check runs once per `SdcClient` instance, so a host that constructs one per `$extract` pays one extra `GET` each time. Reuse a client where the flow allows it.
 
 Two caveats worth knowing:
 
-- **The viewer's probe sends no caller credential by default.** Today that costs nothing: the SDC server holds its own service-account credentials and requires none from the caller (see [#39](https://github.com/Tiro-health/net-integration-harness/issues/39)) — a hospital-local instance is an internal service and `sdc.tiro.health` is open. If a future server requires one, the probe would answer 401/403, which reads as an unknown version and fails open rather than breaking anything. Register `TiroFormViewerDefaults.SdcProbeHttpClientFactory` at startup to give the probe a client that carries it:
-
-  ```vb
-  ' e.g. the static API key scheme in #39 — the key comes from host config, never hardcoded
-  Dim probeClient As New HttpClient()
-  probeClient.DefaultRequestHeaders.Add("X-Api-Key", keyFromHostConfig)
-  TiroFormViewerDefaults.SdcProbeHttpClientFactory = Function() probeClient
-  ```
-
-  Return a shared, long-lived client — the factory is invoked per check, and a client per call burns sockets. `SdcClient` has no equivalent gap: its probe travels the `HttpClient` you inject into the client itself.
-- **A version-format change on the server would silently disarm the check** in every already-shipped harness, degrading it to fail-open. Nothing in this repo can detect that; it's held by a CI tag check on the server side.
+- **The viewer's probe sends no caller credential.** Today that costs nothing: the SDC server holds its own service-account credentials and requires none from the caller (see [#39](https://github.com/Tiro-health/net-integration-harness/issues/39)) — a hospital-local instance is an internal service and `sdc.tiro.health` is open. If a future server requires one, the probe answers 401/403, which reads as an unknown version and fails open rather than breaking anything; the seam to fix it is `protected virtual CheckSdcServerVersionAsync` on the viewer. `SdcClient` has no equivalent gap: its probe travels the `HttpClient` you inject into the client itself.
+- **The check depends on three things the SDC server must keep doing**, none of which this repo controls: answering `{base}/metadata` *locally* rather than proxying it to the data endpoint; keeping `software.version` meaning the server's own application version; and keeping `software.name` recognisable. The first and third degrade to fail-open. The second is the one that fails *closed* — see the break-glass flag above. What holds all three is the nightly end-to-end suite, which asserts a `Satisfied` verdict against a live staging server, so a change to any of them turns that run red within a day.
 
 ## Troubleshooting
 

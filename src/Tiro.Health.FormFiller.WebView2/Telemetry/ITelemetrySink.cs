@@ -19,6 +19,19 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// <summary>Capture an exception out-of-band of any active span.</summary>
         void CaptureException(Exception ex);
 
+        /// <summary>
+        /// Capture a warning-level message out-of-band of any active span, for a condition that
+        /// is not an exception and must not be reported as one.
+        /// </summary>
+        /// <remarks>
+        /// Exists because a breadcrumb is not a report: breadcrumbs travel only when some later
+        /// event in the session is captured, so a deployment where the only thing wrong is a
+        /// silently-disarmed check sends nothing at all. That is precisely the condition worth
+        /// hearing about (GH-62's SDC server version check fails open, loudly, when it cannot
+        /// establish a version).
+        /// </remarks>
+        void CaptureMessage(string message);
+
         /// <summary>Block briefly to flush pending telemetry. Best-effort.</summary>
         void Flush(TimeSpan timeout);
     }

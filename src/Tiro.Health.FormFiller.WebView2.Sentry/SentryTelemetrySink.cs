@@ -117,6 +117,9 @@ namespace Tiro.Health.FormFiller.WebView2.Sentry
 
         public void CaptureException(Exception ex) => SentrySdk.CaptureException(ex);
 
+        /// <inheritdoc />
+        public void CaptureMessage(string message) => SentrySdk.CaptureMessage(message, SentryLevel.Warning);
+
         public void Flush(TimeSpan timeout) => SentrySdk.Flush(timeout);
 
         public void Dispose()

@@ -512,21 +512,17 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <see cref="SdcServerVersionProbe.CheckAsync"/>.
         /// </summary>
         /// <remarks>
-        /// The probe sends no caller credential by default, which costs nothing today: the SDC
-        /// server holds its own service-account credentials and requires none from the caller
-        /// (GH-39). Should that change, a 401 reads as an unknown version and fails open — the
-        /// check is disarmed, not the launch broken. Register
-        /// <see cref="TiroFormViewerDefaults.SdcProbeHttpClientFactory"/> at startup to give the
-        /// probe a client that carries the credential; the viewer otherwise has no
+        /// The probe sends no caller credential, which costs nothing today: the SDC server holds
+        /// its own service-account credentials and requires none from the caller (GH-39). Should
+        /// that change, a 401 reads as an unknown version and fails open — the check is disarmed,
+        /// not the launch broken — and this override is the seam a host would use to supply a
+        /// client that can authenticate. The viewer has no
         /// <see cref="System.Net.Http.HttpClient"/> of its own, since the page makes the real SDC
         /// requests inside WebView2.
         /// </remarks>
         protected virtual Task<SdcVersionCheckResult> CheckSdcServerVersionAsync(
             Uri sdcBaseAddress, CancellationToken cancellationToken)
-            => SdcServerVersionProbe.CheckAsync(
-                sdcBaseAddress,
-                httpClient: TiroFormViewerDefaults.SdcProbeHttpClientFactory?.Invoke(),
-                cancellationToken: cancellationToken);
+            => SdcServerVersionProbe.CheckAsync(sdcBaseAddress, cancellationToken: cancellationToken);
 
         // Kicks off the version check. A SetContextAsync retried against the same address reuses
         // the first probe; one retried against a DIFFERENT address probes the new one.
@@ -623,23 +619,18 @@ namespace Tiro.Health.FormFiller.WebView2
             SdcServerVersionCheck = result;
             if (!alreadyReported) _session?.AddBreadcrumb("sdc.version", result.ToString());
 
-            // Advisory: at or above the floor, below what this release recommends. The session
-            // proceeds — the point of the soft floor is that an integrator gets a release that
-            // warns before the release that refuses.
-            if (!alreadyReported && result.RecommendationMessage != null)
-                System.Diagnostics.Trace.TraceWarning(
-                    "Tiro.Health.FormFiller.WebView2: " + result.RecommendationMessage);
-
             if (result.Outcome == SdcVersionCheckOutcome.Unknown)
             {
                 if (alreadyReported) return;
-                // Loud, but not fatal. It goes to Trace rather than the telemetry sink
-                // because ITelemetrySink can only capture exceptions, and this is not one —
-                // and because the audience is the customer's own logs: they self-host the
-                // server, so a version-format change would otherwise silently degrade every
-                // frozen harness to fail-open with nobody learning of it. The breadcrumb
-                // above still attaches it to any error captured later in the session.
+                // Loud, and it has to actually be loud. A breadcrumb only travels if some later
+                // event in the session is captured — on a healthy-but-silently-disarmed
+                // deployment nothing ever is — and Trace lands in OutputDebugString, invisible
+                // without a configured listener. So this also goes to the telemetry sink as a
+                // captured message, which is the channel that reaches the customer's own Sentry
+                // project. GH-62 asks for "fail open with loud telemetry"; the other two
+                // channels alone did not deliver it.
                 System.Diagnostics.Trace.TraceWarning("Tiro.Health.FormFiller.WebView2: " + result);
+                _telemetry.CaptureMessage("SDC server version check: " + result);
                 return;
             }
 

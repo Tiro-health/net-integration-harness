@@ -42,7 +42,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         [TestCleanup]
         public void Cleanup()
         {
-            TiroFormViewerDefaults.SdcProbeHttpClientFactory = null;
             try { _viewer.Dispose(); } catch { /* not under test */ }
         }
 
@@ -52,7 +51,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             var older = patch > 0 ? $"v{major}.{minor}.{patch - 1}"
                       : minor > 0 ? $"v{major}.{minor - 1}.999"
                       : $"v{major - 1}.999.999";
-            return SdcVersionCheckResult.FromReportedVersion(older, SdcVersionCheckResult.CapabilityStatementSource);
+            return SdcVersionCheckResult.FromReportedVersion(older);
         }
 
         private static SdcVersionCheckResult Unknown() =>
@@ -123,6 +122,12 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreEqual(SdcVersionCheckOutcome.Unknown, _viewer.SdcServerVersionCheck!.Outcome);
             Assert.IsTrue(_sink.Sessions[0].Breadcrumbs.Any(b => b.Category == "sdc.version"),
                 "Failing open still has to be loud: the verdict is breadcrumbed either way.");
+            // A breadcrumb only travels if something else in the session is captured, and on a
+            // healthy-but-disarmed deployment nothing ever is — so the fail-open is also captured
+            // as a message, which is the channel that actually reaches the customer's Sentry.
+            Assert.IsTrue(_sink.CapturedMessages.Exists(m => m.Contains("could not be established")),
+                "A fail-open must reach telemetry as a message, not only as a breadcrumb. Captured: "
+                + string.Join(" | ", _sink.CapturedMessages));
         }
 
         [TestMethod]
@@ -171,49 +176,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
             Assert.AreEqual(SdcVersionCheckOutcome.Unknown, _viewer.SdcServerVersionCheck!.Outcome);
             StringAssert.Contains(_viewer.SdcServerVersionCheck!.Detail, "probe is broken");
-        }
-
-        [TestMethod]
-        public async Task TheProbeUsesTheHostRegisteredHttpClient()
-        {
-            // The viewer has no HttpClient of its own — the page makes the real SDC requests,
-            // inside WebView2 — so without this seam a host has no way to give the probe a
-            // credential the server demands (GH-39's static API key, when that lands). A probe
-            // that cannot authenticate reads as "version unknown" and disarms the check.
-            var handler = new RecordingHandler(
-                $@"{{""resourceType"":""CapabilityStatement"",""software"":{{""name"":""Tiro.health SDC Server"",""version"":""{SdcCompatibility.MinimumSdcVersion}""}}}}");
-            var client = new HttpClient(handler);
-            TiroFormViewerDefaults.SdcProbeHttpClientFactory = () => client;
-
-            await DelayUntilBrowserInitialized();
-            _viewer.SdcEndpointAddress = SdcEndpoint;
-            _viewer.UseRealSdcVersionCheck = true;
-
-            var setContext = _viewer.SetContextAsync("http://example.org/q");
-            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
-            await setContext.Within5s();
-
-            Assert.AreEqual(1, handler.Requests.Count,
-                "The registered client must be the one the probe travels, or a host cannot authenticate it.");
-            Assert.AreEqual(SdcEndpoint.TrimEnd('/') + "/metadata", handler.Requests[0].ToString());
-            Assert.AreEqual(SdcVersionCheckOutcome.Satisfied, _viewer.SdcServerVersionCheck!.Outcome);
-        }
-
-        private sealed class RecordingHandler : HttpMessageHandler
-        {
-            private readonly string _body;
-            public List<Uri> Requests { get; } = new List<Uri>();
-
-            public RecordingHandler(string body) => _body = body;
-
-            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            {
-                Requests.Add(request.RequestUri);
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent(_body, Encoding.UTF8, "application/fhir+json"),
-                });
-            }
         }
 
         [TestMethod]
@@ -279,8 +241,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             // Host corrects the endpoint and retries; the new server is fine.
             _viewer.SdcEndpointAddress = SdcEndpoint;
-            _viewer.SdcVersionCheckToReturn = SdcVersionCheckResult.FromReportedVersion(
-                SdcCompatibility.MinimumSdcVersion, SdcVersionCheckResult.CapabilityStatementSource);
+            _viewer.SdcVersionCheckToReturn = SdcVersionCheckResult.FromReportedVersion(SdcCompatibility.MinimumSdcVersion);
 
             var second = _viewer.SetContextAsync("http://example.org/q");
             await Task.Yield();

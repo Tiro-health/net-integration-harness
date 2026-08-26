@@ -45,28 +45,33 @@ namespace Tiro.Health.FormSdk.Abstractions
         public static readonly string MinimumSdcVersion = "v0.9.39";
 
         /// <summary>
-        /// The SDC server version this harness release would rather you were on. A server at or
-        /// above <see cref="MinimumSdcVersion"/> but below this one is <b>allowed through</b> —
-        /// the session proceeds — and reported as an advisory
-        /// (<see cref="SdcVersionCheckResult.MeetsRecommendedVersion"/> is false, with a warning
-        /// in the host's logs).
+        /// Whether a server that reports a version below <see cref="MinimumSdcVersion"/> is
+        /// refused (<c>true</c>, the default) or allowed through. Setting this to <c>false</c>
+        /// disables the check on <em>both</em> surfaces: the version is reported as
+        /// <see cref="SdcVersionCheckOutcome.Unknown"/> and nothing is refused.
         /// </summary>
         /// <remarks>
-        /// This is the soft half of a two-step raise, and the reason it ships before it is
-        /// needed: the harness goes inside EHR binaries that are frozen once released, so a
-        /// release that only knows how to <em>refuse</em> can never warn. The procedure is
-        /// <list type="bullet">
-        /// <item>release N: raise <c>RecommendedSdcVersion</c> to the version you will require;
-        /// integrators see warnings and have a window to upgrade their server;</item>
-        /// <item>release N+1: promote it to <see cref="MinimumSdcVersion"/>, which now refuses.</item>
-        /// </list>
-        /// Without that window, the first raise past the initial floor would be the first time
-        /// this mechanism ever did anything — and it would land as a refused launch, on binaries
-        /// already in the field, with no prior signal to anyone. Equal to
-        /// <see cref="MinimumSdcVersion"/> while there is nothing to warn about; never below it
-        /// (unit-tested).
+        /// This is a break-glass switch, and it exists because the fail-closed arm is triggered
+        /// by a string a <em>different</em> team writes, inside a binary that cannot be patched.
+        /// The check reads <c>CapabilityStatement.software.version</c> and requires it to keep
+        /// meaning "the SDC server's application version". If it ever came to mean something
+        /// else — a container image tag, a FHIR version, a component version — a value that still
+        /// matches the grammar could compare below the floor, and every already-shipped harness
+        /// would refuse every form launch at once, with no remedy short of a new EHR release per
+        /// customer. That tail risk is small but unbounded and unrecoverable, so there is a flag.
+        /// <para>
+        /// Read it from host configuration (app.config, an environment variable, a registry key)
+        /// and set it once at startup — never hardcode <c>false</c>. Setting it forfeits the
+        /// guarantee the check exists to provide: an unsupported server will then fail later and
+        /// less clearly, which is the situation GH-62 was written to end. Treat it as an incident
+        /// tool, and follow it with a harness or server upgrade.
+        /// </para>
+        /// <para>
+        /// Assignment is not thread-safe; the contract is "set once during startup, before the
+        /// first viewer or client is used".
+        /// </para>
         /// </remarks>
-        public static readonly string RecommendedSdcVersion = "v0.9.39";
+        public static bool RefuseUnsupportedServers { get; set; } = true;
 
         /// <summary>
         /// The version string the SDC server reports. It is <b>not</b> plain semver: it comes
@@ -133,14 +138,6 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// </remarks>
         public static SdcVersionCheckOutcome Evaluate(string reportedVersion)
             => AtLeast(reportedVersion, MinimumSdcVersion) ?? SdcVersionCheckOutcome.Unknown;
-
-        /// <summary>
-        /// Whether a reported version is at or above <see cref="RecommendedSdcVersion"/>. An
-        /// unreadable version counts as meeting it: an advisory is only worth raising about a
-        /// version we could actually read, and "unknown" is already reported on its own terms.
-        /// </summary>
-        public static bool MeetsRecommended(string reportedVersion)
-            => AtLeast(reportedVersion, RecommendedSdcVersion) != SdcVersionCheckOutcome.TooOld;
 
         /// <summary>
         /// Compares componentwise: <see cref="SdcVersionCheckOutcome.Satisfied"/> at or above

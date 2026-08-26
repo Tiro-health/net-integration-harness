@@ -24,7 +24,6 @@ namespace Tiro.Health.FormSdk.Abstractions
         {
             ReportedVersion = result.ReportedVersion;
             MinimumVersion = result.MinimumVersion;
-            VersionSource = result.Source;
         }
 
         /// <summary>The version the server reported.</summary>
@@ -32,8 +31,5 @@ namespace Tiro.Health.FormSdk.Abstractions
 
         /// <summary>The minimum this harness release requires.</summary>
         public string MinimumVersion { get; }
-
-        /// <summary>Which document the reported version was read from.</summary>
-        public string VersionSource { get; }
     }
 }

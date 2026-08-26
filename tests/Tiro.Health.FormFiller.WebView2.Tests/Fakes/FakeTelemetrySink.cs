@@ -13,6 +13,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
     {
         public List<FakeTelemetrySession> Sessions { get; } = new List<FakeTelemetrySession>();
         public List<Exception> CapturedExceptions { get; } = new List<Exception>();
+        public List<string> CapturedMessages { get; } = new List<string>();
         public bool Disposed { get; private set; }
         public bool Flushed { get; private set; }
 
@@ -24,6 +25,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         }
 
         public void CaptureException(Exception ex) => CapturedExceptions.Add(ex);
+        public void CaptureMessage(string message) => CapturedMessages.Add(message);
         public void Flush(TimeSpan timeout) => Flushed = true;
         public void Dispose() => Disposed = true;
     }

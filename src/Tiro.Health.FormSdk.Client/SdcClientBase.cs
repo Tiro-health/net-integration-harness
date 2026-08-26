@@ -169,10 +169,11 @@ namespace Tiro.Health.FormSdk.Client
                 // Loud, once. Trace rather than a logger because this client is deliberately
                 // telemetry-free (GH-33 tracks an optional ILogger seam), and because the
                 // audience is the customer's own logs: they self-host the server.
+                // Trace and nothing else, deliberately: this client is telemetry-free (GH-33
+                // tracks an optional ILogger seam) and ServerVersionCheck is the programmatic
+                // view. The viewer, which has a telemetry sink, also captures a message.
                 if (result.Outcome == SdcVersionCheckOutcome.Unknown)
                     Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result);
-                else if (result.RecommendationMessage != null)
-                    Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result.RecommendationMessage);
             }
 
             if (result.Outcome == SdcVersionCheckOutcome.TooOld)

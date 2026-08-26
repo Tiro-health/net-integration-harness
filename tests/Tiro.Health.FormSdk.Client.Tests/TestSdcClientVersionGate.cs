@@ -206,7 +206,6 @@ namespace Tiro.Health.FormSdk.Client.Tests
             await client.ValidateAsync(SampleResponse());
 
             Assert.AreEqual(SdcVersionCheckOutcome.Satisfied, client.ServerVersionCheck!.Outcome);
-            Assert.AreEqual(SdcVersionCheckResult.CapabilityStatementSource, client.ServerVersionCheck!.Source);
         }
     }
 }

@@ -15,6 +15,9 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
 
         public ITelemetrySession BeginSession(string sessionId) => NullSession.Instance;
         public void CaptureException(Exception ex) { }
+
+        /// <inheritdoc />
+        public void CaptureMessage(string message) { }
         public void Flush(TimeSpan timeout) { }
         public void Dispose() { }
 

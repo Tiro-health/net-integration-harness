@@ -28,38 +28,5 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </para>
         /// </summary>
         public static Func<ITelemetrySink> TelemetrySinkFactory { get; set; }
-
-        /// <summary>
-        /// Factory for the <see cref="System.Net.Http.HttpClient"/> the SDC server version check
-        /// (GH-62) uses. <c>null</c> (the default) means an internally-owned, process-wide client
-        /// with no credentials.
-        /// <para>
-        /// Nothing needs this today: the SDC server holds its own service-account credentials and
-        /// requires none from the caller (GH-39), so the default client reaches both a
-        /// hospital-local instance and the open hosted ones. It exists for the scheme GH-39
-        /// settled on if that ever changes — a static API key, read from host config and attached
-        /// as a request header:
-        /// </para>
-        /// <code>
-        /// Dim probeClient As New HttpClient()
-        /// probeClient.DefaultRequestHeaders.Add("X-Api-Key", keyFromHostConfig)
-        /// TiroFormViewerDefaults.SdcProbeHttpClientFactory = Function() probeClient
-        /// </code>
-        /// <para>
-        /// The gap this closes is narrow but real: <c>SdcClient</c> takes an
-        /// <see cref="System.Net.Http.HttpClient"/> already, so a host can authenticate the
-        /// client's probe; the viewer had no equivalent, and a probe that cannot present a
-        /// credential the server demands reads as "version unknown" and silently disarms the
-        /// check. Note the failure is a disarmed check, not a broken launch — 401 fails open like
-        /// any other unreadable version.
-        /// </para>
-        /// <para>
-        /// The factory is invoked per check; return a shared, long-lived client (a client per call
-        /// burns sockets). Same "set once at startup" contract as
-        /// <see cref="TelemetrySinkFactory"/>, except this one is read at each check rather than
-        /// sampled in the ctor.
-        /// </para>
-        /// </summary>
-        public static Func<System.Net.Http.HttpClient> SdcProbeHttpClientFactory { get; set; }
     }
 }

@@ -74,7 +74,6 @@ namespace Tiro.Health.FormSdk.Client.Tests
 
             Assert.AreEqual(SdcVersionCheckOutcome.Satisfied, result.Outcome);
             Assert.AreEqual(SdcCompatibility.MinimumSdcVersion, result.ReportedVersion);
-            Assert.AreEqual(SdcVersionCheckResult.CapabilityStatementSource, result.Source);
             Assert.AreEqual(1, server.RequestedUris.Count, "One source means one request.");
         }
 
@@ -191,7 +190,6 @@ namespace Tiro.Health.FormSdk.Client.Tests
 
             Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
             Assert.IsNull(result.ReportedVersion);
-            Assert.IsNull(result.Source);
             StringAssert.Contains(result.Detail, "/metadata");
             StringAssert.Contains(result.Detail, "400");
         }
@@ -241,29 +239,6 @@ namespace Tiro.Health.FormSdk.Client.Tests
             var result = await Probe(server);
 
             Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
-        }
-
-        [TestMethod]
-        public async Task ASupportedServer_CarriesNoRecommendationAdvisory()
-        {
-            var server = new ProbeServer { Body = Capability(SdcCompatibility.RecommendedSdcVersion) };
-
-            var result = await Probe(server);
-
-            Assert.IsTrue(result.MeetsRecommendedVersion);
-            Assert.IsNull(result.RecommendationMessage, "Nothing to advise about at the recommended version.");
-        }
-
-        [TestMethod]
-        public async Task AnUnreadableVersion_CarriesNoRecommendationAdvisory()
-        {
-            // Otherwise a fail-open would produce two warnings about the same non-answer.
-            var server = new ProbeServer { Status = HttpStatusCode.BadRequest };
-
-            var result = await Probe(server);
-
-            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
-            Assert.IsNull(result.RecommendationMessage);
         }
 
         [TestMethod]
@@ -438,6 +413,31 @@ namespace Tiro.Health.FormSdk.Client.Tests
             {
                 Assert.AreEqual(cts.Token, ex.CancellationToken,
                     "It must be rethrown against the caller's token, or their own `when (e.CancellationToken == mine)` filter cannot match.");
+            }
+        }
+
+        [TestMethod]
+        public async Task TheHostCanDisableTheCheck_AndNothingIsProbed()
+        {
+            // Break-glass. The fail-closed arm is triggered by a string another team writes, in a
+            // binary that cannot be patched — so if software.version ever stops meaning "the SDC
+            // server's application version", a value that still matches the grammar could refuse
+            // every form launch everywhere at once. This is the flag that unblocks a site without
+            // an EHR release. It also means no request is issued at all.
+            var server = new ProbeServer { Body = Capability(OneBelowTheMinimum()) };
+            SdcCompatibility.RefuseUnsupportedServers = false;
+            try
+            {
+                var result = await Probe(server);
+
+                Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome,
+                    "A disabled check must report unknown, which is the outcome that fails open.");
+                Assert.AreEqual(0, server.RequestedUris.Count, "A disabled check must not probe.");
+                StringAssert.Contains(result.Detail, "disabled by the host");
+            }
+            finally
+            {
+                SdcCompatibility.RefuseUnsupportedServers = true;
             }
         }
 

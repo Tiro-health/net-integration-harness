@@ -139,12 +139,25 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
                 + "handshake received (state=" + viewer.State + ", pageWebSdkVersion="
                 + (viewer.PageWebSdkVersion ?? "(null)") + ")");
 
-            // Not an assertion — SetContextAsync returning already proves the gate did not fail
-            // closed. Reported because it is the only place the check runs against a real server,
-            // so the log says which source answered and which version it read. An "unknown" here
-            // is worth noticing: it means the suite is passing with the gate effectively disarmed.
-            Report("INFO", "SDC version check — " + (viewer.SdcServerVersionCheck?.ToString() ?? "(not run)")
+            // Asserted, not just logged. This is the only place the version check runs against a
+            // real server, so it is the only thing standing behind three contracts nothing else
+            // in this repo can hold: that {base}/metadata stays locally routed rather than
+            // tunnelled to the data endpoint, that software.version keeps meaning the SDC
+            // server's application version, and that software.name keeps saying what it says. A
+            // change to any of them turns this green run red within a day. An "unknown" verdict
+            // is precisely the failure to catch — it means the suite would otherwise keep passing
+            // with the gate silently disarmed.
+            var versionCheck = viewer.SdcServerVersionCheck;
+            Report("INFO", "SDC version check — " + (versionCheck?.ToString() ?? "(not run)")
                 + " [minimum " + SdcCompatibility.MinimumSdcVersion + "]");
+            if (versionCheck == null || versionCheck.Outcome != SdcVersionCheckOutcome.Satisfied)
+            {
+                Report("FAIL", "the SDC version check did not reach a Satisfied verdict against "
+                    + SdcEndpoint + " — the server changed something this check depends on, "
+                    + "or the check itself is broken. Either way it is no longer protecting anyone.");
+                return 1;
+            }
+            Report("PASS", "stage A — SDC version check satisfied against a real server");
 
             if (!ServerStagesEnabled)
             {
