@@ -54,6 +54,14 @@ on:
       - '.github/actions/stage-web-sdk/**'
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
+    inputs:
+      sdc_floor_override:
+        description: >-
+          Run the floor cell against this SDC image tag instead of the declared
+          MinimumSdcVersion. For proving the container path before a floor release exists,
+          or for bisecting which server version broke it. Manual runs only.
+        required: false
+        type: string
   schedule:
     - cron: '0 5 * * *'
 
@@ -124,8 +132,16 @@ jobs:
           set -euo pipefail
           FLOOR=$(bash build/release-notes/compose.sh --check | sed -n 's/^MinimumSdcVersion=//p')
           [ -n "$FLOOR" ] || { echo "::error::could not read MinimumSdcVersion"; exit 1; }
-          echo "SDC_FLOOR=$FLOOR" >> "$GITHUB_ENV"
           echo "Declared floor: $FLOOR"
+          # Reachable only from a manual dispatch — a pull request and the nightly always test
+          # the declared floor, so this cannot quietly become the version everything runs
+          # against. It is announced in the log for the same reason.
+          OVERRIDE="${{ inputs.sdc_floor_override }}"
+          if [ -n "$OVERRIDE" ]; then
+            echo "::warning::floor OVERRIDDEN for this manual run: testing $OVERRIDE, not the declared floor $FLOOR"
+            FLOOR="$OVERRIDE"
+          fi
+          echo "SDC_FLOOR=$FLOOR" >> "$GITHUB_ENV"
 
       # Two failures that look identical in a log and must not: the registry refusing us, and
       # the floor naming an image that does not exist. On the first runs of new credentials the
@@ -195,9 +211,11 @@ jobs:
           # The container is the version we think it is. A mis-tagged image would otherwise let
           # this cell report "the floor works" about some other release entirely.
           reported=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/metadata.json'))['software']['version'])")
-          echo "Pinned SDC server reports: $reported (floor $SDC_FLOOR)"
+          echo "Pinned SDC server reports: $reported (requested $SDC_FLOOR)"
           if [ "${reported%%-*}" != "${SDC_FLOOR%%-*}" ]; then
-            echo "::error::image tagged $SDC_FLOOR reports version '$reported'"
+            echo "::error::image tagged $SDC_FLOOR reports version '$reported' — the tag and the"
+            echo "::error::build disagree, so this cell would report 'the floor works' about a"
+            echo "::error::different release entirely."
             exit 1
           fi
 
@@ -252,6 +270,57 @@ jobs:
           docker rm -f sdc >/dev/null 2>&1 || true
           [ -f "$RUNNER_TEMP/template-server.pid" ] && kill "$(cat "$RUNNER_TEMP/template-server.pid")" 2>/dev/null || true
           exit 0
+
+  # The floor cell runs against a fixture committed to this repo, so a pull request never
+  # depends on a shared server and a republished revision cannot silently change what it tests.
+  # The cost of a committed copy is that it can go stale, and nothing would say so. This is what
+  # says so — nightly, off the pull-request path, comparing the fixture to the template server
+  # that actually serves it.
+  #
+  # Fails on a difference (the fixture no longer matches reality; update it deliberately, or
+  # find out why the template moved) but only warns when the template server cannot be reached.
+  # An outage is not drift, and reddening a nightly for one is how people learn to skip the
+  # whole run — the annotation keeps a persistent outage visible instead.
+  fixture-drift:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Fixture still matches the template server
+        run: |
+          set -uo pipefail
+          FIXTURE=tests/e2e/fixtures/questionnaire-cha2ds2-vasc-1.0.0.json
+          # Built from the fixture, not repeated as a literal: a canonical that disagreed with
+          # the resource it names is the confusion this whole suite exists to catch.
+          CANONICAL=$(python3 -c "import json;q=json.load(open('$FIXTURE'));print(q['url']+'|'+q['version'])")
+          echo "Checking $CANONICAL"
+          # shellcheck disable=SC2016  # $resolve is a FHIR operation name in the path, not a variable
+          if ! curl -sS -m 60 --fail-with-body -o "$RUNNER_TEMP/live.json" \
+               -H 'Accept: application/fhir+json; fhirVersion=5.0' \
+               --get 'https://templates-staging.tiro.health/fhir/r5/Questionnaire/$resolve' \
+               --data-urlencode "canonical=$CANONICAL"; then
+            echo "::warning::could not reach templates-staging to check the fixture for drift."
+            echo "::warning::This is an outage or a route change, NOT evidence the fixture is fine."
+            exit 0
+          fi
+          # Compared as parsed JSON, so key order or whitespace cannot report a false difference.
+          # Kept to one line on purpose: a `python3 -c` continued across indented YAML lines
+          # carries that indentation into the source and dies with IndentationError.
+          if python3 -c "import json,sys; sys.exit(0 if json.load(open('$RUNNER_TEMP/live.json')) == json.load(open('$FIXTURE')) else 1)"; then
+            echo "Fixture matches templates-staging."
+          else
+            echo "::error::$FIXTURE no longer matches what templates-staging serves for $CANONICAL."
+            echo "::error::The floor cell is testing a revision the template server has moved past."
+            echo "::error::Re-export it deliberately, or find out why a pinned revision changed:"
+            echo "::error::  curl -sS -H 'Accept: application/fhir+json; fhirVersion=5.0' --get \\"
+            echo "::error::    'https://templates-staging.tiro.health/fhir/r5/Questionnaire/\$resolve' \\"
+            echo "::error::    --data-urlencode 'canonical=$CANONICAL' | python3 -m json.tool > $FIXTURE"
+            exit 1
+          fi
 
   webview2:
     runs-on: windows-latest
