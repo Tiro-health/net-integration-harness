@@ -1,0 +1,758 @@
+{
+  "id": "2324",
+  "meta": {
+    "extension": [
+      {
+        "url": "http://hl7.org/fhir/StructureDefinition/firstCreated",
+        "valueInstant": "2026-03-16T19:43:23.425811Z"
+      }
+    ],
+    "lastUpdated": "2026-03-16T19:44:09.949382Z",
+    "profile": [
+      "http://fhir.tiro.health/StructureDefinition/questionnaire-calculated-fields"
+    ],
+    "tag": [
+      {
+        "system": "http://terminology.hl7.org/CodeSystem/common-tags",
+        "code": "SUBSETTED",
+        "display": "subsetted"
+      }
+    ],
+    "versionId": "1"
+  },
+  "status": "active",
+  "version": "1.0.0",
+  "resourceType": "Questionnaire",
+  "useContext": [
+    {
+      "code": {
+        "code": "program",
+        "system": "http://terminology.hl7.org/CodeSystem/usage-context-type",
+        "display": "Project"
+      },
+      "valueReference": {
+        "display": "Web SDK Demo",
+        "type": "Group",
+        "reference": "Group/1359"
+      }
+    },
+    {
+      "code": {
+        "code": "user",
+        "system": "http://terminology.hl7.org/CodeSystem/usage-context-type",
+        "display": "User"
+      },
+      "valueCodeableConcept": {
+        "coding": [
+          {
+            "system": "http://snomed.info/sct",
+            "code": "394579002",
+            "display": "Cardiologie"
+          }
+        ]
+      }
+    }
+  ],
+  "name": "Chadsvasc",
+  "url": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699",
+  "experimental": false,
+  "description": "",
+  "language": "nl-BE",
+  "subjectType": "Patient",
+  "contained": [
+    {
+      "id": "extraction-artifact-7",
+      "resourceType": "Composition",
+      "type": {
+        "text": "CHA₂DS₂-VASc Score"
+      },
+      "title": "CHA₂DS₂-VASc Score",
+      "status": "preliminary",
+      "section": [
+        {
+          "id": "sec_chadsvasc",
+          "code": {
+            "coding": [
+              {
+                "code": "75619-7",
+                "system": "http://loinc.org",
+                "display": "Cardiovascular disease risk assessment"
+              }
+            ]
+          },
+          "text": {
+            "_div": {
+              "extension": [
+                {
+                  "url": "http://tiro.health/fhir/StructureDefinition/templateExtractValue",
+                  "valueExpression": {
+                    "language": "application/fhir+liquid",
+                    "expression": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><div xml:lang=\"nl\" lang=\"nl\"><h2>CHA₂DS₂-VASc Score</h2><p><span style=\"white-space: pre-wrap;\">Leeftijd: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-2dc69488456b').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Geslacht: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-3fbac0055421').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Hartfalen (CHF): </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-4d68a23aa03e').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Hypertensie: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-5c2d24ef0c03').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Beroerte/TIA/trombo-embolie: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-69464c704df0').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Vaatziekte: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-7848bd6aa1d4').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Diabetes: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-8cabc765c5b2').answer.value.display}}</p><p><strong>Score: {{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-99a22940add7').answer.value}}</strong></p></div><div xml:lang=\"fr\" lang=\"fr\"><h2>Score CHA₂DS₂-VASc</h2><p><span style=\"white-space: pre-wrap;\">Age: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-2dc69488456b').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Sexe: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-3fbac0055421').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Insuffisance cardiaque (CHF): </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-4d68a23aa03e').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Hypertension: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-5c2d24ef0c03').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">AVC/AIT/thrombo-embolie: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-69464c704df0').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Maladie vasculaire: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-7848bd6aa1d4').answer.value.display}}</p><p><span style=\"white-space: pre-wrap;\">Diabete: </span>{{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-8cabc765c5b2').answer.value.display}}</p><p><strong>Score: {{%context.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1').item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4').item.where(linkId='019cf82c-d5ce-7bb4-85f1-99a22940add7').answer.value}}</strong></p></div></div>"
+                  }
+                }
+              ]
+            },
+            "status": "generated"
+          },
+          "extension": [
+            {
+              "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-templateExtractContext",
+              "valueExpression": {
+                "language": "text/fhirpath",
+                "expression": "%context"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "extension": [
+    {
+      "url": "http://fhir.tiro.health/StructureDefinition/narrative-template",
+      "valueExpression": {
+        "expression": "{%- assign QuestionnaireTitle = \"Chadsvasc\" -%}\n<h1>{{ QuestionnaireTitle }}</h1>\n{%- assign cha_ds_-vasc_score = QuestionnaireResponse | fhirpath : \"QuestionnaireResponse.item.where(linkId='019cf82c-acb0-7bb4-85c3-ab72e5da24d1')\" | first -%}\n{%- render \"019cf82c-acb0-7bb4-85c3-ab72e5da24d1\", item:cha_ds_-vasc_score -%}\n",
+        "language": "text/liquid",
+        "reference": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/narrativeTemplate"
+      }
+    },
+    {
+      "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-templateExtract",
+      "extension": [
+        {
+          "url": "template",
+          "valueReference": {
+            "reference": "#extraction-artifact-7"
+          }
+        }
+      ]
+    },
+    {
+      "url": "http://fhir.tiro.health/StructureDefinition/questionnaire-supportedLanguage",
+      "valueCode": "nl"
+    },
+    {
+      "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-assembledFrom",
+      "valueCanonical": "http://templates.tiro.health/components/chadsvasc|1.0.0"
+    }
+  ],
+  "item": [
+    {
+      "linkId": "019cf82c-acb0-7bb4-85c3-ab72e5da24d1",
+      "type": "group",
+      "text": "CHA₂DS₂-VASc Score",
+      "code": [
+        {
+          "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+          "code": "cha_ds_-vasc_score",
+          "display": "cha_ds_-vasc_score"
+        }
+      ],
+      "item": [
+        {
+          "linkId": "019cf82c-cd51-7bb4-85f0-081a804f3fc4",
+          "type": "group",
+          "text": "CHA₂DS₂-VASc Score",
+          "code": [
+            {
+              "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+              "code": "cha_ds_-vasc_score_1",
+              "display": "cha_ds_-vasc_score_1"
+            }
+          ],
+          "item": [
+            {
+              "linkId": "019cf82c-d5ce-7bb4-85f1-2dc69488456b",
+              "type": "coding",
+              "text": "Leeftijd",
+              "code": [
+                {
+                  "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+                  "code": "leeftijd",
+                  "display": "leeftijd"
+                },
+                {
+                  "system": "http://snomed.info/sct",
+                  "code": "397669002",
+                  "display": "Leeftijd"
+                }
+              ],
+              "repeats": false,
+              "extension": [
+                {
+                  "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+                  "valueCodeableConcept": {
+                    "text": "chips",
+                    "coding": [
+                      {
+                        "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                        "code": "chips"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+                  "valueExpression": {
+                    "name": "019cf82c-d5ce-7bb4-85f1-2dc69488456b",
+                    "expression": "{%- assign Question = item.text | default: item.linkId -%}\n{%- assign Answer = item.answer[0].valueCoding.display -%}\n{%- if Answer -%}\n<div>{{Question}}: {{ Answer }}</div>\n{%- endif -%}\n",
+                    "language": "text/liquid"
+                  }
+                }
+              ],
+              "answerOption": [
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 0
+                      }
+                    ],
+                    "system": "http://tiro.health/fhir/custom",
+                    "code": "5325e97c-3617-11f0-9cd2-0242ac120002",
+                    "display": "<65"
+                  }
+                },
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 1
+                      }
+                    ],
+                    "system": "http://tiro.health/fhir/custom",
+                    "code": "5325eb20-3617-11f0-9cd2-0242ac120002",
+                    "display": "65–74"
+                  }
+                },
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 2
+                      }
+                    ],
+                    "system": "http://tiro.health/fhir/custom",
+                    "code": "5325ebd4-3617-11f0-9cd2-0242ac120002",
+                    "display": "≥75"
+                  }
+                }
+              ]
+            },
+            {
+              "linkId": "019cf82c-d5ce-7bb4-85f1-3fbac0055421",
+              "type": "coding",
+              "text": "Geslacht",
+              "code": [
+                {
+                  "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+                  "code": "geslacht",
+                  "display": "geslacht"
+                },
+                {
+                  "system": "http://snomed.info/sct",
+                  "code": "184100006",
+                  "display": "Geslacht patiënt"
+                }
+              ],
+              "repeats": false,
+              "extension": [
+                {
+                  "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+                  "valueCodeableConcept": {
+                    "text": "chips",
+                    "coding": [
+                      {
+                        "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                        "code": "chips"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+                  "valueExpression": {
+                    "name": "019cf82c-d5ce-7bb4-85f1-3fbac0055421",
+                    "expression": "{%- assign Question = item.text | default: item.linkId -%}\n{%- assign Answer = item.answer[0].valueCoding.display -%}\n{%- if Answer -%}\n<div>{{Question}}: {{ Answer }}</div>\n{%- endif -%}\n",
+                    "language": "text/liquid"
+                  }
+                }
+              ],
+              "answerOption": [
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 0
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "248153007",
+                    "display": "man"
+                  }
+                },
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 1
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "248152002",
+                    "display": "vrouw"
+                  }
+                }
+              ]
+            },
+            {
+              "linkId": "019cf82c-d5ce-7bb4-85f1-4d68a23aa03e",
+              "type": "coding",
+              "text": "Voorgeschiedenis van hartfalen (CHF)",
+              "code": [
+                {
+                  "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+                  "code": "voorgeschiedenis_van_hartfalen_chf",
+                  "display": "voorgeschiedenis_van_hartfalen_chf"
+                },
+                {
+                  "system": "http://snomed.info/sct",
+                  "code": "161505003",
+                  "display": "Voorgeschiedenis van hartfalen"
+                }
+              ],
+              "repeats": false,
+              "extension": [
+                {
+                  "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+                  "valueCodeableConcept": {
+                    "text": "chips",
+                    "coding": [
+                      {
+                        "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                        "code": "chips"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+                  "valueExpression": {
+                    "name": "019cf82c-d5ce-7bb4-85f1-4d68a23aa03e",
+                    "expression": "{%- assign Question = item.text | default: item.linkId -%}\n{%- assign Answer = item.answer[0].valueCoding.display -%}\n{%- if Answer -%}\n<div>{{Question}}: {{ Answer }}</div>\n{%- endif -%}\n",
+                    "language": "text/liquid"
+                  }
+                }
+              ],
+              "answerOption": [
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 0
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373067005",
+                    "display": "nee"
+                  }
+                },
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 1
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373066001",
+                    "display": "ja"
+                  }
+                }
+              ]
+            },
+            {
+              "linkId": "019cf82c-d5ce-7bb4-85f1-5c2d24ef0c03",
+              "type": "coding",
+              "text": "Voorgeschiedenis van hypertensie",
+              "code": [
+                {
+                  "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+                  "code": "voorgeschiedenis_van_hypertensie",
+                  "display": "voorgeschiedenis_van_hypertensie"
+                },
+                {
+                  "system": "http://snomed.info/sct",
+                  "code": "161501007",
+                  "display": "Voorgeschiedenis van hypertensie"
+                }
+              ],
+              "repeats": false,
+              "extension": [
+                {
+                  "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+                  "valueCodeableConcept": {
+                    "text": "chips",
+                    "coding": [
+                      {
+                        "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                        "code": "chips"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+                  "valueExpression": {
+                    "name": "019cf82c-d5ce-7bb4-85f1-5c2d24ef0c03",
+                    "expression": "{%- assign Question = item.text | default: item.linkId -%}\n{%- assign Answer = item.answer[0].valueCoding.display -%}\n{%- if Answer -%}\n<div>{{Question}}: {{ Answer }}</div>\n{%- endif -%}\n",
+                    "language": "text/liquid"
+                  }
+                }
+              ],
+              "answerOption": [
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 0
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373067005",
+                    "display": "nee"
+                  }
+                },
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 1
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373066001",
+                    "display": "ja"
+                  }
+                }
+              ]
+            },
+            {
+              "linkId": "019cf82c-d5ce-7bb4-85f1-69464c704df0",
+              "type": "coding",
+              "text": "Voorgeschiedenis van beroerte/TIA/trombo-embolie",
+              "code": [
+                {
+                  "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+                  "code": "voorgeschiedenis_van_beroerte_tia_trombo-embolie",
+                  "display": "voorgeschiedenis_van_beroerte_tia_trombo-embolie"
+                },
+                {
+                  "system": "http://snomed.info/sct",
+                  "code": "275526006",
+                  "display": "Voorgeschiedenis van cerebrovasculair accident"
+                }
+              ],
+              "repeats": false,
+              "extension": [
+                {
+                  "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+                  "valueCodeableConcept": {
+                    "text": "chips",
+                    "coding": [
+                      {
+                        "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                        "code": "chips"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+                  "valueExpression": {
+                    "name": "019cf82c-d5ce-7bb4-85f1-69464c704df0",
+                    "expression": "{%- assign Question = item.text | default: item.linkId -%}\n{%- assign Answer = item.answer[0].valueCoding.display -%}\n{%- if Answer -%}\n<div>{{Question}}: {{ Answer }}</div>\n{%- endif -%}\n",
+                    "language": "text/liquid"
+                  }
+                }
+              ],
+              "answerOption": [
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 0
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373067005",
+                    "display": "nee"
+                  }
+                },
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 2
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373066001",
+                    "display": "ja"
+                  }
+                }
+              ]
+            },
+            {
+              "linkId": "019cf82c-d5ce-7bb4-85f1-7848bd6aa1d4",
+              "type": "coding",
+              "text": "Voorgeschiedenis van vaatziekte (MI, PAD of aortaplaque)",
+              "code": [
+                {
+                  "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+                  "code": "voorgeschiedenis_van_vaatziekte_mi_pad_of_aortaplaque",
+                  "display": "voorgeschiedenis_van_vaatziekte_mi_pad_of_aortaplaque"
+                },
+                {
+                  "system": "http://snomed.info/sct",
+                  "code": "266995000",
+                  "display": "Voorgeschiedenis van cardiovasculaire aandoening"
+                }
+              ],
+              "repeats": false,
+              "extension": [
+                {
+                  "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+                  "valueCodeableConcept": {
+                    "text": "chips",
+                    "coding": [
+                      {
+                        "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                        "code": "chips"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+                  "valueExpression": {
+                    "name": "019cf82c-d5ce-7bb4-85f1-7848bd6aa1d4",
+                    "expression": "{%- assign Question = item.text | default: item.linkId -%}\n{%- assign Answer = item.answer[0].valueCoding.display -%}\n{%- if Answer -%}\n<div>{{Question}}: {{ Answer }}</div>\n{%- endif -%}\n",
+                    "language": "text/liquid"
+                  }
+                }
+              ],
+              "answerOption": [
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 0
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373067005",
+                    "display": "nee"
+                  }
+                },
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 1
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373066001",
+                    "display": "ja"
+                  }
+                }
+              ]
+            },
+            {
+              "linkId": "019cf82c-d5ce-7bb4-85f1-8cabc765c5b2",
+              "type": "coding",
+              "text": "Voorgeschiedenis van diabetes",
+              "code": [
+                {
+                  "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+                  "code": "voorgeschiedenis_van_diabetes",
+                  "display": "voorgeschiedenis_van_diabetes"
+                },
+                {
+                  "system": "http://snomed.info/sct",
+                  "code": "161445009",
+                  "display": "Voorgeschiedenis van diabetes mellitus"
+                }
+              ],
+              "repeats": false,
+              "extension": [
+                {
+                  "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+                  "valueCodeableConcept": {
+                    "text": "chips",
+                    "coding": [
+                      {
+                        "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                        "code": "chips"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+                  "valueExpression": {
+                    "name": "019cf82c-d5ce-7bb4-85f1-8cabc765c5b2",
+                    "expression": "{%- assign Question = item.text | default: item.linkId -%}\n{%- assign Answer = item.answer[0].valueCoding.display -%}\n{%- if Answer -%}\n<div>{{Question}}: {{ Answer }}</div>\n{%- endif -%}\n",
+                    "language": "text/liquid"
+                  }
+                }
+              ],
+              "answerOption": [
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 0
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373067005",
+                    "display": "nee"
+                  }
+                },
+                {
+                  "valueCoding": {
+                    "extension": [
+                      {
+                        "url": "http://hl7.org/fhir/StructureDefinition/itemWeight",
+                        "valueDecimal": 1
+                      }
+                    ],
+                    "system": "http://snomed.info/sct",
+                    "code": "373066001",
+                    "display": "ja"
+                  }
+                }
+              ]
+            },
+            {
+              "linkId": "019cf82c-d5ce-7bb4-85f1-99a22940add7",
+              "type": "decimal",
+              "text": "CHA₂DS₂-VASc Score",
+              "code": [
+                {
+                  "system": "http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699/technical-key",
+                  "code": "cha_ds_-vasc_score_2",
+                  "display": "cha_ds_-vasc_score_2"
+                }
+              ],
+              "repeats": false,
+              "extension": [
+                {
+                  "url": "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-calculatedExpression",
+                  "valueExpression": {
+                    "expression": "%totalScore",
+                    "language": "text/fhirpath"
+                  }
+                },
+                {
+                  "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+                  "valueCodeableConcept": {
+                    "text": "decimal-field",
+                    "coding": [
+                      {
+                        "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                        "code": "decimal-field"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+                  "valueExpression": {
+                    "name": "019cf82c-d5ce-7bb4-85f1-99a22940add7",
+                    "expression": "{%- assign Question = item.text | default: item.linkId -%}\n{%- assign Answer_display = item.answer[0].valueDecimal -%}\n{%- assign Answer_unit = item | unit -%}\n{%- if Answer_display -%}\n{%- assign Answer = Answer_display | append: ' ' | append: Answer_unit -%}\n{%- endif -%}\n{%- if Answer -%}\n<div>{{Question}}: {{ Answer }}</div>\n{%- endif -%}\n",
+                    "language": "text/liquid"
+                  }
+                },
+                {
+                  "url": "http://fhir.tiro.health/StructureDefinition/questionnaire-item-includeInGroupSummary",
+                  "valueBoolean": true
+                }
+              ]
+            }
+          ],
+          "repeats": false,
+          "extension": [
+            {
+              "url": "http://hl7.org/fhir/StructureDefinition/variable",
+              "valueExpression": {
+                "expression": "item.answer.value.weight().sum()",
+                "language": "text/fhirpath",
+                "name": "totalScore"
+              }
+            },
+            {
+              "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+              "valueCodeableConcept": {
+                "text": "list",
+                "coding": [
+                  {
+                    "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                    "code": "list"
+                  }
+                ]
+              }
+            },
+            {
+              "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+              "valueExpression": {
+                "name": "019cf82c-cd51-7bb4-85f0-081a804f3fc4",
+                "expression": "{%- assign leeftijd = item | fhirpath : \"item.where(linkId='019cf82c-d5ce-7bb4-85f1-2dc69488456b')\" | first -%}\n{%- assign geslacht = item | fhirpath : \"item.where(linkId='019cf82c-d5ce-7bb4-85f1-3fbac0055421')\" | first -%}\n{%- assign voorgeschiedenis_van_hartfalen_chf = item | fhirpath : \"item.where(linkId='019cf82c-d5ce-7bb4-85f1-4d68a23aa03e')\" | first -%}\n{%- assign voorgeschiedenis_van_hypertensie = item | fhirpath : \"item.where(linkId='019cf82c-d5ce-7bb4-85f1-5c2d24ef0c03')\" | first -%}\n{%- assign voorgeschiedenis_van_beroerte_tia_trombo-embolie = item | fhirpath : \"item.where(linkId='019cf82c-d5ce-7bb4-85f1-69464c704df0')\" | first -%}\n{%- assign voorgeschiedenis_van_vaatziekte_mi_pad_of_aortaplaque = item | fhirpath : \"item.where(linkId='019cf82c-d5ce-7bb4-85f1-7848bd6aa1d4')\" | first -%}\n{%- assign voorgeschiedenis_van_diabetes = item | fhirpath : \"item.where(linkId='019cf82c-d5ce-7bb4-85f1-8cabc765c5b2')\" | first -%}\n{%- assign cha_ds_-vasc_score_2 = item | fhirpath : \"item.where(linkId='019cf82c-d5ce-7bb4-85f1-99a22940add7')\" | first -%}\n{%- if item.text -%}\n{%- assign GroupTitle = item.text -%}\n<h2>{{ GroupTitle }}</h2>\n{%- endif -%}\n{%- render \"019cf82c-d5ce-7bb4-85f1-2dc69488456b\", item:leeftijd -%}\n{%- render \"019cf82c-d5ce-7bb4-85f1-3fbac0055421\", item:geslacht -%}\n{%- render \"019cf82c-d5ce-7bb4-85f1-4d68a23aa03e\", item:voorgeschiedenis_van_hartfalen_chf -%}\n{%- render \"019cf82c-d5ce-7bb4-85f1-5c2d24ef0c03\", item:voorgeschiedenis_van_hypertensie -%}\n{%- render \"019cf82c-d5ce-7bb4-85f1-69464c704df0\", item:voorgeschiedenis_van_beroerte_tia_trombo-embolie -%}\n{%- render \"019cf82c-d5ce-7bb4-85f1-7848bd6aa1d4\", item:voorgeschiedenis_van_vaatziekte_mi_pad_of_aortaplaque -%}\n{%- render \"019cf82c-d5ce-7bb4-85f1-8cabc765c5b2\", item:voorgeschiedenis_van_diabetes -%}\n{%- render \"019cf82c-d5ce-7bb4-85f1-99a22940add7\", item:cha_ds_-vasc_score_2 -%}\n",
+                "language": "text/liquid"
+              }
+            }
+          ]
+        }
+      ],
+      "repeats": false,
+      "extension": [
+        {
+          "url": "http://hl7.org/fhir/StructureDefinition/questionnaire-itemControl",
+          "valueCodeableConcept": {
+            "text": "block",
+            "coding": [
+              {
+                "system": "http://fhir.tiro.health/CodeSystem/tiro-questionnaire-item-control",
+                "code": "block"
+              }
+            ]
+          }
+        },
+        {
+          "url": "http://fhir.tiro.health/StructureDefinition/narrative-template-snippet",
+          "valueExpression": {
+            "name": "019cf82c-acb0-7bb4-85c3-ab72e5da24d1",
+            "expression": "{%- assign cha_ds_-vasc_score_1 = item | fhirpath : \"item.where(linkId='019cf82c-cd51-7bb4-85f0-081a804f3fc4')\" | first -%}\n{%- if item.text -%}\n{%- assign GroupTitle = item.text -%}\n<h2>{{ GroupTitle }}</h2>\n{%- endif -%}\n{%- render \"019cf82c-cd51-7bb4-85f0-081a804f3fc4\", item:cha_ds_-vasc_score_1 -%}\n",
+            "language": "text/liquid"
+          }
+        }
+      ]
+    }
+  ]
+}

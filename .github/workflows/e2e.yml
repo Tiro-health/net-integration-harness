@@ -13,16 +13,24 @@ name: E2E (GH-26)
 # (a save-draft that silently finalizes, a bundle the virtual host won't serve), and an
 # advisory red would just train people to ignore it.
 #
-# What a pull request gates on is only the part that needs no server — the bundle, the
-# injection order, the handshake. The stages that talk to a live SDC server run nightly and
-# on demand, because a staging outage must not redden a pull request that cannot have caused
-# it; a suite that goes red for reasons outside the author's control gets ignored just as
-# fast as an advisory one.
+# Which server each run points at is a per-cell matrix, not a per-event switch. The full table
+# and the reasoning live in tests/e2e/README.md, "The intended matrix"; in short:
 #
-# Server-dependent stages target the STAGING SDC server, which runs ahead of production — so
-# a server regression surfaces here before customers meet it. Never production: their
-# SdcClient traffic would otherwise show up as a phantom deployment in the harness-version
-# telemetry that atticus-backend#3568 aggregates.
+#   floor    every PR + merge   an SDC server container pinned to SdcCompatibility.MinimumSdcVersion
+#   dev      nightly            sdc-dev.tiro.health
+#   staging  nightly            sdc-staging.tiro.health
+#
+# A pull request runs the floor cell alone. That cell needs no shared server — the container and
+# its template server both run on the runner — so a staging outage can no longer redden a pull
+# request that cannot have caused it, which is what previously forced the server stages off PRs
+# entirely. Layer 1 pull requests now get the full flow rather than the handshake alone.
+#
+# The Windows job has no floor cell: the pinned server is a Linux container and Windows runners
+# cannot host one. Its pull requests still run stage A only, and its server-backed assertions —
+# including the GH-62 version check — remain nightly.
+#
+# Never production, for one reason: these write a QuestionnaireResponse on every pass, and that
+# would be synthetic clinical data in the instance customers use.
 # Actions are pinned to full commit SHAs (GH-53); see ci.yml for the rationale.
 on:
   pull_request:
@@ -40,6 +48,9 @@ on:
       - 'src/Tiro.Health.FormSdk.Abstractions/**'
       - 'build/web-sdk/**'
       - 'tests/e2e/**'
+      # The floor cell reads MinimumSdcVersion through this script, so a change to either the
+      # declaration or the extraction changes which server this suite runs against.
+      - 'build/release-notes/**'
       - '.github/actions/stage-web-sdk/**'
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
@@ -52,11 +63,14 @@ concurrency:
   group: e2e-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Which SDC server a run points at is now per-cell rather than per-event, and the endpoint is
+# resolved inside each job. See tests/e2e/README.md, "The intended matrix", for what each cell
+# is for and why the dev cell asserts a different verdict rather than a weaker one.
 env:
-  SDC_ENDPOINT: https://sdc-staging.tiro.health/fhir/r5
-  # Off for pull requests, on for the nightly and manual runs: see the note above.
-  E2E_SERVER_TESTS: ${{ github.event_name == 'pull_request' && '0' || '1' }}
-  PROBE_SKIP_SERVER_STAGES: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+  SDC_FLOOR_IMAGE_REPO: europe-docker.pkg.dev/tiroapp-4cb17/docker-ext/form-sdk-backend
+  SDC_DEV_ENDPOINT: https://sdc-dev.tiro.health/fhir/r5
+  SDC_STAGING_ENDPOINT: https://sdc-staging.tiro.health/fhir/r5
+  TEMPLATE_SERVER_PORT: '8089'
 
 jobs:
   browser:
@@ -66,6 +80,20 @@ jobs:
     permissions:
       contents: read
       packages: read
+      # WIF, for the floor cell's pull from docker-ext (atticus-backend#3599). Fork pull
+      # requests are never issued this token, and the principalSet is pinned to this repo,
+      # so a fork cannot reach the registry.
+      id-token: write
+
+    strategy:
+      # One cell's failure must not cancel the others: on a nightly, "dev broke but staging
+      # is fine" and "both broke" are different diagnoses, and fail-fast erases the difference.
+      fail-fast: false
+      matrix:
+        # A pull request runs the floor cell alone — it is the only one that needs no shared
+        # server, so it is the only one whose result the author can act on. The nightly adds
+        # the two live endpoints.
+        target: ${{ fromJSON(github.event_name == 'pull_request' && '["floor"]' || '["floor","dev","staging"]') }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -74,6 +102,119 @@ jobs:
         uses: ./.github/actions/stage-web-sdk
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- floor cell: a pinned SDC server on the runner ----------------------------------
+      - name: Authenticate to Google Cloud
+        if: matrix.target == 'floor'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: projects/35032072625/locations/global/workloadIdentityPools/github/providers/github
+          service_account: harness-e2e-ar-reader@tiroapp-4cb17.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        if: matrix.target == 'floor'
+        uses: google-github-actions/setup-gcloud@6189d56e4096ee891640bb02ac264be376592d6a # v2.1.2
+
+      # The floor is read from the declaration the assembly ships, never retyped here — the
+      # tested floor and the published floor cannot drift apart. Same extraction the release
+      # notes use, so CI already guards it on every pull request.
+      - name: Resolve the declared floor
+        if: matrix.target == 'floor'
+        run: |
+          set -euo pipefail
+          FLOOR=$(bash build/release-notes/compose.sh --check | sed -n 's/^MinimumSdcVersion=//p')
+          [ -n "$FLOOR" ] || { echo "::error::could not read MinimumSdcVersion"; exit 1; }
+          echo "SDC_FLOOR=$FLOOR" >> "$GITHUB_ENV"
+          echo "Declared floor: $FLOOR"
+
+      # Two failures that look identical in a log and must not: the registry refusing us, and
+      # the floor naming an image that does not exist. On the first runs of new credentials the
+      # second gets misfiled as the first, so each says which it is.
+      - name: Verify the floor has an image
+        if: matrix.target == 'floor'
+        run: |
+          set -uo pipefail
+          if ! TAGS=$(gcloud artifacts docker tags list "$SDC_FLOOR_IMAGE_REPO" --format='value(tag)' 2>&1); then
+            echo "::error::REGISTRY ACCESS failed for $SDC_FLOOR_IMAGE_REPO — this is a credentials or"
+            echo "::error::permissions problem, not a problem with the declared floor. Check that"
+            echo "::error::harness-e2e-ar-reader still has artifactregistry.reader on docker-ext."
+            echo "$TAGS"
+            exit 1
+          fi
+          if ! grep -qx -- "$SDC_FLOOR" <<<"$TAGS"; then
+            echo "::error::The declared floor $SDC_FLOOR has NO IMAGE in $SDC_FLOOR_IMAGE_REPO."
+            echo "::error::MinimumSdcVersion names a server version nobody can pull, so the minimum"
+            echo "::error::this harness publishes cannot be run — by an integrator or by this test."
+            echo "::error::Either cut that server release, or lower the floor to a version that exists."
+            echo "Tags currently present (newest first):"
+            printf '%s\n' "$TAGS" | head -15
+            exit 1
+          fi
+          echo "SDC_FLOOR_IMAGE=$SDC_FLOOR_IMAGE_REPO:$SDC_FLOOR" >> "$GITHUB_ENV"
+
+      # The container resolves questionnaires over HTTP rather than storing them, so it needs a
+      # template server. Serving the fixture locally is what keeps a shared server out of the
+      # pull-request path — see tests/e2e/fixtures/template-server.mjs.
+      - name: Start the template server
+        if: matrix.target == 'floor'
+        run: |
+          set -euo pipefail
+          node tests/e2e/fixtures/template-server.mjs > "$RUNNER_TEMP/template-server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/template-server.pid"
+          for _ in $(seq 1 50); do
+            curl -sf -o /dev/null "http://127.0.0.1:$TEMPLATE_SERVER_PORT/fhir/r5/Questionnaire/\$resolve" && break
+            # A 404 means it is listening and rejecting, which is all we need to proceed.
+            curl -s -o /dev/null "http://127.0.0.1:$TEMPLATE_SERVER_PORT/" && break
+            sleep 0.2
+          done
+          cat "$RUNNER_TEMP/template-server.log"
+
+      # --network host so the container reaches the template server on 127.0.0.1 and publishes
+      # its own port without mapping. Linux runners only, which is also why the floor cell
+      # cannot exist on the Windows job.
+      - name: Start the SDC server at the declared floor
+        if: matrix.target == 'floor'
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker europe-docker.pkg.dev --quiet
+          docker pull "$SDC_FLOOR_IMAGE"
+          docker run -d --name sdc --network host \
+            -e PORT=8080 \
+            -e TEMPLATE_SERVER_URL="http://127.0.0.1:$TEMPLATE_SERVER_PORT" \
+            "$SDC_FLOOR_IMAGE"
+          ok=
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/fhir/r5/metadata -o "$RUNNER_TEMP/metadata.json"; then ok=1; break; fi
+            sleep 2
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::the pinned SDC server never answered /fhir/r5/metadata"
+            docker logs sdc || true
+            exit 1
+          fi
+          # The container is the version we think it is. A mis-tagged image would otherwise let
+          # this cell report "the floor works" about some other release entirely.
+          reported=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/metadata.json'))['software']['version'])")
+          echo "Pinned SDC server reports: $reported (floor $SDC_FLOOR)"
+          if [ "${reported%%-*}" != "${SDC_FLOOR%%-*}" ]; then
+            echo "::error::image tagged $SDC_FLOOR reports version '$reported'"
+            exit 1
+          fi
+
+      - name: Resolve the SDC endpoint for this cell
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            floor)   endpoint="http://127.0.0.1:8080/fhir/r5" ;;
+            dev)     endpoint="$SDC_DEV_ENDPOINT" ;;
+            staging) endpoint="$SDC_STAGING_ENDPOINT" ;;
+            *)       echo "::error::unknown target '${{ matrix.target }}'"; exit 1 ;;
+          esac
+          echo "SDC_ENDPOINT=$endpoint" >> "$GITHUB_ENV"
+          # Every cell has a server, including on pull requests — that is what the floor cell
+          # bought. The old per-event skip is gone.
+          echo "E2E_SERVER_TESTS=1" >> "$GITHUB_ENV"
+          echo "Target ${{ matrix.target }} -> $endpoint"
 
       - name: Install Playwright
         working-directory: tests/e2e/browser
@@ -89,12 +230,28 @@ jobs:
       # host REFUSES it. GH-60's promise is that there is no opt-out, and that promise had no
       # end-to-end test: delete the bridge's collision branch and every other test stays green.
       # Needs no server, so it runs on pull requests too.
+      # Once per run, not once per cell: it needs no server, so running it against dev and
+      # staging as well would just be the same assertion three times.
       - name: Run browser e2e — page-owned SDK is refused
+        if: matrix.target == 'floor'
         working-directory: tests/e2e/browser
         env:
           PAGE_OWNS_SDK: '1'
           E2E_SERVER_TESTS: '0'
         run: npm test
+
+      # always(): when the suite fails against the pinned server, the server's own log is
+      # usually the answer, and it is gone once the runner is reclaimed.
+      - name: SDC server and template server logs
+        if: always() && matrix.target == 'floor'
+        run: |
+          echo "--- sdc container ---"
+          docker logs sdc 2>&1 | tail -80 || echo "(no container)"
+          echo "--- template server ---"
+          cat "$RUNNER_TEMP/template-server.log" 2>/dev/null || echo "(no log)"
+          docker rm -f sdc >/dev/null 2>&1 || true
+          [ -f "$RUNNER_TEMP/template-server.pid" ] && kill "$(cat "$RUNNER_TEMP/template-server.pid")" 2>/dev/null || true
+          exit 0
 
   webview2:
     runs-on: windows-latest
@@ -105,8 +262,44 @@ jobs:
       contents: read
       packages: read
 
+    strategy:
+      fail-fast: false
+      matrix:
+        # No floor cell here, and it is not an oversight: the pinned server runs as a Linux
+        # container and Windows runners cannot host one. So a pull request gets what it always
+        # got — stage A, no server — and the server-backed assertions, including the GH-62
+        # version check, stay nightly. tests/e2e/README.md records this under "Not done here".
+        target: ${{ fromJSON(github.event_name == 'pull_request' && '["none"]' || '["dev","staging"]') }}
+
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The expected verdict is per-cell, and the default is the STRICT one: an unset variable
+      # can only ever make the probe stricter, never weaker. An unrecognised value is a hard
+      # failure rather than a fallback — a parameter that silently selects a weaker assertion
+      # is how a suite goes quietly toothless.
+      - name: Resolve the SDC target for this cell
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            none)
+              echo "PROBE_SKIP_SERVER_STAGES=1" >> "$GITHUB_ENV"
+              echo "SDC_ENDPOINT=$SDC_STAGING_ENDPOINT" >> "$GITHUB_ENV"
+              ;;
+            dev)
+              echo "PROBE_SKIP_SERVER_STAGES=0" >> "$GITHUB_ENV"
+              echo "SDC_ENDPOINT=$SDC_DEV_ENDPOINT" >> "$GITHUB_ENV"
+              echo "SDC_EXPECTED_VERDICT=dev" >> "$GITHUB_ENV"
+              ;;
+            staging)
+              echo "PROBE_SKIP_SERVER_STAGES=0" >> "$GITHUB_ENV"
+              echo "SDC_ENDPOINT=$SDC_STAGING_ENDPOINT" >> "$GITHUB_ENV"
+              echo "SDC_EXPECTED_VERDICT=satisfied" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "::error::unknown target '${{ matrix.target }}'"; exit 1 ;;
+          esac
 
       - name: Stage pinned web-sdk bundle
         uses: ./.github/actions/stage-web-sdk
