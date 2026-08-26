@@ -158,3 +158,49 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Write-Host "::endgroup::"
           }
+
+  # The release notes carry the compatibility contract (GH-64): MinimumSdcVersion and the
+  # embedded web-sdk version, both read from the sources the build itself uses. README.md
+  # tells integrators the floor is here, and a raise only reaches them when they deliberately
+  # upgrade the harness — so this is the one channel that can announce it.
+  #
+  # Runs after `publish`, so a release never announces packages that failed to reach
+  # nuget.org. If this job fails the packages are already pushed: re-run it. It is
+  # idempotent — it creates the release, or rewrites the body of one that exists.
+  release-notes:
+    needs: publish
+    runs-on: ubuntu-latest
+
+    # The only job here that writes to the repo. Deliberately not folded into `publish`:
+    # that job holds `id-token: write` to mint a real nuget.org key, and widening its
+    # permission set is the one thing this workflow's header warns about.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history: the notes are diffed against the previous release to detect a
+          # raised floor, which needs that release's copy of SdcCompatibility.cs.
+          fetch-depth: 0
+          # Asked for explicitly. Whether fetch-depth: 0 alone brings tags along has changed
+          # across checkout versions, and without them `git describe` finds no previous
+          # release — which degrades silently into notes with no floor comparison and a
+          # changelog spanning all history, rather than into a failure. compose.sh warns if
+          # it still ends up with none.
+          fetch-tags: true
+
+      - name: Compose and publish release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=${GITHUB_REF#refs/tags/}
+          bash build/release-notes/compose.sh "$TAG" > notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md --verify-tag
+          fi

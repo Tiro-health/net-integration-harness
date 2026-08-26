@@ -64,3 +64,23 @@ jobs:
         with:
           name: test-results
           path: '**/TestResults/*.trx'
+
+  # The release notes state MinimumSdcVersion and the embedded web-sdk version, both read
+  # out of the sources the build uses (build/release-notes/compose.sh). That extraction is
+  # deliberately tied to the exact shape of the declarations, so a harmless-looking reformat
+  # of SdcCompatibility.cs would break it. Checked here rather than at release time: the
+  # release job runs *after* the packages are pushed to nuget.org, so discovering it there
+  # means a shipped version with no notes. This reddens the pull request that caused it.
+  #
+  # A separate ubuntu job on purpose — it needs neither MSBuild nor a Windows runner (billed
+  # at 2x), and it runs in parallel with the build, so it costs no wall-clock.
+  release-notes-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Release-notes values are still extractable
+        run: bash build/release-notes/compose.sh --check
