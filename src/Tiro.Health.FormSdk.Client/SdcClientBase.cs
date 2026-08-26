@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -7,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hl7.Fhir.Model;
 using Hl7.Fhir.Serialization;
+using Tiro.Health.FormSdk.Abstractions;
 
 namespace Tiro.Health.FormSdk.Client
 {
@@ -35,6 +37,27 @@ namespace Tiro.Health.FormSdk.Client
         private readonly bool _ownsHttpClient;
         private readonly JsonSerializerOptions _fhirJson;
         private readonly Uri _baseAddress;
+
+        // The one-time SDC server version check (GH-62); null until the first operation starts
+        // it. The TASK is cached, and it is started with CancellationToken.None so that caching
+        // it is safe: a task bound to the first caller's token would be poisoned for every later
+        // operation the moment that caller cancelled. Caching the *result* instead had a worse
+        // failure — two concurrent first operations would each probe, and if one came back
+        // Unknown (a transient blip) while the other came back TooOld, the Unknown caller would
+        // POST to a server the gate exists to refuse. One task means one verdict for everyone.
+        //
+        // Started under a lock rather than published with a CAS. A CAS looked like it made "one
+        // probe" a property of the code and did not: CheckAsync is an async method, so calling
+        // it issues the GET immediately and the CAS only chose which already-in-flight task to
+        // keep — eight concurrent first operations made eight requests. The lock gates the
+        // start, which is the thing that had to be gated.
+        private volatile Task<SdcVersionCheckResult> _versionCheckTask;
+        private readonly object _versionCheckGate = new object();
+
+        // The completed verdict, for ServerVersionCheck. Written after the await rather than read
+        // off the task so the property never blocks and never rethrows. Assigned with a CAS so
+        // the "trace once" branch below cannot fire twice.
+        private SdcVersionCheckResult _versionCheck;
 
         /// <param name="baseAddress">The SDC server FHIR base, e.g. <c>https://host/fhir/r5</c>.</param>
         /// <param name="fhirJson">FHIR-configured serializer options (built with <c>.ForFhir(...)</c> by the binding).</param>
@@ -87,10 +110,115 @@ namespace Tiro.Health.FormSdk.Client
         public Task<TBundle> ExtractAsync(TQuestionnaireResponse questionnaireResponse, CancellationToken cancellationToken = default)
             => PostResourceAsync<TBundle>("QuestionnaireResponse/$extract", questionnaireResponse, cancellationToken);
 
+        /// <summary>
+        /// The outcome of this client's SDC server version check, or <c>null</c> until the
+        /// first operation has run it. Exposed because the check's telemetry lands in the
+        /// <em>customer's</em> logs, not Tiro's — they self-host the server — so a host that
+        /// wants to surface "the version could not be established" in its own diagnostics
+        /// needs a way to read it. See <see cref="SdcCompatibility.MinimumSdcVersion"/>.
+        /// </summary>
+        public SdcVersionCheckResult ServerVersionCheck => Volatile.Read(ref _versionCheck);
+
+        /// <summary>
+        /// Runs the SDC server version check once per client instance, before the first
+        /// operation reaches the server (GH-62). Reports; never refuses — see the note at the
+        /// end of the method body.
+        /// </summary>
+        /// <remarks>
+        /// Every outcome lets the operation through. A too-old server is reported as an
+        /// actionable warning ("upgrade the SDC server"), an unreadable version as a diagnostic
+        /// about the check itself. "Reported" is <see cref="Trace"/> here rather than a logger,
+        /// because this client is deliberately telemetry-free (GH-33 tracks an optional
+        /// <c>ILogger</c> seam); <see cref="ServerVersionCheck"/> is the programmatic view.
+        /// <para>
+        /// The check goes through the same <see cref="HttpClient"/> as the operations, so a
+        /// host that injected one for custom TLS/proxy/auth has that apply to the probe too.
+        /// Unlike the viewer's, it is strictly serial in front of the first operation, so that
+        /// operation pays one extra round trip (bounded by
+        /// <see cref="SdcServerVersionProbe.TimeoutMilliseconds"/>).
+        /// </para>
+        /// </remarks>
+        private async Task EnsureServerVersionSupportedAsync(CancellationToken cancellationToken)
+        {
+            // Before anything else: a caller who has already cancelled must not be made to wait
+            // on a probe, and must get their own cancellation back rather than a pairing verdict.
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var probe = _versionCheckTask;
+            if (probe == null)
+            {
+                lock (_versionCheckGate)
+                {
+                    // CancellationToken.None on purpose — see the field comment. The probe's own
+                    // deadline is what bounds it.
+                    probe = _versionCheckTask
+                        ?? (_versionCheckTask = SdcServerVersionProbe.CheckAsync(_baseAddress, _http, CancellationToken.None));
+                }
+            }
+
+            // The shared task deliberately ignores the caller's token, so the WAIT has to honour
+            // it — otherwise cancelling an operation still blocked for the probe's full deadline
+            // and then threw a pairing exception instead of a cancellation.
+            var result = await WaitAsync(probe, cancellationToken).ConfigureAwait(false);
+
+            // First-wins, atomically, so concurrent awaiters of the same task cannot both trace.
+            if (Interlocked.CompareExchange(ref _versionCheck, result, null) == null)
+            {
+                // Loud, once. Trace rather than a logger because this client is deliberately
+                // telemetry-free (GH-33 tracks an optional ILogger seam), and because the
+                // audience is the customer's own logs: they self-host the server.
+                // Trace and nothing else, deliberately: this client is telemetry-free (GH-33
+                // tracks an optional ILogger seam) and ServerVersionCheck is the programmatic
+                // view. The viewer, which has a telemetry sink, also captures a message.
+                if (result.Outcome != SdcVersionCheckOutcome.Satisfied)
+                    Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result);
+            }
+
+            // WHEN THE FLOOR IS FIRST RAISED FOR A REAL REASON, refuse here:
+            //
+            //     if (result.Outcome == SdcVersionCheckOutcome.TooOld)
+            //         throw new SdcServerTooOldException(result);
+            //
+            // See the matching note in TiroFormViewer.ApplySdcVersionCheckAsync for why not yet:
+            // enforcement and the floor ship in the same assembly, so fielding the throw early
+            // protects nobody, while the current floor is the first version that can answer the
+            // probe at all — so the throw could only ever fire on a mistake.
+        }
+
+        /// <summary>
+        /// Awaits <paramref name="task"/> but gives up when <paramref name="cancellationToken"/>
+        /// is cancelled. The task itself is not cancelled — it is shared, so one caller's
+        /// cancellation must not decide it for the others.
+        /// </summary>
+        /// <remarks>
+        /// A local polyfill because <c>Task.WaitAsync</c> arrived in .NET 6 and this package
+        /// targets <c>netstandard2.0</c>/<c>net48</c>. The messaging package has the same helper,
+        /// but this client deliberately does not reference it (GH-37 Decision 1).
+        /// </remarks>
+        private static Task<T> WaitAsync<T>(Task<T> task, CancellationToken cancellationToken)
+        {
+            if (task.IsCompleted || !cancellationToken.CanBeCanceled) return task;
+
+            var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var registration = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+
+            task.ContinueWith(completed =>
+            {
+                registration.Dispose();
+                if (completed.IsFaulted) tcs.TrySetException(completed.Exception.InnerExceptions);
+                else if (completed.IsCanceled) tcs.TrySetCanceled();
+                else tcs.TrySetResult(completed.Result);
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+            return tcs.Task;
+        }
+
         private async Task<TOut> PostResourceAsync<TOut>(string relativePath, Resource body, CancellationToken cancellationToken)
             where TOut : Resource
         {
             if (body == null) throw new ArgumentNullException(nameof(body));
+
+            await EnsureServerVersionSupportedAsync(cancellationToken).ConfigureAwait(false);
 
             var json = JsonSerializer.Serialize(body, _fhirJson);
 

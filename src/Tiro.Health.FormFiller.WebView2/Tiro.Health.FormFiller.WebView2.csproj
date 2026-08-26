@@ -25,8 +25,22 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
   </ItemGroup>
 
+  <!-- HttpClient appears in the SDC version-probe signature the viewer calls; on .NET
+       Framework it lives in the framework System.Net.Http assembly, which SDK-style net48
+       projects don't reference by default. -->
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Tiro.Health.SmartWebMessaging\Tiro.Health.SmartWebMessaging.csproj" />
+    <!-- The shared SDC-server contract (MinimumSdcVersion + the version probe), also
+         referenced by Tiro.Health.FormSdk.Client. The two surfaces that talk to the same
+         SDC server share one floor rather than each carrying a copy that can drift. This is
+         the "deliberate shared config type" exception to keeping the client and the viewer
+         independent (GH-37 Decision 1); it is UI-free, FHIR-model-free, and pulls in no
+         package the viewer's closure didn't already have. -->
+    <ProjectReference Include="..\Tiro.Health.FormSdk.Abstractions\Tiro.Health.FormSdk.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>

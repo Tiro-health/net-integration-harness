@@ -20,4 +20,28 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- Pin every ProjectReference-derived package dependency to an EXACT version.
+
+       Pack turns a ProjectReference into a ">= $(Version)" dependency, and NuGet resolves a
+       shared transitive to the highest version anything in the graph asks for. Since the
+       README has integrators reference two top-level packages independently, the mixed graph
+       is the documented usage: viewer 1.3.0 plus client 1.2.0 resolves the shared
+       Tiro.Health.FormSdk.Abstractions to 1.3.0, and the older client binary then enforces
+       whatever MinimumSdcVersion that newer package carries — a floor it was never validated
+       against, producing a refusal nobody chose. The package exists specifically to stop a
+       version number drifting between assemblies; a ">=" dependency hands that decision back
+       to the resolver.
+
+       Exact ranges make GH-64's "integrators pick one version" a restore-time invariant: a
+       mixed graph fails restore with NU1107 instead of silently resolving. All src projects
+       are packed from one tag with one -p:Version (see .github/workflows/nuget-publish.yml),
+       so a consistent set always exists. This also closes the same pre-existing hole on
+       Tiro.Health.SmartWebMessaging and the FormFiller core. -->
+  <Target Name="PinProjectReferenceRangesToExactVersions" AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions ProjectVersion="[%(ProjectVersion)]"
+                                      Condition="'%(ProjectVersion)' != '' and !$([System.String]::Copy('%(ProjectVersion)').StartsWith('['))" />
+    </ItemGroup>
+  </Target>
+
 </Project>

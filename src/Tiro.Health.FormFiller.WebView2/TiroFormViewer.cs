@@ -9,6 +9,7 @@ using Hl7.Fhir.Model;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Tiro.Health.FormFiller.WebView2.Telemetry;
+using Tiro.Health.FormSdk.Abstractions;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
 using Tiro.Health.SmartWebMessaging.Message;
@@ -129,6 +130,34 @@ namespace Tiro.Health.FormFiller.WebView2
         // Terminal web-sdk failure (GH-61). Also faulted into the TCS, but kept as a
         // field so a bad handshake AFTER a successful one still fails later operations.
         private volatile Exception _webSdkFailure;
+
+        // The SDC server version check (GH-62). Started at the top of SetContextAsync so it runs
+        // alongside browser init, navigation and the handshake, and awaited before anything is
+        // sent to the page.
+        //
+        // Keyed on the address it was issued for, because SetContextAsync is retryable and a
+        // host may fix SdcEndpointAddress between attempts: caching on "have we probed at all"
+        // meant the second attempt applied the FIRST address's verdict while the page was
+        // configured with the second — refusing a launch against a good server in the name of
+        // one nobody was talking to, which is the mis-attribution this whole check exists to
+        // avoid. Started under a lock rather than published with a CAS: a CAS looked like it
+        // made "one probe" a property of the code and did not, since the probe is issued by the
+        // call that produces the task, not by the publication.
+        private SdcVersionProbe _sdcVersionProbe;
+        private readonly object _sdcVersionProbeGate = new object();
+
+        /// <summary>One issued probe, and the SDC base address it was issued for.</summary>
+        private sealed class SdcVersionProbe
+        {
+            public SdcVersionProbe(Uri address, Task<SdcVersionCheckResult> task)
+            {
+                Address = address;
+                Task = task;
+            }
+
+            public Uri Address { get; }
+            public Task<SdcVersionCheckResult> Task { get; }
+        }
 
         // Telemetry session — one per viewer lifetime. All transactions started via
         // _session share the same trace id, so Sentry's trace view groups them.
@@ -468,6 +497,162 @@ namespace Tiro.Health.FormFiller.WebView2
             }
         }
 
+        /// <summary>
+        /// The outcome of this viewer's SDC server version check, or <c>null</c> until
+        /// <see cref="SetContextAsync"/> has run it (and when <see cref="SdcEndpointAddress"/>
+        /// is unset or not an absolute URI, in which case there is nothing to check).
+        /// Exposed because the check's telemetry lands in the <em>customer's</em> logs, not
+        /// Tiro's — they self-host the SDC server.
+        /// </summary>
+        public SdcVersionCheckResult SdcServerVersionCheck { get; private set; }
+
+        /// <summary>
+        /// Reads the configured SDC server's version. Overridable so tests can supply a
+        /// verdict without network I/O; production behaviour is
+        /// <see cref="SdcServerVersionProbe.CheckAsync"/>.
+        /// </summary>
+        /// <remarks>
+        /// The probe sends no caller credential, which costs nothing today: the SDC server holds
+        /// its own service-account credentials and requires none from the caller (GH-39). Should
+        /// that change, a 401 reads as an unknown version and fails open — the check is disarmed,
+        /// not the launch broken — and this override is the seam a host would use to supply a
+        /// client that can authenticate. The viewer has no
+        /// <see cref="System.Net.Http.HttpClient"/> of its own, since the page makes the real SDC
+        /// requests inside WebView2.
+        /// </remarks>
+        protected virtual Task<SdcVersionCheckResult> CheckSdcServerVersionAsync(
+            Uri sdcBaseAddress, CancellationToken cancellationToken)
+            => SdcServerVersionProbe.CheckAsync(sdcBaseAddress, cancellationToken: cancellationToken);
+
+        // Kicks off the version check. A SetContextAsync retried against the same address reuses
+        // the first probe; one retried against a DIFFERENT address probes the new one.
+        private void StartSdcVersionCheck()
+        {
+            if (string.IsNullOrEmpty(SdcEndpointAddress)) return;
+
+            if (!Uri.TryCreate(SdcEndpointAddress, UriKind.Absolute, out var sdcBase))
+            {
+                // Nothing to probe, and not this check's business to reject the address —
+                // the page will fail on it soon enough, with a better message.
+                _session?.AddBreadcrumb("sdc.version",
+                    "SdcEndpointAddress is not an absolute URI; server version check skipped.");
+                return;
+            }
+
+            lock (_sdcVersionProbeGate)
+            {
+                var existing = _sdcVersionProbe;
+                if (existing != null && existing.Address.Equals(sdcBase)) return;
+
+                // Bound to the viewer's lifetime, not the caller's token: the task is reused
+                // across retries, so one caller's cancellation must not decide it.
+                var started = CheckSdcServerVersionAsync(sdcBase, _lifetimeCts.Token);
+
+                // Observe faults for the same reason _initializationTask does: SetContextAsync
+                // can throw before it awaits this (a failed browser init), leaving the task
+                // unawaited and its exception unobserved — as can a superseded probe from a
+                // retry against a different address. Cancellation needs no such guard: the TPL
+                // stores it outside the fault holder, so a Canceled task never raises
+                // TaskScheduler.UnobservedTaskException (and OnlyOnFaulted would not run for it).
+                started.ContinueWith(
+                    t => { _ = t.Exception; },
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+
+                _sdcVersionProbe = new SdcVersionProbe(sdcBase, started);
+            }
+        }
+
+        // Reports the verdict. Nothing here refuses a launch — see the note at the bottom of
+        // this method for what to add, and when (GH-62).
+        private async Task ApplySdcVersionCheckAsync(CancellationToken linkedToken, CancellationToken userToken)
+        {
+            Task<SdcVersionCheckResult> pending;
+            lock (_sdcVersionProbeGate) { pending = _sdcVersionProbe?.Task; }
+            if (pending == null) return;
+
+            SdcVersionCheckResult result;
+            try
+            {
+                // WaitAsync, so SetContextAsync's own budget still governs this wait — the
+                // probe's internal deadline must not be able to push a launch past it. Only the
+                // wait is cancelled; the task stays cached for a retry.
+                result = await pending.WaitAsync(linkedToken);
+            }
+            catch (OperationCanceledException) when (userToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
+            {
+                // A genuine cancellation — the caller's, or Dispose tearing the viewer down.
+                // SetContextAsync's own OCE filter owns this case; rethrown so the general
+                // catch below can't turn it into a fail-open.
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                // linkedToken also carries the 30s launch budget, which is NEITHER the caller
+                // nor the lifetime — and SetContextAsync's OCE filter does not match it, so a
+                // bare rethrow here fell through to its generic catch and threw a message-less
+                // OperationCanceledException at the host. That turned "the SDC server is
+                // unreachable" into a refused launch: the exact opposite of the fail-open this
+                // method promises. Budget expiry means the version is unknown, nothing more.
+                result = SdcVersionCheckResult.Unavailable(
+                    "The SDC server version check did not answer within the SetContextAsync budget.");
+            }
+            catch (Exception ex)
+            {
+                // SdcServerVersionProbe's contract is that a server-side or transport problem
+                // is a result, not an exception — so reaching here means the check itself
+                // broke (or an override did). Fail open: this exists to catch a bad pairing,
+                // not to add a new way for a form launch to die.
+                // An exception's ToString() carries a full stack trace, and this reaches a
+                // telemetry breadcrumb; Unavailable bounds the whole Detail, so the message
+                // stays useful without being unbounded.
+                result = SdcVersionCheckResult.Unavailable(
+                    "The SDC server version check itself failed: " + ex);
+            }
+
+            // Reported once per verdict. A SetContextAsync that fails after the handshake (a
+            // refused sdc.configure, say) leaves the viewer retryable, and re-announcing the
+            // same verdict on every attempt would make the "written once" the README promises
+            // false and put a duplicate breadcrumb on the session each time.
+            var alreadyReported = ReferenceEquals(SdcServerVersionCheck, result);
+            SdcServerVersionCheck = result;
+            if (!alreadyReported) _session?.AddBreadcrumb("sdc.version", result.ToString());
+
+            if (alreadyReported || result.Outcome == SdcVersionCheckOutcome.Satisfied) return;
+
+            // Both remaining outcomes are reported, and reported loudly, because a breadcrumb
+            // only travels if some LATER event in the session is captured — on a deployment
+            // where the only thing wrong is this, nothing ever is — and Trace lands in
+            // OutputDebugString, invisible without a configured listener. The captured message
+            // is the channel that actually reaches the customer's own Sentry project. GH-62
+            // asks for "loud telemetry"; the other two channels alone did not deliver it.
+            //
+            // The two messages read differently on purpose (see SdcVersionCheckResult.ToString):
+            // TooOld is actionable — "upgrade the SDC server" — while Unknown is a diagnostic
+            // about the check itself. Collapsing them into one line would turn the actionable
+            // one into noise.
+            System.Diagnostics.Trace.TraceWarning("Tiro.Health.FormFiller.WebView2: " + result);
+            _telemetry.CaptureMessage("SDC server version check: " + result);
+
+            // WHEN THE FLOOR IS FIRST RAISED FOR A REAL REASON, refuse here:
+            //
+            //     if (result.Outcome == SdcVersionCheckOutcome.TooOld)
+            //         throw new SdcServerTooOldException(result);
+            //
+            // Deliberately not shipped yet, and the reasoning is worth keeping because it is not
+            // obvious. Enforcement and the floor live in the SAME assembly, so they always reach
+            // an integrator together: nobody is protected by having the throw fielded early,
+            // because a deployment that has not adopted the release carrying a raised floor has
+            // not adopted its enforcement either. Meanwhile MinimumSdcVersion is currently the
+            // first server version that can answer the probe at all, so no reachable server is
+            // below it and the throw could only ever fire on a mistake — a mis-read version in a
+            // binary that cannot be patched, which is an unrecoverable outage in exchange for
+            // protection against nothing. Ship it in the release that raises the floor, together
+            // with the reason it was raised. Everything the throw needs — the probe, the
+            // grammar, the attribution guard, the plumbing — is already here and under test.
+        }
+
         private void OnBrowserMessageReceived(object sender, string inboundJson)
         {
             if (State == TiroFormViewerState.Disposed) return;
@@ -661,6 +846,13 @@ namespace Tiro.Health.FormFiller.WebView2
         {
             GuardCanSetContext();
 
+            // Start the SDC server version check here, not where it's awaited: it then runs
+            // alongside browser init, navigation and the handshake — waits that happen anyway —
+            // so a check that protects the clinician's form launch costs it no extra latency
+            // (GH-62). Awaited after the handshake, before the first message reaches the page,
+            // so a too-old server refuses the session instead of rendering a form against it.
+            StartSdcVersionCheck();
+
             var span = _session?.StartTransaction("sdc.displayQuestionnaire", "swm.send");
             span?.SetTag("messageType", "sdc.displayQuestionnaire");
             span?.SetTag("questionnaire_url", questionnaireCanonicalUrl);
@@ -680,6 +872,12 @@ namespace Tiro.Health.FormFiller.WebView2
 
                     await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
                         timeoutMessage: $"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
+
+                    // Establishes and reports the server's version. Placed after the handshake
+                    // so the page is proven alive first — a handshake failure is the more
+                    // actionable error — and before the first outbound message, which is where
+                    // a refusal would have to go if this release ever adds one.
+                    await ApplySdcVersionCheckAsync(linkedCts.Token, cancellationToken);
 
                     // After handshake, send the protocol's sdc.configure message with the
                     // endpoint addresses and renderer flags so the bridge can apply them to

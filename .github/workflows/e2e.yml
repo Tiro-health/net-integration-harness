@@ -37,6 +37,7 @@ on:
       - 'src/Tiro.Health.SmartWebMessaging.Fhir.R5/**'
       - 'src/Tiro.Health.FormSdk.Client/**'
       - 'src/Tiro.Health.FormSdk.Client.Fhir.R5/**'
+      - 'src/Tiro.Health.FormSdk.Abstractions/**'
       - 'build/web-sdk/**'
       - 'tests/e2e/**'
       - '.github/actions/stage-web-sdk/**'

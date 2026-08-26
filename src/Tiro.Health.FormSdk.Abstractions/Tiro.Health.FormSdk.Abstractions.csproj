@@ -2,29 +2,21 @@
 
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0;net48</TargetFrameworks>
-    <AssemblyName>Tiro.Health.FormSdk.Client</AssemblyName>
-    <RootNamespace>Tiro.Health.FormSdk.Client</RootNamespace>
+    <AssemblyName>Tiro.Health.FormSdk.Abstractions</AssemblyName>
+    <RootNamespace>Tiro.Health.FormSdk.Abstractions</RootNamespace>
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Version>1.0.0</Version>
     <Authors>Thibault Mahieu</Authors>
     <Company>Tiro.health</Company>
-    <Description>Typed SDC FHIR client — version-agnostic core for the stateless SDC server operations ($validate, $extract). Use a closed-binding package (e.g. Tiro.Health.FormSdk.Client.Fhir.R5).</Description>
+    <Description>Shared SDC-server contract for the .NET integration harness — the MinimumSdcVersion floor, the version grammar, and the startup probe that reads a server's version. Referenced by both the SDC client and the WebView2 form viewer; UI-free and FHIR-model-free.</Description>
     <AutoGenerateBindingRedirects>True</AutoGenerateBindingRedirects>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Hl7.Fhir.Base" Version="5.13.2" />
     <PackageReference Include="System.Text.Json" Version="9.0.2" />
-  </ItemGroup>
-
-  <!-- The shared SDC-server contract (MinimumSdcVersion + the version probe). Shared with
-       Tiro.Health.FormFiller.WebView2 rather than duplicated, so the floor cannot drift
-       between the two surfaces that talk to the same server. -->
-  <ItemGroup>
-    <ProjectReference Include="..\Tiro.Health.FormSdk.Abstractions\Tiro.Health.FormSdk.Abstractions.csproj" />
   </ItemGroup>
 
   <!-- On .NET Framework, HttpClient lives in the framework System.Net.Http assembly,
