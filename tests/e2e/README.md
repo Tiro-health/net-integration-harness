@@ -102,6 +102,19 @@ on; `WebSdkLoadException` (bundle missing, or a page-owned copy colliding) fails
 explicitly. Stages B1–B3 then save a draft, finalize, and `$extract`, asserting on typed
 FHIR POCOs — so they also prove Firely can deserialize what the real element emits.
 
+**The SDC version check (GH-62) is asserted with the server stages, not with stage A.** This is
+the only place in the repo it runs against a real server, so it is the only thing holding three
+contracts unit tests cannot reach: that `{base}/metadata` stays locally routed rather than
+tunnelled to the data endpoint, that `software.version` keeps meaning the SDC server's own
+version, and that `software.name` keeps saying what it says. Anything but a `Satisfied` verdict
+fails the run — `Unknown` very much included, since that is the shape of the gate going
+silently disarmed. The verdict is *printed* in stage A because the viewer starts the probe inside
+`SetContextAsync` and it costs nothing to show; reaching it needs the server to answer, so the
+assertion belongs where a server is guaranteed. It briefly did not, and a staging outage would
+have reddened pull requests that could not have caused it. The cost of that placement is real:
+the check is verified nightly rather than per-PR, so a change on the server side surfaces within
+a day rather than on the pull request that happens to follow it.
+
 Only the first submit of a session is retried, and deliberately so: a submit before render is
 silently dropped (see below), but a *resubmit* after render races the first request rather
 than replacing it, and the page refuses a second submit on a finalized response — so retrying

@@ -131,6 +131,20 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
                 + "handshake received (state=" + viewer.State + ", pageWebSdkVersion="
                 + (viewer.PageWebSdkVersion ?? "(null)") + ")");
 
+            // Reported here, asserted in stage B. The viewer starts the probe inside
+            // SetContextAsync, so the verdict is already available and worth printing — but
+            // reaching it requires the server to answer, which makes the assertion
+            // server-dependent even though the stage around it isn't.
+            var versionCheck = viewer.SdcServerVersionCheck;
+            Report("INFO", "SDC version check — " + (versionCheck?.ToString() ?? "(not run)")
+                + " [minimum " + SdcCompatibility.MinimumSdcVersion + "]");
+
+            if (!ServerStagesEnabled)
+            {
+                Report("INFO", "stage B skipped (PROBE_SKIP_SERVER_STAGES=1)");
+                return 0;
+            }
+
             // Asserted, not just logged. This is the only place the version check runs against a
             // real server, so it is the only thing standing behind three contracts nothing else
             // in this repo can hold: that {base}/metadata stays locally routed rather than
@@ -139,9 +153,12 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             // change to any of them turns this green run red within a day. An "unknown" verdict
             // is precisely the failure to catch — it means the suite would otherwise keep passing
             // with the gate silently disarmed.
-            var versionCheck = viewer.SdcServerVersionCheck;
-            Report("INFO", "SDC version check — " + (versionCheck?.ToString() ?? "(not run)")
-                + " [minimum " + SdcCompatibility.MinimumSdcVersion + "]");
+            //
+            // Below the bail on purpose. It used to sit in stage A, which is labelled "no server
+            // needed" and is the only part a pull request gates on — so a staging outage reddened
+            // pull requests that could not have caused it, which e2e.yml explicitly sets out not
+            // to do. A suite that goes red for reasons outside the author's control gets ignored,
+            // and this assertion is far too valuable to spend that way.
             if (versionCheck == null || versionCheck.Outcome != SdcVersionCheckOutcome.Satisfied)
             {
                 Report("FAIL", "the SDC version check did not reach a Satisfied verdict against "
@@ -149,13 +166,7 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
                     + "or the check itself is broken. Either way it is no longer protecting anyone.");
                 return 1;
             }
-            Report("PASS", "stage A — SDC version check satisfied against a real server");
-
-            if (!ServerStagesEnabled)
-            {
-                Report("INFO", "stage B skipped (PROBE_SKIP_SERVER_STAGES=1)");
-                return 0;
-            }
+            Report("PASS", "SDC version check satisfied against a real server");
 
             // --- Stage B: save-draft, keep filling, finalize, extract ------------------
             // Mirrors the EhrShell + Extract samples. Every assertion here is on a typed
