@@ -165,8 +165,16 @@ jobs:
   # upgrade the harness — so this is the one channel that can announce it.
   #
   # Runs after `publish`, so a release never announces packages that failed to reach
-  # nuget.org. If this job fails the packages are already pushed: re-run it. It is
-  # idempotent — it creates the release, or rewrites the body of one that exists.
+  # nuget.org. If this job fails the packages are already pushed: re-run it.
+  #
+  # Non-destructive by construction, which matters because the normal way to push a
+  # v*.*.* tag here is "Draft a new release" in the GitHub UI — that creates the release
+  # and the tag together, so this job usually runs against a body someone just wrote by
+  # hand. compose.sh fences its output in an HTML-comment marker, keeps whatever is
+  # already there below it, and strips a previously generated block first, so re-running
+  # replaces rather than accumulates and never overwrites prose. The generated
+  # "What's Changed" list is only requested when the release does NOT already exist —
+  # otherwise the UI's own generated notes would be duplicated.
   release-notes:
     needs: publish
     runs-on: ubuntu-latest

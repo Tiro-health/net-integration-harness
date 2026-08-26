@@ -82,5 +82,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # --check returns before the body-composition half, so on its own it proves only that
+      # the two version values parse — a syntax error below that early exit would sail
+      # through every pull request and first appear in the release job, after the packages
+      # are already on nuget.org. bash -n parses the whole file, which is the part --check
+      # structurally cannot reach.
+      - name: Release-notes script parses
+        run: bash -n build/release-notes/compose.sh
+
+      - name: Release-notes script lints
+        run: shellcheck build/release-notes/compose.sh
+
       - name: Release-notes values are still extractable
         run: bash build/release-notes/compose.sh --check
