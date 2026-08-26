@@ -172,7 +172,7 @@ namespace Tiro.Health.FormSdk.Client.Tests
             var result = await Probe(server);
 
             Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome,
-                "A version from a server we cannot attribute must never fail closed.");
+                "A version from a server we cannot attribute must never be treated as the server's own.");
         }
 
         [TestMethod]
@@ -413,31 +413,6 @@ namespace Tiro.Health.FormSdk.Client.Tests
             {
                 Assert.AreEqual(cts.Token, ex.CancellationToken,
                     "It must be rethrown against the caller's token, or their own `when (e.CancellationToken == mine)` filter cannot match.");
-            }
-        }
-
-        [TestMethod]
-        public async Task TheHostCanDisableTheCheck_AndNothingIsProbed()
-        {
-            // Break-glass. The fail-closed arm is triggered by a string another team writes, in a
-            // binary that cannot be patched — so if software.version ever stops meaning "the SDC
-            // server's application version", a value that still matches the grammar could refuse
-            // every form launch everywhere at once. This is the flag that unblocks a site without
-            // an EHR release. It also means no request is issued at all.
-            var server = new ProbeServer { Body = Capability(OneBelowTheMinimum()) };
-            SdcCompatibility.RefuseUnsupportedServers = false;
-            try
-            {
-                var result = await Probe(server);
-
-                Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome,
-                    "A disabled check must report unknown, which is the outcome that fails open.");
-                Assert.AreEqual(0, server.RequestedUris.Count, "A disabled check must not probe.");
-                StringAssert.Contains(result.Detail, "disabled by the host");
-            }
-            finally
-            {
-                SdcCompatibility.RefuseUnsupportedServers = true;
             }
         }
 

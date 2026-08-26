@@ -109,7 +109,7 @@ namespace Tiro.Health.FormSdk.Client.Tests
             // turn these into assertions about a version nobody ships. Components are only
             // decremented where that stays a valid version.
             Assert.AreEqual(SdcVersionCheckOutcome.TooOld, SdcCompatibility.Evaluate(OneBelow(major, minor, patch)),
-                "The version immediately below the floor must fail closed.");
+                "The version immediately below the floor must evaluate as too old.");
 
             if (minor > 0)
                 Assert.AreEqual(SdcVersionCheckOutcome.TooOld, SdcCompatibility.Evaluate($"v{major}.{minor - 1}.{patch + 500}"),

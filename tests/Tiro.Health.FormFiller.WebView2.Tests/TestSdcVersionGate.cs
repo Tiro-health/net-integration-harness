@@ -16,10 +16,11 @@ using R5 = Tiro.Health.SmartWebMessaging.Fhir.R5;
 namespace Tiro.Health.FormFiller.WebView2.Tests
 {
     /// <summary>
-    /// The SDC server version gate on the viewer (GH-62). With the web-sdk embedded (GH-60),
+    /// The SDC server version check on the viewer (GH-62). With the web-sdk embedded (GH-60),
     /// the SDC server is the only component that can change underneath a frozen harness —
-    /// customers run and upgrade their own instance. This is the check that turns a wrong
-    /// pairing into a startup refusal rather than a form that renders and then misbehaves.
+    /// customers run and upgrade their own instance. The check establishes its version on the
+    /// path to the first form and reports it; nothing is refused yet, and the note at the end of
+    /// ApplySdcVersionCheckAsync says what to add and when.
     /// </summary>
     [TestClass]
     public class TestSdcVersionGate
@@ -61,47 +62,40 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             => await SwmTest.PollFor(() => _browser.Initialized, TimeSpan.FromSeconds(5));
 
         [TestMethod]
-        public async Task TooOldServer_RefusesTheSession_AndNothingReachesThePage()
+        public async Task TooOldServer_IsReportedLoudly_AndTheSessionProceeds()
         {
+            // Reported, not refused. The floor is currently the first server version that can
+            // answer the probe at all, so a refusal here could only ever fire on a mistake — and
+            // enforcement would reach an integrator in the same release as any raised floor, so
+            // fielding it early protects nobody. See the note at the end of the method.
             await DelayUntilBrowserInitialized();
             _viewer.SdcEndpointAddress = SdcEndpoint;
             _viewer.SdcVersionCheckToReturn = TooOld();
 
             var setContext = _viewer.SetContextAsync("http://example.org/q");
             _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+            await setContext.Within5s();
 
-            var ex = await Assert.ThrowsExceptionAsync<SdcServerTooOldException>(() => setContext.Within5s());
-            Assert.AreEqual(SdcCompatibility.MinimumSdcVersion, ex.MinimumVersion);
+            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
+            Assert.IsTrue(_browser.PostedMessages.Any(m => m.Contains("sdc.displayQuestionnaire")),
+                "A too-old server is a warning; the form still gets displayed.");
+            Assert.AreEqual(SdcVersionCheckOutcome.TooOld, _viewer.SdcServerVersionCheck!.Outcome);
 
-            // Fail closed means the form is never configured or displayed against that server.
-            Assert.IsFalse(_browser.PostedMessages.Any(m => m.Contains("sdc.configure")),
-                "A refused pairing must not send sdc.configure.");
-            Assert.IsFalse(_browser.PostedMessages.Any(m => m.Contains("sdc.displayQuestionnaire")),
-                "A refused pairing must not display the questionnaire.");
-            Assert.AreNotEqual(TiroFormViewerState.ContextSet, _viewer.State,
-                "The session was refused, so the viewer must not report a context.");
-        }
+            // Loud where it counts: a captured message reaches the customer's own Sentry even
+            // when nothing else in the session goes wrong, which is exactly this case.
+            Assert.IsTrue(
+                _sink.CapturedMessages.Exists(m => m.Contains("is older than the minimum")),
+                "A too-old server must be captured to telemetry, and say what to do about it. Captured: "
+                + string.Join(" | ", _sink.CapturedMessages));
+            StringAssert.Contains(
+                _sink.CapturedMessages.Find(m => m.Contains("is older than the minimum")),
+                SdcCompatibility.MinimumSdcVersion,
+                "Both versions have to be named, or the warning is not actionable.");
 
-        [TestMethod]
-        public async Task TooOldServer_IsCapturedToTelemetry_WithBothVersionsNamed()
-        {
-            await DelayUntilBrowserInitialized();
-            _viewer.SdcEndpointAddress = SdcEndpoint;
-            _viewer.SdcVersionCheckToReturn = TooOld();
-
-            var setContext = _viewer.SetContextAsync("http://example.org/q");
-            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
-            await Assert.ThrowsExceptionAsync<SdcServerTooOldException>(() => setContext.Within5s());
-
-            // SetContextAsync's own catch captures it; this asserts the refusal is diagnosable
-            // in the customer's Sentry (they self-host the server, so it lands in their project).
-            Assert.IsTrue(_sink.CapturedExceptions.OfType<SdcServerTooOldException>().Any(),
-                "The refusal must reach telemetry, not just the caller.");
             // Breadcrumbs is a value-tuple list, so an absent entry comes back as (null, null).
             var breadcrumb = _sink.Sessions[0].Breadcrumbs
                 .FirstOrDefault(b => b.Category == "sdc.version");
-            Assert.IsNotNull(breadcrumb.Message, "The verdict must be breadcrumbed on the session.");
-            StringAssert.Contains(breadcrumb.Message, SdcCompatibility.MinimumSdcVersion);
+            Assert.IsNotNull(breadcrumb.Message, "The verdict must be breadcrumbed on the session too.");
         }
 
         [TestMethod]

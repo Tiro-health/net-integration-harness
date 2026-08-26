@@ -116,14 +116,6 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
                     Report("FAIL", "web-sdk load refused: reason=" + ex.Reason + " :: " + ex.Message);
                     return 1;
                 }
-                catch (SdcServerTooOldException ex)
-                {
-                    // GH-62's gate, firing for real. Named rather than left to the "unhandled"
-                    // catch because this one is actionable and not a probe defect: the server
-                    // this suite points at has fallen below the floor the harness declares.
-                    Report("FAIL", "SDC server refused: " + ex.Message);
-                    return 1;
-                }
                 catch (TimeoutException)
                 {
                     Report("FAIL", "handshake timeout — the bridge never reached the host");

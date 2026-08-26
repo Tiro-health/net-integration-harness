@@ -564,8 +564,8 @@ namespace Tiro.Health.FormFiller.WebView2
             }
         }
 
-        // Applies the verdict. Fails closed only when the server answered with a parseable
-        // version below the floor; everything else fails open, loudly (GH-62).
+        // Reports the verdict. Nothing here refuses a launch — see the note at the bottom of
+        // this method for what to add, and when (GH-62).
         private async Task ApplySdcVersionCheckAsync(CancellationToken linkedToken, CancellationToken userToken)
         {
             Task<SdcVersionCheckResult> pending;
@@ -619,23 +619,38 @@ namespace Tiro.Health.FormFiller.WebView2
             SdcServerVersionCheck = result;
             if (!alreadyReported) _session?.AddBreadcrumb("sdc.version", result.ToString());
 
-            if (result.Outcome == SdcVersionCheckOutcome.Unknown)
-            {
-                if (alreadyReported) return;
-                // Loud, and it has to actually be loud. A breadcrumb only travels if some later
-                // event in the session is captured — on a healthy-but-silently-disarmed
-                // deployment nothing ever is — and Trace lands in OutputDebugString, invisible
-                // without a configured listener. So this also goes to the telemetry sink as a
-                // captured message, which is the channel that reaches the customer's own Sentry
-                // project. GH-62 asks for "fail open with loud telemetry"; the other two
-                // channels alone did not deliver it.
-                System.Diagnostics.Trace.TraceWarning("Tiro.Health.FormFiller.WebView2: " + result);
-                _telemetry.CaptureMessage("SDC server version check: " + result);
-                return;
-            }
+            if (alreadyReported || result.Outcome == SdcVersionCheckOutcome.Satisfied) return;
 
-            if (result.Outcome == SdcVersionCheckOutcome.TooOld)
-                throw new SdcServerTooOldException(result);
+            // Both remaining outcomes are reported, and reported loudly, because a breadcrumb
+            // only travels if some LATER event in the session is captured — on a deployment
+            // where the only thing wrong is this, nothing ever is — and Trace lands in
+            // OutputDebugString, invisible without a configured listener. The captured message
+            // is the channel that actually reaches the customer's own Sentry project. GH-62
+            // asks for "loud telemetry"; the other two channels alone did not deliver it.
+            //
+            // The two messages read differently on purpose (see SdcVersionCheckResult.ToString):
+            // TooOld is actionable — "upgrade the SDC server" — while Unknown is a diagnostic
+            // about the check itself. Collapsing them into one line would turn the actionable
+            // one into noise.
+            System.Diagnostics.Trace.TraceWarning("Tiro.Health.FormFiller.WebView2: " + result);
+            _telemetry.CaptureMessage("SDC server version check: " + result);
+
+            // WHEN THE FLOOR IS FIRST RAISED FOR A REAL REASON, refuse here:
+            //
+            //     if (result.Outcome == SdcVersionCheckOutcome.TooOld)
+            //         throw new SdcServerTooOldException(result);
+            //
+            // Deliberately not shipped yet, and the reasoning is worth keeping because it is not
+            // obvious. Enforcement and the floor live in the SAME assembly, so they always reach
+            // an integrator together: nobody is protected by having the throw fielded early,
+            // because a deployment that has not adopted the release carrying a raised floor has
+            // not adopted its enforcement either. Meanwhile MinimumSdcVersion is currently the
+            // first server version that can answer the probe at all, so no reachable server is
+            // below it and the throw could only ever fire on a mistake — a mis-read version in a
+            // binary that cannot be patched, which is an unrecoverable outage in exchange for
+            // protection against nothing. Ship it in the release that raises the floor, together
+            // with the reason it was raised. Everything the throw needs — the probe, the
+            // grammar, the attribution guard, the plumbing — is already here and under test.
         }
 
         private void OnBrowserMessageReceived(object sender, string inboundJson)
@@ -858,12 +873,10 @@ namespace Tiro.Health.FormFiller.WebView2
                     await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
                         timeoutMessage: $"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
 
-                    // The pairing gate. Throws SdcServerTooOldException when the server
-                    // answered with a version below MinimumSdcVersion; fails open otherwise.
-                    // Placed after the handshake so the page is proven alive first (a
-                    // handshake failure is the more actionable error), and before the first
-                    // outbound message so nothing is configured or rendered against a server
-                    // this release does not support.
+                    // Establishes and reports the server's version. Placed after the handshake
+                    // so the page is proven alive first — a handshake failure is the more
+                    // actionable error — and before the first outbound message, which is where
+                    // a refusal would have to go if this release ever adds one.
                     await ApplySdcVersionCheckAsync(linkedCts.Token, cancellationToken);
 
                     // After handshake, send the protocol's sdc.configure message with the

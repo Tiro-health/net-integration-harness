@@ -122,11 +122,6 @@ namespace Tiro.Health.FormSdk.Abstractions
             HttpClient httpClient = null,
             CancellationToken cancellationToken = default)
         {
-            if (!SdcCompatibility.RefuseUnsupportedServers)
-                return SdcVersionCheckResult.Unavailable(
-                    "The SDC server version check is disabled by the host " +
-                    "(SdcCompatibility.RefuseUnsupportedServers = false).");
-
             if (sdcBaseAddress == null) throw new ArgumentNullException(nameof(sdcBaseAddress));
             if (!sdcBaseAddress.IsAbsoluteUri)
                 throw new ArgumentException("sdcBaseAddress must be an absolute URI.", nameof(sdcBaseAddress));

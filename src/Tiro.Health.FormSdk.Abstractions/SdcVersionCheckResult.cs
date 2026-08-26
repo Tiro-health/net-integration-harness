@@ -8,16 +8,17 @@ namespace Tiro.Health.FormSdk.Abstractions
 
         /// <summary>
         /// The server reported a version below <see cref="SdcCompatibility.MinimumSdcVersion"/>.
-        /// The only outcome that fails closed.
+        /// Reported as an actionable warning — upgrade the server — and nothing is refused; see
+        /// the notes at the two call sites for when that changes.
         /// </summary>
         TooOld = 1,
 
         /// <summary>
         /// The version could not be established — unreachable server, timeout, non-success
         /// status, a body without the version field, a document that isn't the SDC server's, or
-        /// a version string outside the grammar (a <c>dev</c> build, a PR checkpoint id). Fails
-        /// <em>open</em>: a network blip, a server predating the <c>CapabilityStatement</c>
-        /// route, or a developer instance must not brick a working deployment.
+        /// a version string outside the grammar (a <c>dev</c> build, a PR checkpoint id). A
+        /// diagnostic about the check rather than about the server, and distinct from
+        /// <see cref="TooOld"/>, which is actionable.
         /// </summary>
         Unknown = 2,
     }

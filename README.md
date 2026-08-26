@@ -381,7 +381,7 @@ TiroFormViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5"
 
 `SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
 
-The SDC server you point at must be at or above the version this harness release declares — the first `SetContextAsync` checks it and refuses the session if it isn't. See [SDC server version compatibility](#sdc-server-version-compatibility).
+The SDC server you point at should be at or above the version this harness release declares — the first `SetContextAsync` checks it and reports if it isn't. See [SDC server version compatibility](#sdc-server-version-compatibility).
 
 ### Rendering a form read-only
 
@@ -483,7 +483,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
-  - SDC server version check on the first `SetContextAsync`: the session is refused (`SdcServerTooOldException`) when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
+  - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
 Designer-friendly closed bindings of `TiroFormViewer<,,>`.
@@ -505,7 +505,7 @@ Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you wan
 The SDC-server contract shared by the form viewer and the SDC client — everything about the server that both surfaces have to agree on. UI-free, FHIR-model-free, `System.Text.Json` its only dependency; it arrives transitively with either package and integrators never reference it directly.
 
 - **Targets**: `netstandard2.0`, `net48`
-- **Key types**: `SdcCompatibility` (holds `MinimumSdcVersion` and the version grammar), `SdcServerVersionProbe` (reads a live server's version — public so a host can preflight at startup), `SdcVersionCheckResult` / `SdcVersionCheckOutcome`, `SdcServerTooOldException`
+- **Key types**: `SdcCompatibility` (holds `MinimumSdcVersion` and the version grammar), `SdcServerVersionProbe` (reads a live server's version — public so a host can preflight at startup), `SdcVersionCheckResult` / `SdcVersionCheckOutcome`
 - **Why a separate package**: the viewer and the client stay siblings with no dependency on each other (each has a different runtime and lifecycle), so a floor that lives in either one would have to be duplicated in the other — and two copies of a version number drift. This is the one deliberate shared type between them. See [SDC server version compatibility](#sdc-server-version-compatibility).
 
 ### `Tiro.Health.FormSdk.Client` (core) / `Tiro.Health.FormSdk.Client.Fhir.R5`
@@ -518,7 +518,7 @@ Thin, strongly-typed client over the **stateless SDC server** FHIR operations �
 - **Construction**: `new SdcClient(new Uri("https://host/fhir/r5"), httpClient?)` — inject a pre-configured `HttpClient` for custom TLS/proxy/timeouts. The client deliberately has **no default base** — you must pass one.
 - **Point the client at the same SDC server as the form.** `baseAddress` here and the viewer's `SdcEndpointAddress` ([`TiroFormViewer`](#tirohealthformfillerwebview2)) are the *same* concept — the SDC server. A host that embeds the form **and** calls `$validate`/`$extract` directly should **construct the client from `viewer.SdcEndpointAddress`** (see [Extracting after a form submit](#extracting-after-a-form-submit)) so the two can't drift apart. Note this is a **convention, not an enforced guarantee** — nothing in the API stops you from pointing the form and the client at different servers, so derive the client's address from the viewer rather than configuring it separately.
 - **Behaviour**: thin over Firely's serializer + `HttpClient` (POSTs a bare `QuestionnaireResponse`, the shape the SDC server expects). A validation failure comes back as `OperationOutcome` issues; transport/server errors (non-2xx) throw `SdcOperationException`. Responses are parsed in Firely's *recoverable* mode, so a `200` carrying an element/code a newer server emits that this Firely version doesn't recognize is still returned (partial POCO) rather than failing
-- **SDC server version check** — the first operation on a client preflights the server's version against `SdcCompatibility.MinimumSdcVersion` and throws `SdcServerTooOldException` before the operation is sent if the server is older. The check runs once per client instance, travels the injected `HttpClient` (so custom TLS/proxy/auth apply to it too), and its verdict stays readable on `client.ServerVersionCheck`. A server whose version can't be read fails **open**. See [SDC server version compatibility](#sdc-server-version-compatibility)
+- **SDC server version check** — the first operation on a client establishes the server's version and reports it against `SdcCompatibility.MinimumSdcVersion`. Nothing is refused; the verdict stays readable on `client.ServerVersionCheck`. The check runs once per client instance and travels the injected `HttpClient`, so custom TLS/proxy/auth apply to it too. See [SDC server version compatibility](#sdc-server-version-compatibility)
 - **Telemetry-free** — the client takes no telemetry seam; it's a pure HTTP/FHIR client. If you want a span around a call, wrap it at the call site with a session you own — `Using session.StartTransaction("sdc.extract", "http.client") : Await client.ExtractAsync(qr) : End Using` — where `session` is any `ITelemetrySession` you create (e.g. from a sink via `BeginSession`). Keeping telemetry out of the client avoids coupling its lifetime to a session's
 - **R5-only**: these SDC operations exist only on `/fhir/r5`, so there is no R4/R5 split — a future R4 server would be one new `.Fhir.R4` binding. `$populate` is tracked separately (#29)
 
@@ -589,7 +589,7 @@ WinForms demos.
 - **Framework**: MSTest + Moq
 - **Coverage**:
   - `SmartWebMessaging.Tests` — protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), event firing, JSON probe, async-task extensions
-  - `FormFiller.WebView2.Tests` — viewer lifecycle (state machine transitions, dispose semantics), telemetry sink contracts (`NullTelemetrySink` no-ops, span ordering, session tagging), embedded `WebAssets/` resource integrity, and the SDC server version gate (too old → nothing reaches the page; unknown → the session proceeds)
+  - `FormFiller.WebView2.Tests` — viewer lifecycle (state machine transitions, dispose semantics), telemetry sink contracts (`NullTelemetrySink` no-ops, span ordering, session tagging), embedded `WebAssets/` resource integrity, and the SDC server version check (too old → reported and the form still opens; unknown → reported as a check diagnostic)
   - `FormSdk.Client.Tests` — SDC `$validate`/`$extract` over a fake `HttpMessageHandler`: typed result parsing, validation-issues-without-throw, non-2xx → `SdcOperationException`, and a guard that the request body is a bare `QuestionnaireResponse`. Also covers `Tiro.Health.FormSdk.Abstractions`: the version grammar and prerelease rule, the probe (base-relative resolution through a gateway prefix, the software-name attribution guard, the response-size cap, the deadline, BOM handling, fail-open on everything unreadable, caller cancellation propagating), and the client's startup gate
 
 ## Architecture notes
@@ -646,8 +646,8 @@ The value is also in each release's notes. It is checked at first use on **both*
 
 | Surface | When | On failure |
 |---|---|---|
-| `TiroFormViewer` (`SdcEndpointAddress`) | first `SetContextAsync`, after the handshake and **before** anything is sent to the page | `SdcServerTooOldException`; no form is configured or displayed |
-| `SdcClient` (`baseAddress`) | first `$validate` / `$extract` | `SdcServerTooOldException`; the operation is never sent |
+| `TiroFormViewer` (`SdcEndpointAddress`) | first `SetContextAsync`, after the handshake | reported; the form still opens |
+| `SdcClient` (`baseAddress`) | first `$validate` / `$extract` | reported; the operation still runs |
 
 Both run the check once and cache the verdict — the viewer per configured endpoint (a `SetContextAsync` retried after a failure reuses it, unless you changed `SdcEndpointAddress` in between, which re-probes), the client per instance and shared across concurrent first operations. The viewer starts it while the browser is initializing, so against a server that answers it adds no measurable latency to a form launch; against one that doesn't answer, the launch waits up to the probe's 3 s deadline before failing open. The client's is strictly serial in front of the first operation, so that one operation pays a single extra round trip.
 
@@ -657,10 +657,14 @@ Both run the check once and cache the verdict — the viewer per configured endp
 
 > There is deliberately **no fallback** to an origin-relative `/openapi.json`, though the same version string is there. That URL follows the *host* rather than the server: behind a gateway routing `/tiro-sdc/fhir/r5` to the SDC server and `/` to something else, it reads a neighbouring application's version — and FastAPI's default `info.version` is `0.1.0`, which parses, sorts below any real floor, and would refuse every form launch against a perfectly healthy server. Losing it costs nothing: a server too old to answer `metadata` is also older than any floor this harness declares, so it reads as unknown either way.
 
-**Failure semantics.** Only one case fails closed:
+**Nothing is refused.** Every outcome lets the session or the operation proceed; the check reports and gets out of the way. Two outcomes are worth reading:
 
-- Server answers with a version **below** the floor → **fail closed**, with both versions named in the message.
-- Server unreachable, timed out, answered 4xx/5xx, answered with a `CapabilityStatement` that isn't the SDC server's, or reported something outside the version grammar (a `dev` build, a PR checkpoint id, `development`) → **fail open**. A network blip, a server predating the `metadata` route, or a developer instance must not brick a working deployment.
+- Server answers with a version **below** the floor → an **actionable** warning naming both versions: upgrade the SDC server.
+- Server unreachable, timed out, answered 4xx/5xx, answered with a `CapabilityStatement` that isn't the SDC server's, or reported something outside the version grammar (a `dev` build, a PR checkpoint id, `development`) → a **diagnostic** warning about the check itself, not about your server.
+
+They read differently on purpose: one tells you to do something, the other tells you the check couldn't tell.
+
+**Why it doesn't refuse, given that refusing is the point.** Because refusing would protect nobody yet, and could only misfire. The floor and the code that enforces it live in the same assembly, so they always reach an integrator together — a deployment that hasn't adopted the release carrying a raised floor hasn't adopted its enforcement either, so fielding the refusal early buys no coverage. Meanwhile `MinimumSdcVersion` is currently the *first* server version that can answer the probe at all, so no reachable server is below it: a refusal today could only ever fire on a mistake, in a binary that can't be patched. The release that first raises the floor for a real reason is the release that adds the refusal, alongside the reason. Everything it needs — the probe, the grammar, the attribution guard, the plumbing — is already here and under test; both call sites carry a comment with the exact lines to add.
 
 > **What this can refuse today, honestly.** `v0.9.39` is the first server release that answers `metadata` at all, so every server able to answer the probe is at or above the floor *by construction* — and one too old to answer reads as "unknown" and is let through. The gate therefore refuses nothing yet. It arms on the first raise past `v0.9.39`, once releases exist that answer the probe and sit below the floor. Shipping it now is what makes that later raise a one-line change instead of a new release requirement for every integrator.
 
@@ -675,18 +679,7 @@ Both run the check once and cache the verdict — the viewer per configured endp
 
 **Raising the floor.** When the harness starts depending on newer server behaviour, raise `MinimumSdcVersion` to the release *after* the one carrying that behaviour — not to it. The comparison ignores prerelease suffixes, so `vX.Y.Z-rc.0` satisfies a floor of `vX.Y.Z`, and an rc cut before the feature merged would pass. A floor one patch higher can't be satisfied by a prerelease of the release you actually need. A raise only reaches an integrator when they deliberately upgrade the harness, so the release notes are where it gets announced.
 
-**When it fires.** Upgrade the SDC server to `MinimumSdcVersion` or newer, or run the harness release whose minimum your server satisfies.
-
-**The break-glass flag.** `SdcCompatibility.RefuseUnsupportedServers = false` disables the refusal on both surfaces — the version reads as unknown and nothing is blocked.
-
-```vb
-' read from app.config / an environment variable / a registry key — never hardcoded
-SdcCompatibility.RefuseUnsupportedServers = Not hostConfig.DisableSdcVersionCheck
-```
-
-It exists for one specific tail risk, and you should know what it is. The refusal is triggered by `software.version`, a string written by the *server* team, evaluated inside a harness binary that cannot be patched once an EHR release ships. The check requires that field to keep meaning "the SDC server's application version". If it ever came to mean something else — a container image tag, a FHIR version, a component version — a value that still matches `vX.Y.Z` could compare below the floor, and **every deployed harness would refuse every form launch at once**, with no remedy short of a new EHR release per customer. Every other failure in this check degrades to "unknown" and fails open; this is the only one that fails closed on a mistake nobody here can see coming. Hence a flag your operations team can set, rather than a redeployment.
-
-Setting it forfeits the guarantee: an unsupported server then fails later and less clearly, which is the situation this check exists to end. Treat it as an incident tool and follow it with an upgrade.
+**When it warns.** Upgrade the SDC server to `MinimumSdcVersion` or newer, or run the harness release whose minimum your server satisfies.
 
 **Checking it at startup instead.** The check above happens at first use, which for the viewer means a clinician opening a form. A host that would rather learn about a bad pairing at login — where the error reaches IT, not a clinician mid-consult — can run the same probe itself and surface the result:
 
@@ -704,7 +697,7 @@ The check runs once per `SdcClient` instance, so a host that constructs one per 
 Two caveats worth knowing:
 
 - **The viewer's probe sends no caller credential.** Today that costs nothing: the SDC server holds its own service-account credentials and requires none from the caller (see [#39](https://github.com/Tiro-health/net-integration-harness/issues/39)) — a hospital-local instance is an internal service and `sdc.tiro.health` is open. If a future server requires one, the probe answers 401/403, which reads as an unknown version and fails open rather than breaking anything; the seam to fix it is `protected virtual CheckSdcServerVersionAsync` on the viewer. `SdcClient` has no equivalent gap: its probe travels the `HttpClient` you inject into the client itself.
-- **The check depends on three things the SDC server must keep doing**, none of which this repo controls: answering `{base}/metadata` *locally* rather than proxying it to the data endpoint; keeping `software.version` meaning the server's own application version; and keeping `software.name` recognisable. The first and third degrade to fail-open. The second is the one that fails *closed* — see the break-glass flag above. What holds all three is the nightly end-to-end suite, which asserts a `Satisfied` verdict against a live staging server, so a change to any of them turns that run red within a day.
+- **The check depends on three things the SDC server must keep doing**, none of which this repo controls: answering `{base}/metadata` *locally* rather than proxying it to the data endpoint; keeping `software.version` meaning the server's own application version; and keeping `software.name` recognisable. All three degrade to a warning rather than a refusal, which is a large part of why nothing is refused yet: a mis-read version cannot take a site down. What holds all three is the nightly end-to-end suite, which asserts a `Satisfied` verdict against a live staging server, so a change to any of them turns that run red within a day.
 
 ## Troubleshooting
 

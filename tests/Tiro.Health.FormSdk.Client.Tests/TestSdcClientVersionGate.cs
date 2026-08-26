@@ -15,10 +15,9 @@ using Task = System.Threading.Tasks.Task;
 namespace Tiro.Health.FormSdk.Client.Tests
 {
     /// <summary>
-    /// The startup version gate on the client (GH-62). A wrong harness↔server pairing used to
-    /// surface as a generic <see cref="SdcOperationException"/> on the first <c>$extract</c> —
-    /// or, worse, as a behavioural difference nobody noticed — in front of a clinician. It is
-    /// now a refusal before the operation is sent.
+    /// The startup version check on the client (GH-62): the server's version is established
+    /// once, before the first operation, and reported. Nothing is refused yet — see the note at
+    /// the end of <c>EnsureServerVersionSupportedAsync</c> for what to add and when.
     /// </summary>
     [TestClass]
     public sealed class TestSdcClientVersionGate
@@ -43,26 +42,38 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
-        public async Task TooOldServer_RefusesTheOperation_BeforeItIsSent()
+        public async Task TooOldServer_IsReportedAndTheOperationStillRuns()
         {
+            // Reported, not refused. Enforcement and the floor live in the same assembly, so a
+            // throw fielded now would protect nobody — and at the current floor (the first
+            // server version that can answer the probe at all) it could only ever fire on a
+            // mistake. The verdict is what a host acts on; see the note at the call site.
             var older = OneBelowTheMinimum();
             var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, BundleJson)
             {
                 MetadataBody = FakeHttpMessageHandler.CapabilityStatementJson(older),
             };
-            using var client = new SdcClient(BaseAddress, new HttpClient(handler));
+            var listener = new CapturingTraceListener();
+            Trace.Listeners.Add(listener);
+            try
+            {
+                using var client = new SdcClient(BaseAddress, new HttpClient(handler));
 
-            var ex = await Assert.ThrowsExceptionAsync<SdcServerTooOldException>(
-                () => client.ExtractAsync(SampleResponse()));
+                var bundle = await client.ExtractAsync(SampleResponse());
 
-            Assert.AreEqual(older, ex.ReportedVersion);
-            Assert.AreEqual(SdcCompatibility.MinimumSdcVersion, ex.MinimumVersion);
-            // The verdict is readable by whoever catches the refusal, not only on the fail-open
-            // path — a host reporting "why did this launch fail" needs it here most of all.
-            Assert.AreEqual(SdcVersionCheckOutcome.TooOld, client.ServerVersionCheck!.Outcome);
-            // Fail closed means the operation never leaves: nothing was POSTed.
-            Assert.IsNull(handler.LastRequest, "A refused pairing must not send the operation anyway.");
-            Assert.IsFalse(handler.RequestedUris.Any(u => u.AbsolutePath.Contains("$extract")));
+                Assert.IsNotNull(bundle, "A too-old server is a warning, not a blocked operation.");
+                Assert.AreEqual(SdcVersionCheckOutcome.TooOld, client.ServerVersionCheck!.Outcome);
+                Assert.AreEqual(older, client.ServerVersionCheck!.ReportedVersion);
+            }
+            finally
+            {
+                Trace.Listeners.Remove(listener);
+            }
+
+            // Actionable and distinguishable from the "couldn't tell" warning: this one names
+            // both versions and tells the reader to upgrade the server.
+            Assert.IsTrue(listener.Messages.Exists(m => m.Contains("is older than the minimum")),
+                "A too-old server must be reported. Captured: " + string.Join(" | ", listener.Messages));
         }
 
         [TestMethod]
@@ -130,8 +141,9 @@ namespace Tiro.Health.FormSdk.Client.Tests
                     () => client.ExtractAsync(SampleResponse(), cts.Token));
             }
 
-            await Assert.ThrowsExceptionAsync<SdcServerTooOldException>(
-                () => client.ExtractAsync(SampleResponse()));
+            await client.ExtractAsync(SampleResponse());
+            Assert.AreEqual(SdcVersionCheckOutcome.TooOld, client.ServerVersionCheck!.Outcome,
+                "A cancelled first operation must not leave the shared verdict unset.");
         }
 
         [TestMethod]

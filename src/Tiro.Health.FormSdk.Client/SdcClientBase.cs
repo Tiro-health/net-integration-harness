@@ -121,16 +121,14 @@ namespace Tiro.Health.FormSdk.Client
 
         /// <summary>
         /// Runs the SDC server version check once per client instance, before the first
-        /// operation reaches the server (GH-62).
+        /// operation reaches the server (GH-62). Reports; never refuses — see the note at the
+        /// end of the method body.
         /// </summary>
         /// <remarks>
-        /// Fails closed on a server that answered with a too-old version — the pairing is
-        /// wrong, and letting it through means the mismatch surfaces later as a generic
-        /// <see cref="SdcOperationException"/> or, worse, as a silent behavioural difference.
-        /// Fails open on anything else, loudly: an unreachable server, a timeout, a server
-        /// predating the version routes, or a <c>dev</c> build must not stop a working
-        /// deployment. "Loudly" is <see cref="Trace"/> here rather than a logger, because
-        /// this client is deliberately telemetry-free (GH-33 tracks an optional
+        /// Every outcome lets the operation through. A too-old server is reported as an
+        /// actionable warning ("upgrade the SDC server"), an unreadable version as a diagnostic
+        /// about the check itself. "Reported" is <see cref="Trace"/> here rather than a logger,
+        /// because this client is deliberately telemetry-free (GH-33 tracks an optional
         /// <c>ILogger</c> seam); <see cref="ServerVersionCheck"/> is the programmatic view.
         /// <para>
         /// The check goes through the same <see cref="HttpClient"/> as the operations, so a
@@ -172,12 +170,19 @@ namespace Tiro.Health.FormSdk.Client
                 // Trace and nothing else, deliberately: this client is telemetry-free (GH-33
                 // tracks an optional ILogger seam) and ServerVersionCheck is the programmatic
                 // view. The viewer, which has a telemetry sink, also captures a message.
-                if (result.Outcome == SdcVersionCheckOutcome.Unknown)
+                if (result.Outcome != SdcVersionCheckOutcome.Satisfied)
                     Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result);
             }
 
-            if (result.Outcome == SdcVersionCheckOutcome.TooOld)
-                throw new SdcServerTooOldException(result);
+            // WHEN THE FLOOR IS FIRST RAISED FOR A REAL REASON, refuse here:
+            //
+            //     if (result.Outcome == SdcVersionCheckOutcome.TooOld)
+            //         throw new SdcServerTooOldException(result);
+            //
+            // See the matching note in TiroFormViewer.ApplySdcVersionCheckAsync for why not yet:
+            // enforcement and the floor ship in the same assembly, so fielding the throw early
+            // protects nobody, while the current floor is the first version that can answer the
+            // probe at all — so the throw could only ever fire on a mistake.
         }
 
         /// <summary>

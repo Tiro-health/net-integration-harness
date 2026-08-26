@@ -19,11 +19,12 @@ namespace Tiro.Health.FormSdk.Abstractions
     public static class SdcCompatibility
     {
         /// <summary>
-        /// The oldest SDC server version this harness release supports. A server that reports
-        /// an older version is refused at startup (<see cref="SdcServerTooOldException"/>);
-        /// a server whose version can't be read or parsed is allowed through. Raise this in
-        /// lockstep with the release notes whenever the harness starts to depend on newer
-        /// server behaviour.
+        /// The oldest SDC server version this harness release supports. A server below it is
+        /// reported as an actionable warning rather than refused — see the notes at the two call
+        /// sites (<c>TiroFormViewer.ApplySdcVersionCheckAsync</c> and
+        /// <c>SdcClientBase.EnsureServerVersionSupportedAsync</c>) for why, and for the exact
+        /// lines to add when raising this floor for a real reason. Raise it in lockstep with the
+        /// release notes whenever the harness starts to depend on newer server behaviour.
         /// <para>
         /// <c>v0.9.39</c> is the release that first answers <c>{base}/metadata</c>, which is how
         /// the version is read at all — so it is the honest statement of the requirement: an SDC
@@ -43,35 +44,6 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// prevent.
         /// </remarks>
         public static readonly string MinimumSdcVersion = "v0.9.39";
-
-        /// <summary>
-        /// Whether a server that reports a version below <see cref="MinimumSdcVersion"/> is
-        /// refused (<c>true</c>, the default) or allowed through. Setting this to <c>false</c>
-        /// disables the check on <em>both</em> surfaces: the version is reported as
-        /// <see cref="SdcVersionCheckOutcome.Unknown"/> and nothing is refused.
-        /// </summary>
-        /// <remarks>
-        /// This is a break-glass switch, and it exists because the fail-closed arm is triggered
-        /// by a string a <em>different</em> team writes, inside a binary that cannot be patched.
-        /// The check reads <c>CapabilityStatement.software.version</c> and requires it to keep
-        /// meaning "the SDC server's application version". If it ever came to mean something
-        /// else — a container image tag, a FHIR version, a component version — a value that still
-        /// matches the grammar could compare below the floor, and every already-shipped harness
-        /// would refuse every form launch at once, with no remedy short of a new EHR release per
-        /// customer. That tail risk is small but unbounded and unrecoverable, so there is a flag.
-        /// <para>
-        /// Read it from host configuration (app.config, an environment variable, a registry key)
-        /// and set it once at startup — never hardcode <c>false</c>. Setting it forfeits the
-        /// guarantee the check exists to provide: an unsupported server will then fail later and
-        /// less clearly, which is the situation GH-62 was written to end. Treat it as an incident
-        /// tool, and follow it with a harness or server upgrade.
-        /// </para>
-        /// <para>
-        /// Assignment is not thread-safe; the contract is "set once during startup, before the
-        /// first viewer or client is used".
-        /// </para>
-        /// </remarks>
-        public static bool RefuseUnsupportedServers { get; set; } = true;
 
         /// <summary>
         /// The version string the SDC server reports. It is <b>not</b> plain semver: it comes
