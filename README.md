@@ -689,7 +689,16 @@ Recommended for production hosts. It doesn't replace the per-use check, which st
 
 Two caveats worth knowing:
 
-- **The viewer's probe is unauthenticated.** It has no `HttpClient` of its own (the page makes the real SDC requests, inside WebView2) and there's no host→page auth seam yet, so a server requiring a credential on `metadata` answers 401/403 — which is an unknown version, and fails open. `SdcClient` has no such gap: its probe travels the `HttpClient` you inject. A host doing the startup preflight above can pass its own authenticated client.
+- **The viewer's probe sends no caller credential by default.** Today that costs nothing: the SDC server holds its own service-account credentials and requires none from the caller (see [#39](https://github.com/Tiro-health/net-integration-harness/issues/39)) — a hospital-local instance is an internal service and `sdc.tiro.health` is open. If a future server requires one, the probe would answer 401/403, which reads as an unknown version and fails open rather than breaking anything. Register `TiroFormViewerDefaults.SdcProbeHttpClientFactory` at startup to give the probe a client that carries it:
+
+  ```vb
+  ' e.g. the static API key scheme in #39 — the key comes from host config, never hardcoded
+  Dim probeClient As New HttpClient()
+  probeClient.DefaultRequestHeaders.Add("X-Api-Key", keyFromHostConfig)
+  TiroFormViewerDefaults.SdcProbeHttpClientFactory = Function() probeClient
+  ```
+
+  Return a shared, long-lived client — the factory is invoked per check, and a client per call burns sockets. `SdcClient` has no equivalent gap: its probe travels the `HttpClient` you inject into the client itself.
 - **A version-format change on the server would silently disarm the check** in every already-shipped harness, degrading it to fail-open. Nothing in this repo can detect that; it's held by a CI tag check on the server side.
 
 ## Troubleshooting

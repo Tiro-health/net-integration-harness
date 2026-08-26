@@ -244,6 +244,29 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
+        public async Task ASupportedServer_CarriesNoRecommendationAdvisory()
+        {
+            var server = new ProbeServer { Body = Capability(SdcCompatibility.RecommendedSdcVersion) };
+
+            var result = await Probe(server);
+
+            Assert.IsTrue(result.MeetsRecommendedVersion);
+            Assert.IsNull(result.RecommendationMessage, "Nothing to advise about at the recommended version.");
+        }
+
+        [TestMethod]
+        public async Task AnUnreadableVersion_CarriesNoRecommendationAdvisory()
+        {
+            // Otherwise a fail-open would produce two warnings about the same non-answer.
+            var server = new ProbeServer { Status = HttpStatusCode.BadRequest };
+
+            var result = await Probe(server);
+
+            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
+            Assert.IsNull(result.RecommendationMessage);
+        }
+
+        [TestMethod]
         public async Task ADevBuild_IsUnknown_EvenThoughTheServerAnswered()
         {
             var server = new ProbeServer { Body = Capability("dev") };

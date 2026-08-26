@@ -45,6 +45,30 @@ namespace Tiro.Health.FormSdk.Abstractions
         public static readonly string MinimumSdcVersion = "v0.9.39";
 
         /// <summary>
+        /// The SDC server version this harness release would rather you were on. A server at or
+        /// above <see cref="MinimumSdcVersion"/> but below this one is <b>allowed through</b> —
+        /// the session proceeds — and reported as an advisory
+        /// (<see cref="SdcVersionCheckResult.MeetsRecommendedVersion"/> is false, with a warning
+        /// in the host's logs).
+        /// </summary>
+        /// <remarks>
+        /// This is the soft half of a two-step raise, and the reason it ships before it is
+        /// needed: the harness goes inside EHR binaries that are frozen once released, so a
+        /// release that only knows how to <em>refuse</em> can never warn. The procedure is
+        /// <list type="bullet">
+        /// <item>release N: raise <c>RecommendedSdcVersion</c> to the version you will require;
+        /// integrators see warnings and have a window to upgrade their server;</item>
+        /// <item>release N+1: promote it to <see cref="MinimumSdcVersion"/>, which now refuses.</item>
+        /// </list>
+        /// Without that window, the first raise past the initial floor would be the first time
+        /// this mechanism ever did anything — and it would land as a refused launch, on binaries
+        /// already in the field, with no prior signal to anyone. Equal to
+        /// <see cref="MinimumSdcVersion"/> while there is nothing to warn about; never below it
+        /// (unit-tested).
+        /// </remarks>
+        public static readonly string RecommendedSdcVersion = "v0.9.39";
+
+        /// <summary>
         /// The version string the SDC server reports. It is <b>not</b> plain semver: it comes
         /// from <c>APP_VERSION</c>, which the deploy pipelines set to the git tag, so it is
         /// <c>v</c>-prefixed and routinely carries a prerelease suffix (<c>v0.9.38-rc.0</c>).
@@ -108,18 +132,35 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// that almost certainly does have the feature.
         /// </remarks>
         public static SdcVersionCheckOutcome Evaluate(string reportedVersion)
+            => AtLeast(reportedVersion, MinimumSdcVersion) ?? SdcVersionCheckOutcome.Unknown;
+
+        /// <summary>
+        /// Whether a reported version is at or above <see cref="RecommendedSdcVersion"/>. An
+        /// unreadable version counts as meeting it: an advisory is only worth raising about a
+        /// version we could actually read, and "unknown" is already reported on its own terms.
+        /// </summary>
+        public static bool MeetsRecommended(string reportedVersion)
+            => AtLeast(reportedVersion, RecommendedSdcVersion) != SdcVersionCheckOutcome.TooOld;
+
+        /// <summary>
+        /// Compares componentwise: <see cref="SdcVersionCheckOutcome.Satisfied"/> at or above
+        /// <paramref name="floor"/>, <see cref="SdcVersionCheckOutcome.TooOld"/> below it, and
+        /// <c>null</c> when either side is outside the grammar.
+        /// </summary>
+        private static SdcVersionCheckOutcome? AtLeast(string reportedVersion, string floor)
         {
             if (!TryParseVersion(reportedVersion, out var major, out var minor, out var patch))
-                return SdcVersionCheckOutcome.Unknown;
+                return null;
 
-            // A typo in the constant above would otherwise brick every deployment. Unit-tested
-            // to parse, but fail open rather than closed if that test ever stops running.
-            if (!TryParseVersion(MinimumSdcVersion, out var minMajor, out var minMinor, out var minPatch))
-                return SdcVersionCheckOutcome.Unknown;
+            // A typo in a floor constant would otherwise brick every deployment. Unit-tested to
+            // parse, but treat it as unreadable rather than failing closed if that test ever
+            // stops running.
+            if (!TryParseVersion(floor, out var floorMajor, out var floorMinor, out var floorPatch))
+                return null;
 
-            if (major != minMajor) return major > minMajor ? SdcVersionCheckOutcome.Satisfied : SdcVersionCheckOutcome.TooOld;
-            if (minor != minMinor) return minor > minMinor ? SdcVersionCheckOutcome.Satisfied : SdcVersionCheckOutcome.TooOld;
-            return patch >= minPatch ? SdcVersionCheckOutcome.Satisfied : SdcVersionCheckOutcome.TooOld;
+            if (major != floorMajor) return major > floorMajor ? SdcVersionCheckOutcome.Satisfied : SdcVersionCheckOutcome.TooOld;
+            if (minor != floorMinor) return minor > floorMinor ? SdcVersionCheckOutcome.Satisfied : SdcVersionCheckOutcome.TooOld;
+            return patch >= floorPatch ? SdcVersionCheckOutcome.Satisfied : SdcVersionCheckOutcome.TooOld;
         }
     }
 }

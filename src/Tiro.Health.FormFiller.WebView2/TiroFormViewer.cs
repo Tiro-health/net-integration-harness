@@ -512,16 +512,21 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <see cref="SdcServerVersionProbe.CheckAsync"/>.
         /// </summary>
         /// <remarks>
-        /// The probe is unauthenticated: the viewer has no <see cref="System.Net.Http.HttpClient"/>
-        /// of its own (the page makes the real SDC requests, inside WebView2), and the harness
-        /// has no host→page auth seam yet (GH-39). A server that requires a credential on
-        /// <c>metadata</c> answers 401/403, which is an "unknown" version and therefore fails
-        /// open. A host that needs an authenticated check can call
-        /// <see cref="SdcServerVersionProbe.CheckAsync"/> itself at startup with its own client.
+        /// The probe sends no caller credential by default, which costs nothing today: the SDC
+        /// server holds its own service-account credentials and requires none from the caller
+        /// (GH-39). Should that change, a 401 reads as an unknown version and fails open — the
+        /// check is disarmed, not the launch broken. Register
+        /// <see cref="TiroFormViewerDefaults.SdcProbeHttpClientFactory"/> at startup to give the
+        /// probe a client that carries the credential; the viewer otherwise has no
+        /// <see cref="System.Net.Http.HttpClient"/> of its own, since the page makes the real SDC
+        /// requests inside WebView2.
         /// </remarks>
         protected virtual Task<SdcVersionCheckResult> CheckSdcServerVersionAsync(
             Uri sdcBaseAddress, CancellationToken cancellationToken)
-            => SdcServerVersionProbe.CheckAsync(sdcBaseAddress, httpClient: null, cancellationToken: cancellationToken);
+            => SdcServerVersionProbe.CheckAsync(
+                sdcBaseAddress,
+                httpClient: TiroFormViewerDefaults.SdcProbeHttpClientFactory?.Invoke(),
+                cancellationToken: cancellationToken);
 
         // Kicks off the version check. A SetContextAsync retried against the same address reuses
         // the first probe; one retried against a DIFFERENT address probes the new one.
@@ -617,6 +622,13 @@ namespace Tiro.Health.FormFiller.WebView2
             var alreadyReported = ReferenceEquals(SdcServerVersionCheck, result);
             SdcServerVersionCheck = result;
             if (!alreadyReported) _session?.AddBreadcrumb("sdc.version", result.ToString());
+
+            // Advisory: at or above the floor, below what this release recommends. The session
+            // proceeds — the point of the soft floor is that an integrator gets a release that
+            // warns before the release that refuses.
+            if (!alreadyReported && result.RecommendationMessage != null)
+                System.Diagnostics.Trace.TraceWarning(
+                    "Tiro.Health.FormFiller.WebView2: " + result.RecommendationMessage);
 
             if (result.Outcome == SdcVersionCheckOutcome.Unknown)
             {

@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -38,6 +42,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         [TestCleanup]
         public void Cleanup()
         {
+            TiroFormViewerDefaults.SdcProbeHttpClientFactory = null;
             try { _viewer.Dispose(); } catch { /* not under test */ }
         }
 
@@ -166,6 +171,49 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
             Assert.AreEqual(SdcVersionCheckOutcome.Unknown, _viewer.SdcServerVersionCheck!.Outcome);
             StringAssert.Contains(_viewer.SdcServerVersionCheck!.Detail, "probe is broken");
+        }
+
+        [TestMethod]
+        public async Task TheProbeUsesTheHostRegisteredHttpClient()
+        {
+            // The viewer has no HttpClient of its own — the page makes the real SDC requests,
+            // inside WebView2 — so without this seam a host has no way to give the probe a
+            // credential the server demands (GH-39's static API key, when that lands). A probe
+            // that cannot authenticate reads as "version unknown" and disarms the check.
+            var handler = new RecordingHandler(
+                $@"{{""resourceType"":""CapabilityStatement"",""software"":{{""name"":""Tiro.health SDC Server"",""version"":""{SdcCompatibility.MinimumSdcVersion}""}}}}");
+            var client = new HttpClient(handler);
+            TiroFormViewerDefaults.SdcProbeHttpClientFactory = () => client;
+
+            await DelayUntilBrowserInitialized();
+            _viewer.SdcEndpointAddress = SdcEndpoint;
+            _viewer.UseRealSdcVersionCheck = true;
+
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+            await setContext.Within5s();
+
+            Assert.AreEqual(1, handler.Requests.Count,
+                "The registered client must be the one the probe travels, or a host cannot authenticate it.");
+            Assert.AreEqual(SdcEndpoint.TrimEnd('/') + "/metadata", handler.Requests[0].ToString());
+            Assert.AreEqual(SdcVersionCheckOutcome.Satisfied, _viewer.SdcServerVersionCheck!.Outcome);
+        }
+
+        private sealed class RecordingHandler : HttpMessageHandler
+        {
+            private readonly string _body;
+            public List<Uri> Requests { get; } = new List<Uri>();
+
+            public RecordingHandler(string body) => _body = body;
+
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                Requests.Add(request.RequestUri);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(_body, Encoding.UTF8, "application/fhir+json"),
+                });
+            }
         }
 
         [TestMethod]

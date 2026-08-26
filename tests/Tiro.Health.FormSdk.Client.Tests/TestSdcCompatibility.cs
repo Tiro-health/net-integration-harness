@@ -36,6 +36,56 @@ namespace Tiro.Health.FormSdk.Client.Tests
                 "which the componentwise comparison cannot represent. Use the release version.");
         }
 
+        [TestMethod]
+        public void RecommendedSdcVersion_IsUsable_AndNeverBelowTheMinimum()
+        {
+            // The soft floor is the warning that precedes the refusal, so it has to sit at or
+            // above the hard one — a recommendation below the minimum could never fire, and
+            // would quietly mean the two-step raise had been half-applied.
+            Assert.IsTrue(
+                SdcCompatibility.TryParseVersion(SdcCompatibility.RecommendedSdcVersion, out _, out _, out _),
+                $"RecommendedSdcVersion '{SdcCompatibility.RecommendedSdcVersion}' does not match the version grammar.");
+            Assert.IsFalse(
+                SdcCompatibility.RecommendedSdcVersion.Contains("-") || SdcCompatibility.RecommendedSdcVersion.Contains("+"),
+                "A prerelease cannot be represented by the componentwise comparison; use the release version.");
+            Assert.AreEqual(SdcVersionCheckOutcome.Satisfied,
+                SdcCompatibility.Evaluate(SdcCompatibility.RecommendedSdcVersion),
+                $"RecommendedSdcVersion '{SdcCompatibility.RecommendedSdcVersion}' is below " +
+                $"MinimumSdcVersion '{SdcCompatibility.MinimumSdcVersion}'.");
+        }
+
+        [TestMethod]
+        public void AVersionBelowTheRecommendation_IsAdvisedAboutButNotRefused()
+        {
+            // The whole point of the soft floor: it warns, it never blocks. A release that only
+            // knows how to refuse cannot warn, and this harness ships inside binaries that are
+            // frozen once released — so the mechanism has to exist before it is needed.
+            SdcCompatibility.TryParseVersion(SdcCompatibility.MinimumSdcVersion, out var major, out var minor, out var patch);
+            var atTheFloor = $"v{major}.{minor}.{patch}";
+
+            Assert.AreEqual(SdcVersionCheckOutcome.Satisfied, SdcCompatibility.Evaluate(atTheFloor),
+                "A server at the floor is never refused, whatever the recommendation says.");
+
+            // Simulated raise: whatever the constants are today, a version below the
+            // recommendation must read as satisfied-but-advised.
+            SdcCompatibility.TryParseVersion(SdcCompatibility.RecommendedSdcVersion, out var rMajor, out var rMinor, out var rPatch);
+            if (rMajor != major || rMinor != minor || rPatch != patch)
+                Assert.IsFalse(SdcCompatibility.MeetsRecommended(atTheFloor),
+                    "With the recommendation raised above the floor, a server at the floor must be advised about.");
+            else
+                Assert.IsTrue(SdcCompatibility.MeetsRecommended(atTheFloor),
+                    "With the two equal there is nothing to advise about.");
+        }
+
+        [TestMethod]
+        public void AnUnreadableVersion_IsNotAdvisedAbout()
+        {
+            // "Unknown" is already reported on its own terms; adding a recommendation warning on
+            // top would be a second line about a version nobody could read.
+            Assert.IsTrue(SdcCompatibility.MeetsRecommended("dev"));
+            Assert.IsTrue(SdcCompatibility.MeetsRecommended(null));
+        }
+
         [DataTestMethod]
         // v-prefixed and bare, both of which the pipelines can produce.
         [DataRow("v0.9.38", 0, 9, 38)]

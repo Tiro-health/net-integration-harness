@@ -47,12 +47,14 @@ namespace Tiro.Health.FormSdk.Abstractions
         private const int MaxDetailLength = 512;
 
         private SdcVersionCheckResult(
-            SdcVersionCheckOutcome outcome, string reportedVersion, string source, string detail)
+            SdcVersionCheckOutcome outcome, string reportedVersion, string source, string detail,
+            bool meetsRecommended)
         {
             Outcome = outcome;
             ReportedVersion = reportedVersion;
             Source = source;
             Detail = detail;
+            MeetsRecommendedVersion = meetsRecommended;
         }
 
         /// <summary>
@@ -72,7 +74,9 @@ namespace Tiro.Health.FormSdk.Abstractions
                 ? $"The server reported '{clamped}', which is not a release version " +
                   "(dev builds report 'dev', PR builds a checkpoint id, a server with no version.json 'development')."
                 : string.Empty;
-            return new SdcVersionCheckResult(outcome, clamped, source, Truncate(detail, MaxDetailLength));
+            return new SdcVersionCheckResult(
+                outcome, clamped, source, Truncate(detail, MaxDetailLength),
+                SdcCompatibility.MeetsRecommended(reportedVersion));
         }
 
         /// <summary>
@@ -84,7 +88,8 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// <param name="detail">Why, for the customer's logs.</param>
         public static SdcVersionCheckResult Unavailable(string detail)
             => new SdcVersionCheckResult(
-                SdcVersionCheckOutcome.Unknown, null, null, Truncate(detail ?? string.Empty, MaxDetailLength));
+                SdcVersionCheckOutcome.Unknown, null, null, Truncate(detail ?? string.Empty, MaxDetailLength),
+                meetsRecommended: true);
 
         /// <summary>
         /// Truncates a server-supplied string to a length that is safe to put in a log line,
@@ -129,6 +134,28 @@ namespace Tiro.Health.FormSdk.Abstractions
 
         /// <summary>The floor this was evaluated against.</summary>
         public string MinimumVersion => SdcCompatibility.MinimumSdcVersion;
+
+        /// <summary>The version this harness release would rather the server were on.</summary>
+        public string RecommendedVersion => SdcCompatibility.RecommendedSdcVersion;
+
+        /// <summary>
+        /// <c>false</c> only when the server reported a readable version at or above
+        /// <see cref="MinimumVersion"/> but below <see cref="RecommendedVersion"/> — an advisory,
+        /// not a failure. The session proceeds; the host is warned. <c>true</c> when the version
+        /// could not be read at all, since there is nothing to advise about.
+        /// </summary>
+        public bool MeetsRecommendedVersion { get; }
+
+        /// <summary>
+        /// The advisory line for a <see cref="SdcVersionCheckOutcome.Satisfied"/> result that is
+        /// below <see cref="RecommendedVersion"/>, or <c>null</c> when there is nothing to say.
+        /// </summary>
+        public string RecommendationMessage
+            => Outcome == SdcVersionCheckOutcome.Satisfied && !MeetsRecommendedVersion
+                ? $"SDC server version {ReportedVersion} meets the minimum {MinimumVersion} but is below the " +
+                  $"recommended {RecommendedVersion}. A future harness release is expected to require it; " +
+                  "upgrading the SDC server now avoids a refused session later."
+                : null;
 
         /// <summary>A single line naming the outcome, both versions, and the source.</summary>
         public override string ToString()

@@ -164,13 +164,15 @@ namespace Tiro.Health.FormSdk.Client
             var result = await WaitAsync(probe, cancellationToken).ConfigureAwait(false);
 
             // First-wins, atomically, so concurrent awaiters of the same task cannot both trace.
-            if (Interlocked.CompareExchange(ref _versionCheck, result, null) == null
-                && result.Outcome == SdcVersionCheckOutcome.Unknown)
+            if (Interlocked.CompareExchange(ref _versionCheck, result, null) == null)
             {
-                // Loud, once, on the fail-open path. Trace rather than a logger because this
-                // client is deliberately telemetry-free (GH-33 tracks an optional ILogger seam),
-                // and because the audience is the customer's own logs: they self-host the server.
-                Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result);
+                // Loud, once. Trace rather than a logger because this client is deliberately
+                // telemetry-free (GH-33 tracks an optional ILogger seam), and because the
+                // audience is the customer's own logs: they self-host the server.
+                if (result.Outcome == SdcVersionCheckOutcome.Unknown)
+                    Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result);
+                else if (result.RecommendationMessage != null)
+                    Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result.RecommendationMessage);
             }
 
             if (result.Outcome == SdcVersionCheckOutcome.TooOld)

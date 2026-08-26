@@ -61,11 +61,18 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         /// </summary>
         public Task<SdcVersionCheckResult> SdcVersionCheckTaskToReturn { get; set; }
 
+        /// <summary>
+        /// When true, the real probe runs instead of a canned verdict — the only way to exercise
+        /// the base implementation's plumbing (notably which <c>HttpClient</c> it picks up).
+        /// </summary>
+        public bool UseRealSdcVersionCheck { get; set; }
+
         protected override Task<SdcVersionCheckResult> CheckSdcServerVersionAsync(
             Uri sdcBaseAddress, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _sdcVersionCheckCount);
             LastSdcVersionCheckAddress = sdcBaseAddress;
+            if (UseRealSdcVersionCheck) return base.CheckSdcServerVersionAsync(sdcBaseAddress, cancellationToken);
             return SdcVersionCheckTaskToReturn ?? Task.FromResult(SdcVersionCheckToReturn);
         }
     }
