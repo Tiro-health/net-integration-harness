@@ -133,9 +133,10 @@ namespace Tiro.Health.FormFiller.WebView2
 
         // The one-time SDC server version check (GH-62). Started at the top of
         // SetContextAsync so it runs alongside browser init, navigation and the handshake,
-        // and awaited before anything is sent to the page. Written only from
-        // SetContextAsync, which hosts call on the UI thread; two genuinely concurrent
-        // calls could each start a probe, which costs one extra small GET and nothing else.
+        // and awaited before anything is sent to the page. Published with a CAS rather than a
+        // plain assignment: SetContextAsync is a UI-thread call by convention, but nothing
+        // enforces that (the tests themselves clear the WinForms context), so a CAS makes
+        // "exactly one probe per viewer" a property of the code instead of a comment.
         private Task<SdcVersionCheckResult> _sdcVersionCheckTask;
 
         // Telemetry session — one per viewer lifetime. All transactions started via
@@ -494,8 +495,9 @@ namespace Tiro.Health.FormFiller.WebView2
         /// The probe is unauthenticated: the viewer has no <see cref="System.Net.Http.HttpClient"/>
         /// of its own (the page makes the real SDC requests, inside WebView2), and the harness
         /// has no host→page auth seam yet (GH-39). A server that requires a credential on
-        /// <c>/metadata</c> answers 401/403, which is an "unknown" version and therefore
-        /// fails open.
+        /// <c>metadata</c> answers 401/403, which is an "unknown" version and therefore fails
+        /// open. A host that needs an authenticated check can call
+        /// <see cref="SdcServerVersionProbe.CheckAsync"/> itself at startup with its own client.
         /// </remarks>
         protected virtual Task<SdcVersionCheckResult> CheckSdcServerVersionAsync(
             Uri sdcBaseAddress, CancellationToken cancellationToken)
@@ -517,25 +519,28 @@ namespace Tiro.Health.FormFiller.WebView2
                 return;
             }
 
-            // Bound to the viewer's lifetime, not the caller's token: the result is cached and
+            // Bound to the viewer's lifetime, not the caller's token: the task is cached and
             // reused across retries, so one caller's cancellation must not decide it.
             var started = CheckSdcServerVersionAsync(sdcBase, _lifetimeCts.Token);
 
             // Observe faults for the same reason _initializationTask does: SetContextAsync can
-            // throw before it awaits this (a failed browser init), and a probe cancelled by
-            // Dispose would otherwise reach TaskScheduler.UnobservedTaskException.
+            // throw before it awaits this (a failed browser init), leaving the task unawaited
+            // and its exception unobserved. Cancellation needs no such guard — the TPL stores it
+            // outside the fault holder, so a Canceled task never raises
+            // TaskScheduler.UnobservedTaskException (and OnlyOnFaulted would not run for it).
             started.ContinueWith(
                 t => { _ = t.Exception; },
                 CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
 
-            _sdcVersionCheckTask = started;
+            // Loser of a race discards its own task; the ContinueWith above keeps it observed.
+            Interlocked.CompareExchange(ref _sdcVersionCheckTask, started, null);
         }
 
         // Applies the verdict. Fails closed only when the server answered with a parseable
         // version below the floor; everything else fails open, loudly (GH-62).
-        private async Task ApplySdcVersionCheckAsync(CancellationToken cancellationToken)
+        private async Task ApplySdcVersionCheckAsync(CancellationToken linkedToken, CancellationToken userToken)
         {
             var pending = _sdcVersionCheckTask;
             if (pending == null) return;
@@ -543,18 +548,28 @@ namespace Tiro.Health.FormFiller.WebView2
             SdcVersionCheckResult result;
             try
             {
-                // WaitAsync, so SetContextAsync's own budget (caller token + lifetime + the
-                // 30s deadline) still governs this wait — the probe's internal timeout must
-                // not be able to push a launch past it. Only the wait is cancelled; the
-                // task stays cached for a retry.
-                result = await pending.WaitAsync(cancellationToken);
+                // WaitAsync, so SetContextAsync's own budget still governs this wait — the
+                // probe's internal deadline must not be able to push a launch past it. Only the
+                // wait is cancelled; the task stays cached for a retry.
+                result = await pending.WaitAsync(linkedToken);
+            }
+            catch (OperationCanceledException) when (userToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
+            {
+                // A genuine cancellation — the caller's, or Dispose tearing the viewer down.
+                // SetContextAsync's own OCE filter owns this case; rethrown so the general
+                // catch below can't turn it into a fail-open.
+                throw;
             }
             catch (OperationCanceledException)
             {
-                // The caller cancelled, or Dispose cancelled the lifetime. SetContextAsync's
-                // own catches own that case; rethrown here so the general catch below can't
-                // turn a cancellation into a fail-open.
-                throw;
+                // linkedToken also carries the 30s launch budget, which is NEITHER the caller
+                // nor the lifetime — and SetContextAsync's OCE filter does not match it, so a
+                // bare rethrow here fell through to its generic catch and threw a message-less
+                // OperationCanceledException at the host. That turned "the SDC server is
+                // unreachable" into a refused launch: the exact opposite of the fail-open this
+                // method promises. Budget expiry means the version is unknown, nothing more.
+                result = SdcVersionCheckResult.Unavailable(
+                    "The SDC server version check did not answer within the SetContextAsync budget.");
             }
             catch (Exception ex)
             {
@@ -810,7 +825,7 @@ namespace Tiro.Health.FormFiller.WebView2
                     // handshake failure is the more actionable error), and before the first
                     // outbound message so nothing is configured or rendered against a server
                     // this release does not support.
-                    await ApplySdcVersionCheckAsync(linkedCts.Token);
+                    await ApplySdcVersionCheckAsync(linkedCts.Token, cancellationToken);
 
                     // After handshake, send the protocol's sdc.configure message with the
                     // endpoint addresses and renderer flags so the bridge can apply them to

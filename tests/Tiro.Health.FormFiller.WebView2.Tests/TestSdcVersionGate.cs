@@ -121,6 +121,54 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task AProbeThatEndsCancelled_FailsOpen_RatherThanRefusingTheLaunch()
+        {
+            // What the launch budget expiring looks like from inside ApplySdcVersionCheckAsync:
+            // the wait ends cancelled while neither the caller nor the viewer's lifetime was
+            // cancelled. That case used to rethrow a bare OperationCanceledException, which
+            // SetContextAsync's own OCE filter does not match — so it fell into the generic
+            // catch and threw a message-less cancellation at the host. "The SDC server is
+            // unreachable" became a refused launch: the exact opposite of the documented
+            // fail-open.
+            await DelayUntilBrowserInitialized();
+            _viewer.SdcEndpointAddress = SdcEndpoint;
+            using (var alreadyCancelled = new CancellationTokenSource())
+            {
+                alreadyCancelled.Cancel();
+                _viewer.SdcVersionCheckTaskToReturn =
+                    Task.FromCanceled<SdcVersionCheckResult>(alreadyCancelled.Token);
+
+                var setContext = _viewer.SetContextAsync("http://example.org/q");
+                _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+                await setContext.Within5s();
+            }
+
+            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State,
+                "A version check that never answered must not refuse the session.");
+            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, _viewer.SdcServerVersionCheck!.Outcome);
+        }
+
+        [TestMethod]
+        public async Task AProbeThatThrows_FailsOpen_RatherThanRefusingTheLaunch()
+        {
+            // SdcServerVersionProbe's contract is that a server or transport problem is a
+            // result, not an exception — so a throw here means the check itself is broken. It
+            // still must not become a new way for a form launch to die.
+            await DelayUntilBrowserInitialized();
+            _viewer.SdcEndpointAddress = SdcEndpoint;
+            _viewer.SdcVersionCheckTaskToReturn =
+                Task.FromException<SdcVersionCheckResult>(new InvalidOperationException("probe is broken"));
+
+            var setContext = _viewer.SetContextAsync("http://example.org/q");
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+            await setContext.Within5s();
+
+            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
+            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, _viewer.SdcServerVersionCheck!.Outcome);
+            StringAssert.Contains(_viewer.SdcServerVersionCheck!.Detail, "probe is broken");
+        }
+
+        [TestMethod]
         public async Task TheProbeTargetsTheConfiguredSdcEndpointAddress()
         {
             await DelayUntilBrowserInitialized();

@@ -24,8 +24,25 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// a server whose version can't be read or parsed is allowed through. Raise this in
         /// lockstep with the release notes whenever the harness starts to depend on newer
         /// server behaviour.
+        /// <para>
+        /// <c>v0.9.39</c> is the release that first answers <c>{base}/metadata</c>, which is how
+        /// the version is read at all — so it is the honest statement of the requirement: an SDC
+        /// server new enough to declare itself. It also means the gate cannot yet <em>refuse</em>
+        /// anything: every server able to answer the probe is at or above this floor by
+        /// construction, and an older one reads as <see cref="SdcVersionCheckOutcome.Unknown"/>
+        /// and is let through. The fail-closed arm arms on the first raise past <c>v0.9.39</c>,
+        /// once releases exist that answer the probe and are below the floor.
+        /// </para>
         /// </summary>
-        public const string MinimumSdcVersion = "v0.9.38";
+        /// <remarks>
+        /// Deliberately <c>static readonly</c> rather than <c>const</c>. A <c>const</c> is
+        /// substituted into every consuming assembly at <em>its</em> compile time, so a host
+        /// that reads this value to show integrators or support which floor applies would keep
+        /// printing the floor it was built against while this package enforced a newer one —
+        /// two copies of a version number drifting, which is the failure this package exists to
+        /// prevent.
+        /// </remarks>
+        public static readonly string MinimumSdcVersion = "v0.9.39";
 
         /// <summary>
         /// The version string the SDC server reports. It is <b>not</b> plain semver: it comes
@@ -59,11 +76,20 @@ namespace Tiro.Health.FormSdk.Abstractions
             var match = VersionGrammar.Match(value.Trim());
             if (!match.Success) return false;
 
-            // An absurdly long digit run matches the grammar but overflows — int.TryParse
-            // failing here lands the caller on "unknown", which is the safe side.
-            return TryParseComponent(match.Groups[1].Value, out major)
-                && TryParseComponent(match.Groups[2].Value, out minor)
-                && TryParseComponent(match.Groups[3].Value, out patch);
+            // Parsed into locals and assigned only on full success, so a failed call never
+            // leaves half a version in the caller's variables. That is reachable: `\d` matches
+            // Unicode digits (there is no RegexOptions.ECMAScript here) while int.TryParse with
+            // InvariantCulture does not, so "v0.9.٣٨" matches the grammar and fails the parse.
+            // An absurdly long digit run overflows the same way. Both land the caller on
+            // "unknown", which is the safe side.
+            if (!TryParseComponent(match.Groups[1].Value, out var parsedMajor)) return false;
+            if (!TryParseComponent(match.Groups[2].Value, out var parsedMinor)) return false;
+            if (!TryParseComponent(match.Groups[3].Value, out var parsedPatch)) return false;
+
+            major = parsedMajor;
+            minor = parsedMinor;
+            patch = parsedPatch;
+            return true;
         }
 
         private static bool TryParseComponent(string value, out int parsed)

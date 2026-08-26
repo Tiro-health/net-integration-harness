@@ -10,9 +10,9 @@ namespace Tiro.Health.FormSdk.Client.Tests
     /// letting us exercise the client's serialize/POST/parse path with no real server.
     /// </summary>
     /// <remarks>
-    /// It also answers the two SDC version-probe routes (GH-62), because every operation now
-    /// runs that check first. The defaults stand in for a supported server — <c>/metadata</c>
-    /// returns a <c>CapabilityStatement</c> reporting exactly
+    /// It also answers the SDC version-probe route (GH-62), because every operation now runs
+    /// that check first. The defaults stand in for a supported server — <c>/metadata</c> returns
+    /// a <c>CapabilityStatement</c> reporting exactly
     /// <see cref="SdcCompatibility.MinimumSdcVersion"/> — so operation tests traverse the same
     /// satisfied path a real supported server puts them on, rather than the fail-open one.
     /// <see cref="LastRequest"/> and friends deliberately ignore the probe requests, so an
@@ -43,24 +43,11 @@ namespace Tiro.Health.FormSdk.Client.Tests
         /// <summary>Body for <c>GET {base}/metadata</c>.</summary>
         public string MetadataBody { get; set; } = CapabilityStatementJson(SdcCompatibility.MinimumSdcVersion);
 
-        /// <summary>
-        /// What <c>GET {origin}/openapi.json</c> answers. 404 by default: the primary route is
-        /// what a supported server has, and the fallback gets its own tests.
-        /// </summary>
-        public HttpStatusCode OpenApiStatus { get; set; } = HttpStatusCode.NotFound;
-
-        /// <summary>Body for <c>GET {origin}/openapi.json</c>.</summary>
-        public string OpenApiBody { get; set; } = "{}";
-
         /// <summary>A minimal <c>CapabilityStatement</c> shaped like the real server's (~530 B).</summary>
-        public static string CapabilityStatementJson(string version) =>
+        public static string CapabilityStatementJson(string version, string softwareName = "Tiro.health SDC Server") =>
             $@"{{""resourceType"":""CapabilityStatement"",""status"":""active"",""kind"":""instance"",
-                ""software"":{{""name"":""Tiro.health SDC Server"",""version"":""{version}""}},
+                ""software"":{{""name"":""{softwareName}"",""version"":""{version}""}},
                 ""fhirVersion"":""5.0.0"",""format"":[""json""]}}";
-
-        /// <summary>A minimal FastAPI-shaped <c>openapi.json</c>.</summary>
-        public static string OpenApiJson(string version) =>
-            $@"{{""openapi"":""3.1.0"",""info"":{{""title"":""Tiro.health SDC Server"",""version"":""{version}""}},""paths"":{{}}}}";
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -69,8 +56,6 @@ namespace Tiro.Health.FormSdk.Client.Tests
             var path = request.RequestUri!.AbsolutePath;
             if (request.Method == HttpMethod.Get && path.EndsWith("/metadata", StringComparison.Ordinal))
                 return Json(MetadataStatus, MetadataBody, "application/fhir+json");
-            if (request.Method == HttpMethod.Get && path == "/openapi.json")
-                return Json(OpenApiStatus, OpenApiBody, "application/json");
 
             LastRequest = request;
             LastContentType = request.Content?.Headers.ContentType?.MediaType;

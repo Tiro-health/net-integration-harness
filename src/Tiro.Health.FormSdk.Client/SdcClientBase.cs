@@ -38,10 +38,17 @@ namespace Tiro.Health.FormSdk.Client
         private readonly JsonSerializerOptions _fhirJson;
         private readonly Uri _baseAddress;
 
-        // Result of the one-time SDC server version check (GH-62); null until it has run.
-        // Deliberately caches the RESULT, not the Task: a shared Task would be poisoned for
-        // every later operation by the first caller's cancellation, and two callers racing
-        // here at worst repeat one small idempotent GET.
+        // The one-time SDC server version check (GH-62); null until the first operation starts
+        // it. The TASK is cached, and it is started with CancellationToken.None so that caching
+        // it is safe: a task bound to the first caller's token would be poisoned for every later
+        // operation the moment that caller cancelled. Caching the *result* instead had a worse
+        // failure — two concurrent first operations would each probe, and if one came back
+        // Unknown (a transient blip) while the other came back TooOld, the Unknown caller would
+        // POST to a server the gate exists to refuse. One task means one verdict for everyone.
+        private Task<SdcVersionCheckResult> _versionCheckTask;
+
+        // The completed verdict, for ServerVersionCheck. Written after the await rather than read
+        // off the task so the property never blocks and never rethrows.
         private volatile SdcVersionCheckResult _versionCheck;
 
         /// <param name="baseAddress">The SDC server FHIR base, e.g. <c>https://host/fhir/r5</c>.</param>
@@ -120,18 +127,33 @@ namespace Tiro.Health.FormSdk.Client
         /// <para>
         /// The check goes through the same <see cref="HttpClient"/> as the operations, so a
         /// host that injected one for custom TLS/proxy/auth has that apply to the probe too.
+        /// Unlike the viewer's, it is strictly serial in front of the first operation, so that
+        /// operation pays one extra round trip (bounded by
+        /// <see cref="SdcServerVersionProbe.TimeoutMilliseconds"/>).
         /// </para>
         /// </remarks>
         private async Task EnsureServerVersionSupportedAsync(CancellationToken cancellationToken)
         {
-            var result = _versionCheck;
-            if (result == null)
+            var probe = _versionCheckTask;
+            if (probe == null)
             {
-                result = await SdcServerVersionProbe
-                    .CheckAsync(_baseAddress, _http, cancellationToken)
-                    .ConfigureAwait(false);
+                // CancellationToken.None on purpose — see the field comment. The probe's own
+                // deadline bounds it, so a caller who cancels waits at most that long. Published
+                // with a CAS so a race provably starts one probe, and the loser's task is
+                // discarded before anything can await it.
+                var started = SdcServerVersionProbe.CheckAsync(_baseAddress, _http, CancellationToken.None);
+                probe = Interlocked.CompareExchange(ref _versionCheckTask, started, null) ?? started;
+            }
+
+            var result = await probe.ConfigureAwait(false);
+
+            if (_versionCheck == null)
+            {
                 _versionCheck = result;
 
+                // Loud, once, on the fail-open path. Trace rather than a logger because this
+                // client is deliberately telemetry-free (GH-33 tracks an optional ILogger seam),
+                // and because the audience is the customer's own logs: they self-host the server.
                 if (result.Outcome == SdcVersionCheckOutcome.Unknown)
                     Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result);
             }

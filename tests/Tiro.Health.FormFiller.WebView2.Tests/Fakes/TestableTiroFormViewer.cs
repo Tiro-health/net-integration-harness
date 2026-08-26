@@ -52,12 +52,21 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         /// <summary>The base address the probe was handed, so tests can assert it came from SdcEndpointAddress.</summary>
         public Uri LastSdcVersionCheckAddress { get; private set; }
 
+        /// <summary>
+        /// Raw task handed back instead of a completed one, so tests can reach the paths a
+        /// canned result cannot: a probe that faults, and one that ends up cancelled without
+        /// the caller or the viewer having cancelled anything (which is what the launch budget
+        /// expiring looks like from here). <c>null</c> means "use
+        /// <see cref="SdcVersionCheckToReturn"/>".
+        /// </summary>
+        public Task<SdcVersionCheckResult> SdcVersionCheckTaskToReturn { get; set; }
+
         protected override Task<SdcVersionCheckResult> CheckSdcServerVersionAsync(
             Uri sdcBaseAddress, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _sdcVersionCheckCount);
             LastSdcVersionCheckAddress = sdcBaseAddress;
-            return Task.FromResult(SdcVersionCheckToReturn);
+            return SdcVersionCheckTaskToReturn ?? Task.FromResult(SdcVersionCheckToReturn);
         }
     }
 }

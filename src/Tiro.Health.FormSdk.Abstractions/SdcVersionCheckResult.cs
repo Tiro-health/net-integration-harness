@@ -14,10 +14,10 @@ namespace Tiro.Health.FormSdk.Abstractions
 
         /// <summary>
         /// The version could not be established — unreachable server, timeout, non-success
-        /// status, a body without the version field, or a version string outside the grammar
-        /// (a <c>dev</c> build, a PR checkpoint id). Fails <em>open</em>: a network blip, a
-        /// server predating the <c>CapabilityStatement</c> route, or a developer build must
-        /// not brick a working deployment.
+        /// status, a body without the version field, a document that isn't the SDC server's, or
+        /// a version string outside the grammar (a <c>dev</c> build, a PR checkpoint id). Fails
+        /// <em>open</em>: a network blip, a server predating the <c>CapabilityStatement</c>
+        /// route, or a developer instance must not brick a working deployment.
         /// </summary>
         Unknown = 2,
     }
@@ -28,11 +28,17 @@ namespace Tiro.Health.FormSdk.Abstractions
     /// </summary>
     public sealed class SdcVersionCheckResult
     {
-        /// <summary>The <c>CapabilityStatement</c> route, tried first (base-relative <c>metadata</c>).</summary>
-        public const string CapabilityStatementSource = "CapabilityStatement.software.version";
+        /// <summary>Where the version is read from: the base-relative <c>metadata</c> route.</summary>
+        /// <remarks>
+        /// Not a <c>const</c> — see the remarks on <see cref="SdcCompatibility.MinimumSdcVersion"/>.
+        /// </remarks>
+        public static readonly string CapabilityStatementSource = "CapabilityStatement.software.version";
 
-        /// <summary>The OpenAPI fallback (origin-relative <c>/openapi.json</c>).</summary>
-        public const string OpenApiSource = "openapi.json info.version";
+        // Longest server-reported string echoed into a message, a log line or a telemetry
+        // breadcrumb. The response cap is 2 MB, so without this a server (or anything that can
+        // answer as one) could put a megabyte of its choosing into a Sentry breadcrumb on every
+        // form launch. A real version is under 20 characters.
+        private const int MaxEchoedLength = 64;
 
         private SdcVersionCheckResult(
             SdcVersionCheckOutcome outcome, string reportedVersion, string source, string detail)
@@ -51,44 +57,56 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// <see cref="SdcVersionCheckOutcome.TooOld"/>.
         /// </summary>
         /// <param name="reportedVersion">The raw string the server reported.</param>
-        /// <param name="source">Where it was read from — see the <c>*Source</c> constants.</param>
+        /// <param name="source">Where it was read from — see <see cref="CapabilityStatementSource"/>.</param>
         public static SdcVersionCheckResult FromReportedVersion(string reportedVersion, string source)
         {
             var outcome = SdcCompatibility.Evaluate(reportedVersion);
+            var clamped = Clamp(reportedVersion);
             var detail = outcome == SdcVersionCheckOutcome.Unknown
-                ? $"The server reported '{reportedVersion}', which is not a release version " +
+                ? $"The server reported '{clamped}', which is not a release version " +
                   "(dev builds report 'dev', PR builds a checkpoint id, a server with no version.json 'development')."
                 : string.Empty;
-            return new SdcVersionCheckResult(outcome, reportedVersion, source, detail);
+            return new SdcVersionCheckResult(outcome, clamped, source, detail);
         }
 
         /// <summary>
         /// The verdict when no version could be read at all — unreachable server, timeout,
-        /// non-success status, or a body without the version field. Always
-        /// <see cref="SdcVersionCheckOutcome.Unknown"/>, i.e. fails open.
+        /// non-success status, a body without the version field, or a document that could not be
+        /// attributed to the SDC server. Always <see cref="SdcVersionCheckOutcome.Unknown"/>,
+        /// i.e. fails open.
         /// </summary>
         /// <param name="detail">Why, for the customer's logs.</param>
         public static SdcVersionCheckResult Unavailable(string detail)
             => new SdcVersionCheckResult(SdcVersionCheckOutcome.Unknown, null, null, detail ?? string.Empty);
 
+        /// <summary>
+        /// Truncates a server-supplied string to a length that is safe to put in a log line,
+        /// an exception message or a telemetry breadcrumb.
+        /// </summary>
+        internal static string Clamp(string value)
+            => value != null && value.Length > MaxEchoedLength
+                ? value.Substring(0, MaxEchoedLength) + "…"
+                : value;
+
         /// <summary>The verdict. See <see cref="SdcVersionCheckOutcome"/> for the failure semantics.</summary>
         public SdcVersionCheckOutcome Outcome { get; }
 
         /// <summary>
-        /// The raw version string the server reported, or <c>null</c> when no version could be
-        /// read at all. Non-null with <see cref="SdcVersionCheckOutcome.Unknown"/> means a
-        /// version was reported but fell outside the grammar (e.g. <c>dev</c>).
+        /// The version string the server reported (truncated if absurdly long), or <c>null</c>
+        /// when no version could be read at all. Non-null with
+        /// <see cref="SdcVersionCheckOutcome.Unknown"/> means a version was reported but fell
+        /// outside the grammar (e.g. <c>dev</c>).
         /// </summary>
         public string ReportedVersion { get; }
 
         /// <summary>
-        /// Which document the version came from — <see cref="CapabilityStatementSource"/> or
-        /// <see cref="OpenApiSource"/> — or <c>null</c> when neither answered.
+        /// Which document the version came from — see <see cref="CapabilityStatementSource"/> —
+        /// or <c>null</c> when none answered.
         /// </summary>
         public string Source { get; }
 
         /// <summary>
-        /// Why the outcome is what it is, for logs: the failing status codes, the transport
+        /// Why the outcome is what it is, for logs: the failing status code, the transport
         /// error, or the unrecognized version string. Never <c>null</c>.
         /// </summary>
         public string Detail { get; }

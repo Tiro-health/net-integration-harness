@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -60,14 +63,13 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
-        public async Task UnreachableVersionRoutes_FailOpen_AndTheOperationRuns()
+        public async Task AnUnreadableVersion_FailsOpen_AndTheOperationRuns()
         {
-            // A server predating the /metadata route with no openapi.json either, or a network
-            // blip: the version is unknown, and unknown must never brick a deployment.
+            // A server predating the /metadata route (it answers 400), or a network blip: the
+            // version is unknown, and unknown must never brick a deployment.
             var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, BundleJson)
             {
                 MetadataStatus = HttpStatusCode.BadRequest,
-                OpenApiStatus = HttpStatusCode.NotFound,
             };
             using var client = new SdcClient(BaseAddress, new HttpClient(handler));
 
@@ -75,6 +77,62 @@ namespace Tiro.Health.FormSdk.Client.Tests
 
             Assert.IsNotNull(bundle);
             Assert.AreEqual(SdcVersionCheckOutcome.Unknown, client.ServerVersionCheck!.Outcome);
+        }
+
+        [TestMethod]
+        public async Task AFailOpenIsTraced_SoItIsVisibleInTheCustomersOwnLogs()
+        {
+            // The client is deliberately telemetry-free, so Trace is the whole of "loud" here —
+            // and loudness is the only thing standing between a silently disarmed check and
+            // nobody ever knowing. Customers self-host the server; these are their logs.
+            var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, BundleJson)
+            {
+                MetadataStatus = HttpStatusCode.BadRequest,
+            };
+            var listener = new CapturingTraceListener();
+            Trace.Listeners.Add(listener);
+            try
+            {
+                using var client = new SdcClient(BaseAddress, new HttpClient(handler));
+                await client.ExtractAsync(SampleResponse());
+            }
+            finally
+            {
+                Trace.Listeners.Remove(listener);
+            }
+
+            Assert.IsTrue(listener.Messages.Exists(m => m.Contains("could not be established")),
+                "A fail-open must leave a warning behind. Captured: " + string.Join(" | ", listener.Messages));
+        }
+
+        [TestMethod]
+        public async Task ACancelledFirstOperation_DoesNotLeaveTheGateUnarmed()
+        {
+            // The probe is started with CancellationToken.None precisely so that the first
+            // caller's cancellation cannot poison the shared verdict. If it could, cancelling
+            // one $extract would disarm the gate for every later operation on that client.
+            var older = OneBelowTheMinimum();
+            var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, BundleJson)
+            {
+                MetadataBody = FakeHttpMessageHandler.CapabilityStatementJson(older),
+            };
+            using var client = new SdcClient(BaseAddress, new HttpClient(handler));
+
+            using (var cts = new CancellationTokenSource())
+            {
+                cts.Cancel();
+                try { await client.ExtractAsync(SampleResponse(), cts.Token); } catch { /* either outcome is fine here */ }
+            }
+
+            await Assert.ThrowsExceptionAsync<SdcServerTooOldException>(
+                () => client.ExtractAsync(SampleResponse()));
+        }
+
+        private sealed class CapturingTraceListener : TraceListener
+        {
+            public List<string> Messages { get; } = new();
+            public override void Write(string? message) { if (message is not null) Messages.Add(message); }
+            public override void WriteLine(string? message) { if (message is not null) Messages.Add(message); }
         }
 
         [TestMethod]
@@ -88,7 +146,7 @@ namespace Tiro.Health.FormSdk.Client.Tests
 
             var probeRequests = handler.RequestedUris.Count(u => u.AbsolutePath.EndsWith("/metadata", StringComparison.Ordinal));
             Assert.AreEqual(1, probeRequests,
-                "The result is cached: a second operation must not re-probe the server.");
+                "The probe is cached: a second operation must not re-probe the server.");
         }
 
         [TestMethod]

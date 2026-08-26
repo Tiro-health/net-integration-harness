@@ -23,6 +23,19 @@ namespace Tiro.Health.FormSdk.Client.Tests
                 $"MinimumSdcVersion '{SdcCompatibility.MinimumSdcVersion}' does not match the version grammar.");
         }
 
+        [TestMethod]
+        public void MinimumSdcVersion_IsNotItselfAPrerelease()
+        {
+            // The comparison ignores the suffix on BOTH sides, so a floor of "v0.9.40-rc.1"
+            // silently means "v0.9.40" — and would then be satisfied by v0.9.40-rc.0, which is
+            // older than the floor as written. The rule cannot express a prerelease floor, so
+            // the floor must not be one. The parse guard above would not catch this: it parses.
+            Assert.IsFalse(
+                SdcCompatibility.MinimumSdcVersion.Contains("-") || SdcCompatibility.MinimumSdcVersion.Contains("+"),
+                $"MinimumSdcVersion '{SdcCompatibility.MinimumSdcVersion}' carries a prerelease/build suffix, " +
+                "which the componentwise comparison cannot represent. Use the release version.");
+        }
+
         [DataTestMethod]
         // v-prefixed and bare, both of which the pipelines can produce.
         [DataRow("v0.9.38", 0, 9, 38)]
