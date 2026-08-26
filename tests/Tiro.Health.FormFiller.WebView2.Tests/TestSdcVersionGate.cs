@@ -215,7 +215,38 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
-        public async Task ARetriedSetContext_ReusesTheFirstProbe()
+        public async Task ARetryAgainstADifferentEndpoint_ProbesTheNewOne()
+        {
+            // SetContextAsync is retryable, and a host may fix SdcEndpointAddress between
+            // attempts. Caching on "have we probed at all" meant the retry applied the FIRST
+            // address's verdict while sdc.configure sent the SECOND to the page — refusing a
+            // launch against a good server in the name of one nobody was talking to. That is the
+            // mis-attribution this whole check exists to avoid, reintroduced through the cache.
+            _browser.ThrowOnNextMapVirtualHost = new IOException("temp folder blocked");
+            _viewer.SdcEndpointAddress = "https://stale.example.org/fhir/r5";
+            _viewer.SdcVersionCheckToReturn = TooOld();
+
+            var first = _viewer.SetContextAsync("http://example.org/q");
+            await Assert.ThrowsExceptionAsync<IOException>(() => first.Within5s());
+
+            // Host corrects the endpoint and retries; the new server is fine.
+            _viewer.SdcEndpointAddress = SdcEndpoint;
+            _viewer.SdcVersionCheckToReturn = SdcVersionCheckResult.FromReportedVersion(
+                SdcCompatibility.MinimumSdcVersion, SdcVersionCheckResult.CapabilityStatementSource);
+
+            var second = _viewer.SetContextAsync("http://example.org/q");
+            await Task.Yield();
+            _browser.RaiseMessageReceived(SwmTest.Handshake("hs-1"));
+            await second.Within5s();
+
+            Assert.AreEqual(2, _viewer.SdcVersionCheckCount,
+                "A changed endpoint must be re-probed, not answered from the previous address's verdict.");
+            Assert.AreEqual(new Uri(SdcEndpoint), _viewer.LastSdcVersionCheckAddress);
+            Assert.AreEqual(TiroFormViewerState.ContextSet, _viewer.State);
+        }
+
+        [TestMethod]
+        public async Task ARetriedSetContext_AgainstTheSameEndpoint_ReusesTheFirstProbe()
         {
             // SetContextAsync is retryable after a failure (see TestNavigationRetry). The
             // version check is a startup check, so the retry must not re-ask the server.
@@ -231,7 +262,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             await second.Within5s();
 
             Assert.AreEqual(1, _viewer.SdcVersionCheckCount,
-                "The probe result is cached across retries — one check per viewer, not per attempt.");
+                "The probe is cached per address — one check per attempt-series, not per attempt.");
         }
     }
 }

@@ -13,11 +13,13 @@ namespace Tiro.Health.FormSdk.Client.Tests
 {
     /// <summary>
     /// The version read (GH-62): one <c>GET {base}/metadata</c> for
-    /// <c>CapabilityStatement.software.version</c>. Base-relative on purpose — whatever answers
-    /// it is the same server the operations talk to, so the read is attributable by
-    /// construction. An earlier revision fell back to an origin-relative
-    /// <c>/openapi.json</c>; that source followed the host rather than the server and could
-    /// refuse a healthy deployment on a neighbouring app's version, so it is gone.
+    /// <c>CapabilityStatement.software.version</c>, accepted only from a document whose
+    /// <c>software.name</c> says it is the SDC server. Base-relativity gets the request to the
+    /// right host; it does not say who composed the answer — a server predating the route
+    /// tunnels <c>{base}/metadata</c> to the configured data endpoint — so attribution is a
+    /// property of the body, and the tests below hold it there. An earlier revision also fell
+    /// back to an origin-relative <c>/openapi.json</c>, which followed the host rather than the
+    /// server and could refuse a healthy deployment on a neighbouring app's version.
     /// </summary>
     [TestClass]
     public sealed class TestSdcServerVersionProbe
@@ -140,18 +142,38 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
-        public async Task AMissingSoftwareName_IsStillTrusted()
+        public async Task AMissingSoftwareName_IsUnknown_NotTrusted()
         {
-            // Absence is tolerated rather than treated as a mismatch: requiring the name would
-            // add a way for a future server-side change to silently disarm the whole check.
+            // software.name is 1..1 whenever software is present in R4/R5, so a document that
+            // omits it is non-conformant — which is exactly the class that must not be trusted:
+            // a response tunnelled to the customer's data endpoint, a hand-written server, a
+            // proxy. Trusting it was the one remaining path by which an unattributed document
+            // could reach TooOld and refuse a healthy server.
             var server = new ProbeServer
             {
-                Body = $@"{{""resourceType"":""CapabilityStatement"",""software"":{{""version"":""{SdcCompatibility.MinimumSdcVersion}""}}}}",
+                Body = $@"{{""resourceType"":""CapabilityStatement"",""software"":{{""version"":""{OneBelowTheMinimum()}""}}}}",
             };
 
             var result = await Probe(server);
 
-            Assert.AreEqual(SdcVersionCheckOutcome.Satisfied, result.Outcome);
+            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
+            StringAssert.Contains(result.Detail, "absent");
+        }
+
+        [TestMethod]
+        public async Task ATunnelledDataServerCapabilityStatement_CannotRefuseTheSession()
+        {
+            // The topology this guard exists for. On a server predating the metadata route,
+            // {base}/metadata falls into the SDC server's data tunnel, so a deployment with
+            // DEFAULT_DATA_ENDPOINT configured answers with the HOSPITAL's CapabilityStatement.
+            // Base-relativity got the request to the right host; only the body says who wrote
+            // it. Whatever version that server reports, it must not decide this session.
+            var server = new ProbeServer { Body = Capability("0.4.1", softwareName: "HAPI FHIR Server") };
+
+            var result = await Probe(server);
+
+            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome,
+                "A version from a server we cannot attribute must never fail closed.");
         }
 
         [TestMethod]
@@ -250,7 +272,7 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
-        public async Task AnOversizedBody_IsUnknown_AndIsNotBuffered()
+        public async Task AnOversizedBody_TripsTheCap_AndIsUnknown()
         {
             // The cap is a safety valve against a hostile or runaway stream: the real document
             // is ~530 bytes. Sent without a Content-Length so the streaming check is what has
@@ -278,10 +300,8 @@ namespace Tiro.Health.FormSdk.Client.Tests
         }
 
         [TestMethod]
-        public async Task AStalledServer_TimesOutWithinItsOwnDeadline_AndFailsOpen()
+        public async Task AServerThatStallsBeforeTheHeaders_TimesOut_AndFailsOpen()
         {
-            // The deadline is what keeps a startup check from becoming the reason a form takes
-            // long to appear — and what the viewer's launch budget relies on.
             var server = new ProbeServer { Delay = TimeSpan.FromMilliseconds(SdcServerVersionProbe.TimeoutMilliseconds * 4) };
             var stopwatch = Stopwatch.StartNew();
 
@@ -291,8 +311,88 @@ namespace Tiro.Health.FormSdk.Client.Tests
             Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
             StringAssert.Contains(result.Detail, "timed out");
             Assert.IsTrue(
-                stopwatch.ElapsedMilliseconds < SdcServerVersionProbe.TimeoutMilliseconds * 3,
-                $"Took {stopwatch.ElapsedMilliseconds} ms; the probe must give up near its own {SdcServerVersionProbe.TimeoutMilliseconds} ms deadline.");
+                stopwatch.ElapsedMilliseconds < SdcServerVersionProbe.TimeoutMilliseconds * 2,
+                $"Took {stopwatch.ElapsedMilliseconds} ms against a {SdcServerVersionProbe.TimeoutMilliseconds} ms deadline.");
+        }
+
+        [TestMethod]
+        public async Task AServerThatStallsAFTERTheHeaders_TimesOut_AndFailsOpen()
+        {
+            // The case the response-dispose registration exists for, and the one the previous
+            // revision of this test did NOT cover: it stalled inside SendAsync, so the deadline
+            // cancelled the *send* — behaviour that needed no registration at all. Here the
+            // headers arrive and the BODY stalls, which on net48 is unreachable by the read's
+            // own CancellationToken (that overload is the base Begin/EndRead wrapper and ignores
+            // it) and no longer covered by SendAsync's token (ResponseHeadersRead already
+            // returned). Disposing the response is what unblocks it. Delete the registration and
+            // this test hangs for its full 30 s.
+            using var blocking = new BlockingStream();
+            var server = new ProbeServer { RawContent = new StreamContent(blocking) };
+            var stopwatch = Stopwatch.StartNew();
+
+            var result = await Probe(server);
+            stopwatch.Stop();
+
+            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
+            StringAssert.Contains(result.Detail, "timed out");
+            Assert.IsTrue(
+                stopwatch.ElapsedMilliseconds < SdcServerVersionProbe.TimeoutMilliseconds * 2,
+                $"Took {stopwatch.ElapsedMilliseconds} ms against a {SdcServerVersionProbe.TimeoutMilliseconds} ms deadline; " +
+                "the body read must be interrupted, not merely the send.");
+        }
+
+        [TestMethod]
+        public async Task AGenuineDefectIsNotRelabelledAsATimeout()
+        {
+            // Both cancellation-shaped catch filters are narrowed to the exception types the
+            // dispose registration can actually produce. A NullReferenceException from a broken
+            // handler that merely coincides with the deadline is a defect and has to read as
+            // one, not as "timed out after 3000 ms".
+            var server = new ProbeServer { ThrowInstead = new NullReferenceException("handler bug") };
+
+            var result = await Probe(server);
+
+            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
+            StringAssert.Contains(result.Detail, "NullReferenceException");
+            Assert.IsFalse(result.Detail.Contains("timed out"), "A defect must not be dressed up as a deadline.");
+        }
+
+        [TestMethod]
+        public async Task AnAbsurdlyLongServerString_IsTruncatedBeforeItReachesAnyMessage()
+        {
+            // The response cap is 2 MB, so without truncation a server could put a megabyte of
+            // its choosing into a Sentry breadcrumb on every form launch. The surrogate pair at
+            // the cut point is deliberate: a lone surrogate is not a valid string, and this text
+            // gets serialized downstream by code entitled to assume it is.
+            var name = new string('x', 63) + "\uD83D\uDE00" + new string('y', 5000);
+            var server = new ProbeServer { Body = Capability(SdcCompatibility.MinimumSdcVersion, softwareName: name) };
+
+            var result = await Probe(server);
+
+            Assert.AreEqual(SdcVersionCheckOutcome.Unknown, result.Outcome);
+            Assert.IsTrue(result.Detail.Length < 600, $"Detail was {result.Detail.Length} chars.");
+            foreach (var c in result.Detail)
+                Assert.IsFalse(char.IsSurrogate(c) && !char.IsHighSurrogate(c), "A lone low surrogate escaped truncation.");
+            Assert.IsFalse(char.IsHighSurrogate(result.Detail[result.Detail.Length - 1]));
+        }
+
+        [TestMethod]
+        public async Task MidFlightCallerCancellation_Propagates()
+        {
+            // The pre-cancelled case short-circuits before a request is issued; this is the one
+            // where the catch-filter ordering actually decides the outcome, because the caller's
+            // token and the probe's own deadline are linked and both read as cancelled.
+            var server = new ProbeServer { Delay = TimeSpan.FromMilliseconds(SdcServerVersionProbe.TimeoutMilliseconds * 4) };
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+
+            try
+            {
+                await SdcServerVersionProbe.CheckAsync(SdcBase, new HttpClient(server), cts.Token);
+                Assert.Fail("A cancelled caller must not come back as a fail-open result.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
 
         [TestMethod]
@@ -325,6 +425,41 @@ namespace Tiro.Health.FormSdk.Client.Tests
                 () => SdcServerVersionProbe.CheckAsync(null!));
             await Assert.ThrowsExceptionAsync<ArgumentException>(
                 () => SdcServerVersionProbe.CheckAsync(new Uri("fhir/r5", UriKind.Relative)));
+        }
+
+        /// <summary>
+        /// Blocks in <c>ReadAsync</c> until disposed — a server that sends its headers and then
+        /// stalls. Only disposal releases it, which is exactly what the probe's deadline does.
+        /// </summary>
+        private sealed class BlockingStream : Stream
+        {
+            private readonly SemaphoreSlim _released = new SemaphoreSlim(0, 1);
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => 0; set => throw new NotSupportedException(); }
+            public override void Flush() { }
+
+            public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            {
+                // Deliberately ignores the token: on net48 this overload's base implementation
+                // does too, which is the whole reason the probe disposes the response instead.
+                await _released.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+                throw new ObjectDisposedException(nameof(BlockingStream));
+            }
+
+            public override int Read(byte[] buffer, int offset, int count) => ReadAsync(buffer, offset, count, default).GetAwaiter().GetResult();
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing && _released.CurrentCount == 0) { try { _released.Release(); } catch { } }
+                base.Dispose(disposing);
+            }
         }
 
         /// <summary>A body that never ends, for the response-size cap.</summary>

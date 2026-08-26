@@ -57,6 +57,9 @@ namespace Tiro.Health.FormSdk.Client.Tests
 
             Assert.AreEqual(older, ex.ReportedVersion);
             Assert.AreEqual(SdcCompatibility.MinimumSdcVersion, ex.MinimumVersion);
+            // The verdict is readable by whoever catches the refusal, not only on the fail-open
+            // path — a host reporting "why did this launch fail" needs it here most of all.
+            Assert.AreEqual(SdcVersionCheckOutcome.TooOld, client.ServerVersionCheck!.Outcome);
             // Fail closed means the operation never leaves: nothing was POSTed.
             Assert.IsNull(handler.LastRequest, "A refused pairing must not send the operation anyway.");
             Assert.IsFalse(handler.RequestedUris.Any(u => u.AbsolutePath.Contains("$extract")));
@@ -121,11 +124,38 @@ namespace Tiro.Health.FormSdk.Client.Tests
             using (var cts = new CancellationTokenSource())
             {
                 cts.Cancel();
-                try { await client.ExtractAsync(SampleResponse(), cts.Token); } catch { /* either outcome is fine here */ }
+                // Asserted, not swallowed: a caller who has already cancelled must get their own
+                // cancellation back — not a 3 s wait on a probe and then a pairing verdict.
+                await Assert.ThrowsExceptionAsync<OperationCanceledException>(
+                    () => client.ExtractAsync(SampleResponse(), cts.Token));
             }
 
             await Assert.ThrowsExceptionAsync<SdcServerTooOldException>(
                 () => client.ExtractAsync(SampleResponse()));
+        }
+
+        [TestMethod]
+        public async Task ConcurrentFirstOperations_ProbeOnce_AndShareOneVerdict()
+        {
+            // The reason the TASK is cached rather than the result: one verdict for everyone. A
+            // previous revision published the task with a CAS, which looked like it gated the
+            // start and did not — CheckAsync is an async method, so calling it issues the GET
+            // and the CAS only chose which in-flight task to keep. Eight concurrent first
+            // operations made eight requests, and could have disagreed with each other.
+            var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, BundleJson);
+            using var client = new SdcClient(BaseAddress, new HttpClient(handler));
+            using var gate = new SemaphoreSlim(0, 8);
+
+            var operations = Enumerable.Range(0, 8).Select(_ => Task.Run(async () =>
+            {
+                await gate.WaitAsync();
+                await client.ExtractAsync(SampleResponse());
+            })).ToArray();
+            gate.Release(8);
+            await Task.WhenAll(operations);
+
+            var probeRequests = handler.RequestedUris.Count(u => u.AbsolutePath.EndsWith("/metadata", StringComparison.Ordinal));
+            Assert.AreEqual(1, probeRequests, $"Eight concurrent first operations issued {probeRequests} probes.");
         }
 
         private sealed class CapturingTraceListener : TraceListener

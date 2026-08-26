@@ -13,20 +13,29 @@ namespace Tiro.Health.FormSdk.Abstractions
     /// <see cref="SdcCompatibility.MinimumSdcVersion"/>.
     /// </summary>
     /// <remarks>
-    /// One source: <c>GET {sdcBase}/metadata</c> → <c>CapabilityStatement.software.version</c>.
+    /// One source: <c>GET {sdcBase}/metadata</c> → <c>CapabilityStatement.software.version</c>,
+    /// accepted only from a document that identifies itself as the SDC server.
     /// <para>
-    /// The request URI is built by <em>appending</em> to the configured SDC base, so whatever
-    /// answers it is the same server the forms and the operations talk to — attribution holds
-    /// by construction, and a gateway path prefix survives. That is the whole reason this is
-    /// the only source. An earlier revision fell back to <c>GET {origin}/openapi.json</c> for
-    /// servers predating this route, but an origin-relative read follows the <em>host</em>, not
-    /// the server: behind a gateway that routes <c>/tiro-sdc/fhir/r5</c> to the SDC server and
-    /// <c>/</c> to something else, it reads a neighbouring application's version. FastAPI's
-    /// default <c>info.version</c> is <c>0.1.0</c>, which parses, compares below any real floor,
-    /// and would have refused every form launch against a perfectly healthy server. A source
-    /// that cannot be attributed must not be able to fail closed, and one that can only fail
-    /// open is not worth the code — so it is gone. A server too old to answer here reads as
-    /// <see cref="SdcVersionCheckOutcome.Unknown"/> and is allowed through.
+    /// The request URI is built by <em>appending</em> to the configured SDC base, so the request
+    /// reaches the same host the forms and the operations talk to, and a gateway path prefix
+    /// survives. That is necessary but <b>not</b> sufficient for attribution, and it is worth
+    /// being precise about why: on a server predating this route, <c>{base}/metadata</c> has no
+    /// local handler and falls into the SDC server's data tunnel, which proxies it to the
+    /// configured data endpoint — so a self-hosted deployment with <c>DEFAULT_DATA_ENDPOINT</c>
+    /// set answers with the <em>hospital's own</em> CapabilityStatement. Base-relativity gets
+    /// the request to the right host; only the body can say who composed it. Hence the
+    /// <c>software.name</c> requirement below, which is what actually makes the read attributable.
+    /// </para>
+    /// <para>
+    /// An earlier revision also fell back to <c>GET {origin}/openapi.json</c>. That source was
+    /// worse still — origin-relative, so it followed the <em>host</em> rather than the server:
+    /// behind a gateway routing <c>/tiro-sdc/fhir/r5</c> to the SDC server and <c>/</c> to
+    /// something else it read a neighbouring application, and FastAPI's default
+    /// <c>info.version</c> of <c>0.1.0</c> parses and sorts below any real floor. It is gone.
+    /// Losing it costs nothing: a server too old to answer <c>metadata</c> is also older than
+    /// any floor this harness declares, so it reads as
+    /// <see cref="SdcVersionCheckOutcome.Unknown"/> and is allowed through — which is the same
+    /// outcome, reached without a read nobody can attribute.
     /// </para>
     /// <para>
     /// Deliberately a plain <see cref="HttpClient"/> <c>GET</c> plus a two-field JSON read,
@@ -60,11 +69,14 @@ namespace Tiro.Health.FormSdk.Abstractions
         private const int MaxResponseBytes = 2 * 1024 * 1024;
 
         /// <summary>
-        /// What the SDC server reports as <c>CapabilityStatement.software.name</c>. Checked when
-        /// present, as belt-and-braces against a gateway routing <c>{base}/metadata</c> to a
-        /// different FHIR server than the one serving the operations. Absence is tolerated
-        /// rather than treated as a mismatch: every real server sets it, and requiring it would
-        /// add a way for a future server-side change to silently disarm the check.
+        /// What the SDC server reports as <c>CapabilityStatement.software.name</c>. This is the
+        /// attribution signal: the version is used only when it matches. It is <b>required</b>,
+        /// not merely checked when present — <c>software.name</c> is <c>1..1</c> whenever
+        /// <c>software</c> is present in R4 and R5, so a conformant server cannot drop it and
+        /// requiring it adds no way for a legitimate server-side change to disarm the check. A
+        /// document that omits it is by definition non-conformant, which is exactly the class
+        /// (a tunnelled response, a hand-written server, a proxy) that must not be trusted to
+        /// refuse a session.
         /// </summary>
         private const string SdcServerSoftwareName = "Tiro.health SDC Server";
 
@@ -121,18 +133,21 @@ namespace Tiro.Health.FormSdk.Abstractions
 
             // Attribution guard; see SdcServerSoftwareName. Reported as "unknown" (fail open),
             // never as "too old" — a document we cannot attribute must not refuse a session.
-            if (read.Name != null && !string.Equals(read.Name, SdcServerSoftwareName, StringComparison.Ordinal))
+            if (!string.Equals(read.Name, SdcServerSoftwareName, StringComparison.Ordinal))
                 return SdcVersionCheckResult.Unavailable(
                     $"GET {requestUri} → a CapabilityStatement whose software.name is " +
-                    $"'{SdcVersionCheckResult.Clamp(read.Name)}', not '{SdcServerSoftwareName}'. " +
+                    $"{Describe(read.Name)}, not '{SdcServerSoftwareName}'. " +
                     "Its version is not the SDC server's and was not used.");
 
             return SdcVersionCheckResult.FromReportedVersion(
                 read.Version, SdcVersionCheckResult.CapabilityStatementSource);
         }
 
+        private static string Describe(string name)
+            => name == null ? "absent" : $"'{SdcVersionCheckResult.Clamp(name)}'";
+
         // Returns software.name/software.version from the CapabilityStatement, or a null Version
-        // plus the reason. Name may be null even on success (it is optional to us).
+        // plus the reason. A null Name is a failed attribution, handled by the caller.
         private static async Task<(string Name, string Version, string Detail)> ReadSoftwareAsync(
             HttpClient http, Uri requestUri, CancellationToken cancellationToken)
         {
@@ -163,9 +178,13 @@ namespace Tiro.Health.FormSdk.Abstractions
                         // response at the headers. Without this registration a server that sends
                         // headers and then stalls hangs the read with no ceiling at all — capped
                         // at the launch budget in the viewer, and UNBOUNDED in SdcClient, which
-                        // has no outer deadline. Disposing the response kills the stream, which
-                        // is the only portable way to unblock that read. Dispose is idempotent,
-                        // so racing the enclosing using is safe.
+                        // has no outer deadline. Disposing the response is what unblocks it, for
+                        // every stream whose read observes disposal — which is the real ones, but
+                        // not a guarantee: a stream that ignores both its token and its own
+                        // disposal can still outrun the deadline, and one that answers a torn
+                        // read with 0 surfaces as "no software.version" rather than a timeout.
+                        // Dispose is idempotent, and CancellationTokenRegistration.Dispose waits
+                        // for a running callback, so racing the enclosing using is safe.
                         using (deadline.Token.Register(() => { try { response.Dispose(); } catch { /* already gone */ } }))
                         {
                             if (!response.IsSuccessStatusCode)
@@ -186,7 +205,7 @@ namespace Tiro.Health.FormSdk.Abstractions
                         }
                     }
                 }
-                catch (Exception) when (cancellationToken.IsCancellationRequested)
+                catch (Exception ex) when (cancellationToken.IsCancellationRequested && IsExpectedFailure(ex))
                 {
                     // The caller cancelled mid-flight — their intent, not a probe failure. This
                     // must be tested BEFORE the deadline branch below, because the deadline
@@ -200,22 +219,36 @@ namespace Tiro.Health.FormSdk.Abstractions
                     cancellationToken.ThrowIfCancellationRequested();
                     throw;
                 }
-                catch (Exception) when (deadline.IsCancellationRequested)
+                catch (Exception ex) when (deadline.IsCancellationRequested && IsExpectedFailure(ex))
                 {
                     // Our own deadline, and only ours (the caller's case was handled above).
                     // Reached as OperationCanceledException from the send, or as
                     // ObjectDisposedException/IOException from a body read the registration
                     // unblocked. Claimed only when our CTS actually fired, so a supplied
                     // client's shorter Timeout is never misreported as this number.
+                    _ = ex;
                     return (null, null, $"GET {requestUri} → timed out after {TimeoutMilliseconds} ms.");
                 }
                 catch (Exception ex)
                 {
                     // Every other transport failure (DNS, TLS, refused connection, proxy, a
-                    // supplied client's own Timeout). Fail open: the version is unknown, which
-                    // must never brick a deployment.
-                    return (null, null, $"GET {requestUri} → {ex.GetType().Name}: {ex.Message}");
+                    // supplied client's own Timeout) — and any genuine defect, which lands here
+                    // rather than being relabelled by the two filtered catches above. Fail open:
+                    // the version is unknown, which must never brick a deployment. The message
+                    // is clamped because an injected DelegatingHandler can make it arbitrarily
+                    // long, and this string reaches a log line and a telemetry breadcrumb.
+                    return (null, null,
+                        $"GET {requestUri} → {ex.GetType().Name}: {SdcVersionCheckResult.Clamp(ex.Message)}");
                 }
+
+                // Only these become "cancelled" or "timed out". A NullReferenceException from a
+                // broken handler that merely coincides with a cancel is a defect, and must be
+                // reported as one instead of being dressed up as a deadline.
+                bool IsExpectedFailure(Exception ex)
+                    => ex is OperationCanceledException
+                    || ex is ObjectDisposedException
+                    || ex is IOException
+                    || ex is HttpRequestException;
             }
         }
 

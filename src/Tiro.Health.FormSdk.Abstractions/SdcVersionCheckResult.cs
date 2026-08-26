@@ -40,6 +40,12 @@ namespace Tiro.Health.FormSdk.Abstractions
         // form launch. A real version is under 20 characters.
         private const int MaxEchoedLength = 64;
 
+        // Backstop on the whole Detail string, applied in both factories so the bound holds for
+        // every caller — including a host that overrides the probe — rather than only where
+        // someone remembered to clamp an interpolated part. Larger than MaxEchoedLength because
+        // Detail legitimately carries a URL and a status alongside any echoed text.
+        private const int MaxDetailLength = 512;
+
         private SdcVersionCheckResult(
             SdcVersionCheckOutcome outcome, string reportedVersion, string source, string detail)
         {
@@ -66,7 +72,7 @@ namespace Tiro.Health.FormSdk.Abstractions
                 ? $"The server reported '{clamped}', which is not a release version " +
                   "(dev builds report 'dev', PR builds a checkpoint id, a server with no version.json 'development')."
                 : string.Empty;
-            return new SdcVersionCheckResult(outcome, clamped, source, detail);
+            return new SdcVersionCheckResult(outcome, clamped, source, Truncate(detail, MaxDetailLength));
         }
 
         /// <summary>
@@ -77,16 +83,26 @@ namespace Tiro.Health.FormSdk.Abstractions
         /// </summary>
         /// <param name="detail">Why, for the customer's logs.</param>
         public static SdcVersionCheckResult Unavailable(string detail)
-            => new SdcVersionCheckResult(SdcVersionCheckOutcome.Unknown, null, null, detail ?? string.Empty);
+            => new SdcVersionCheckResult(
+                SdcVersionCheckOutcome.Unknown, null, null, Truncate(detail ?? string.Empty, MaxDetailLength));
 
         /// <summary>
         /// Truncates a server-supplied string to a length that is safe to put in a log line,
         /// an exception message or a telemetry breadcrumb.
         /// </summary>
-        internal static string Clamp(string value)
-            => value != null && value.Length > MaxEchoedLength
-                ? value.Substring(0, MaxEchoedLength) + "…"
-                : value;
+        internal static string Clamp(string value) => Truncate(value, MaxEchoedLength);
+
+        private static string Truncate(string value, int maxLength)
+        {
+            if (value == null || value.Length <= maxLength) return value;
+
+            // Never cut between the halves of a surrogate pair: a lone surrogate is not a valid
+            // string, and this text goes on to be serialized (into a Sentry breadcrumb, among
+            // other places) by code entitled to assume it is.
+            var length = maxLength;
+            if (char.IsHighSurrogate(value[length - 1])) length--;
+            return value.Substring(0, length) + "…";
+        }
 
         /// <summary>The verdict. See <see cref="SdcVersionCheckOutcome"/> for the failure semantics.</summary>
         public SdcVersionCheckOutcome Outcome { get; }

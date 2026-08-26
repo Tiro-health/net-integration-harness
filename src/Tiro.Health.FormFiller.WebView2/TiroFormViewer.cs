@@ -131,13 +131,33 @@ namespace Tiro.Health.FormFiller.WebView2
         // field so a bad handshake AFTER a successful one still fails later operations.
         private volatile Exception _webSdkFailure;
 
-        // The one-time SDC server version check (GH-62). Started at the top of
-        // SetContextAsync so it runs alongside browser init, navigation and the handshake,
-        // and awaited before anything is sent to the page. Published with a CAS rather than a
-        // plain assignment: SetContextAsync is a UI-thread call by convention, but nothing
-        // enforces that (the tests themselves clear the WinForms context), so a CAS makes
-        // "exactly one probe per viewer" a property of the code instead of a comment.
-        private Task<SdcVersionCheckResult> _sdcVersionCheckTask;
+        // The SDC server version check (GH-62). Started at the top of SetContextAsync so it runs
+        // alongside browser init, navigation and the handshake, and awaited before anything is
+        // sent to the page.
+        //
+        // Keyed on the address it was issued for, because SetContextAsync is retryable and a
+        // host may fix SdcEndpointAddress between attempts: caching on "have we probed at all"
+        // meant the second attempt applied the FIRST address's verdict while the page was
+        // configured with the second — refusing a launch against a good server in the name of
+        // one nobody was talking to, which is the mis-attribution this whole check exists to
+        // avoid. Started under a lock rather than published with a CAS: a CAS looked like it
+        // made "one probe" a property of the code and did not, since the probe is issued by the
+        // call that produces the task, not by the publication.
+        private SdcVersionProbe _sdcVersionProbe;
+        private readonly object _sdcVersionProbeGate = new object();
+
+        /// <summary>One issued probe, and the SDC base address it was issued for.</summary>
+        private sealed class SdcVersionProbe
+        {
+            public SdcVersionProbe(Uri address, Task<SdcVersionCheckResult> task)
+            {
+                Address = address;
+                Task = task;
+            }
+
+            public Uri Address { get; }
+            public Task<SdcVersionCheckResult> Task { get; }
+        }
 
         // Telemetry session — one per viewer lifetime. All transactions started via
         // _session share the same trace id, so Sentry's trace view groups them.
@@ -503,11 +523,10 @@ namespace Tiro.Health.FormFiller.WebView2
             Uri sdcBaseAddress, CancellationToken cancellationToken)
             => SdcServerVersionProbe.CheckAsync(sdcBaseAddress, httpClient: null, cancellationToken: cancellationToken);
 
-        // Kicks off the version check. Idempotent, so a SetContextAsync retried after a
-        // handshake timeout reuses the first probe rather than repeating it.
+        // Kicks off the version check. A SetContextAsync retried against the same address reuses
+        // the first probe; one retried against a DIFFERENT address probes the new one.
         private void StartSdcVersionCheck()
         {
-            if (_sdcVersionCheckTask != null) return;
             if (string.IsNullOrEmpty(SdcEndpointAddress)) return;
 
             if (!Uri.TryCreate(SdcEndpointAddress, UriKind.Absolute, out var sdcBase))
@@ -519,30 +538,37 @@ namespace Tiro.Health.FormFiller.WebView2
                 return;
             }
 
-            // Bound to the viewer's lifetime, not the caller's token: the task is cached and
-            // reused across retries, so one caller's cancellation must not decide it.
-            var started = CheckSdcServerVersionAsync(sdcBase, _lifetimeCts.Token);
+            lock (_sdcVersionProbeGate)
+            {
+                var existing = _sdcVersionProbe;
+                if (existing != null && existing.Address.Equals(sdcBase)) return;
 
-            // Observe faults for the same reason _initializationTask does: SetContextAsync can
-            // throw before it awaits this (a failed browser init), leaving the task unawaited
-            // and its exception unobserved. Cancellation needs no such guard — the TPL stores it
-            // outside the fault holder, so a Canceled task never raises
-            // TaskScheduler.UnobservedTaskException (and OnlyOnFaulted would not run for it).
-            started.ContinueWith(
-                t => { _ = t.Exception; },
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
+                // Bound to the viewer's lifetime, not the caller's token: the task is reused
+                // across retries, so one caller's cancellation must not decide it.
+                var started = CheckSdcServerVersionAsync(sdcBase, _lifetimeCts.Token);
 
-            // Loser of a race discards its own task; the ContinueWith above keeps it observed.
-            Interlocked.CompareExchange(ref _sdcVersionCheckTask, started, null);
+                // Observe faults for the same reason _initializationTask does: SetContextAsync
+                // can throw before it awaits this (a failed browser init), leaving the task
+                // unawaited and its exception unobserved — as can a superseded probe from a
+                // retry against a different address. Cancellation needs no such guard: the TPL
+                // stores it outside the fault holder, so a Canceled task never raises
+                // TaskScheduler.UnobservedTaskException (and OnlyOnFaulted would not run for it).
+                started.ContinueWith(
+                    t => { _ = t.Exception; },
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+
+                _sdcVersionProbe = new SdcVersionProbe(sdcBase, started);
+            }
         }
 
         // Applies the verdict. Fails closed only when the server answered with a parseable
         // version below the floor; everything else fails open, loudly (GH-62).
         private async Task ApplySdcVersionCheckAsync(CancellationToken linkedToken, CancellationToken userToken)
         {
-            var pending = _sdcVersionCheckTask;
+            Task<SdcVersionCheckResult> pending;
+            lock (_sdcVersionProbeGate) { pending = _sdcVersionProbe?.Task; }
             if (pending == null) return;
 
             SdcVersionCheckResult result;
@@ -577,14 +603,24 @@ namespace Tiro.Health.FormFiller.WebView2
                 // is a result, not an exception — so reaching here means the check itself
                 // broke (or an override did). Fail open: this exists to catch a bad pairing,
                 // not to add a new way for a form launch to die.
-                result = SdcVersionCheckResult.Unavailable("The SDC server version check itself failed: " + ex);
+                // An exception's ToString() carries a full stack trace, and this reaches a
+                // telemetry breadcrumb; Unavailable bounds the whole Detail, so the message
+                // stays useful without being unbounded.
+                result = SdcVersionCheckResult.Unavailable(
+                    "The SDC server version check itself failed: " + ex);
             }
 
+            // Reported once per verdict. A SetContextAsync that fails after the handshake (a
+            // refused sdc.configure, say) leaves the viewer retryable, and re-announcing the
+            // same verdict on every attempt would make the "written once" the README promises
+            // false and put a duplicate breadcrumb on the session each time.
+            var alreadyReported = ReferenceEquals(SdcServerVersionCheck, result);
             SdcServerVersionCheck = result;
-            _session?.AddBreadcrumb("sdc.version", result.ToString());
+            if (!alreadyReported) _session?.AddBreadcrumb("sdc.version", result.ToString());
 
             if (result.Outcome == SdcVersionCheckOutcome.Unknown)
             {
+                if (alreadyReported) return;
                 // Loud, but not fatal. It goes to Trace rather than the telemetry sink
                 // because ITelemetrySink can only capture exceptions, and this is not one —
                 // and because the audience is the customer's own logs: they self-host the
