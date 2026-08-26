@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Hl7.Fhir.Model;
 using Tiro.Health.FormFiller.WebView2.Fhir.R5;
+using Tiro.Health.FormSdk.Abstractions;
 using Tiro.Health.FormSdk.Client.Fhir.R5;
 using Tiro.Health.SmartWebMessaging;
 using Tiro.Health.SmartWebMessaging.Events;
@@ -115,6 +116,14 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
                     Report("FAIL", "web-sdk load refused: reason=" + ex.Reason + " :: " + ex.Message);
                     return 1;
                 }
+                catch (SdcServerTooOldException ex)
+                {
+                    // GH-62's gate, firing for real. Named rather than left to the "unhandled"
+                    // catch because this one is actionable and not a probe defect: the server
+                    // this suite points at has fallen below the floor the harness declares.
+                    Report("FAIL", "SDC server refused: " + ex.Message);
+                    return 1;
+                }
                 catch (TimeoutException)
                 {
                     Report("FAIL", "handshake timeout — the bridge never reached the host");
@@ -129,6 +138,13 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             Report("PASS", "stage A — embedded web-sdk served over the virtual host, bridge injected, "
                 + "handshake received (state=" + viewer.State + ", pageWebSdkVersion="
                 + (viewer.PageWebSdkVersion ?? "(null)") + ")");
+
+            // Not an assertion — SetContextAsync returning already proves the gate did not fail
+            // closed. Reported because it is the only place the check runs against a real server,
+            // so the log says which source answered and which version it read. An "unknown" here
+            // is worth noticing: it means the suite is passing with the gate effectively disarmed.
+            Report("INFO", "SDC version check — " + (viewer.SdcServerVersionCheck?.ToString() ?? "(not run)")
+                + " [minimum " + SdcCompatibility.MinimumSdcVersion + "]");
 
             if (!ServerStagesEnabled)
             {

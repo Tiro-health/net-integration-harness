@@ -206,6 +206,7 @@
           "Hl7.Fhir.Base": "[5.13.2, )",
           "Microsoft.Extensions.Logging.Abstractions": "[9.0.7, )",
           "Microsoft.Web.WebView2": "[1.0.3650.58, )",
+          "Tiro.Health.FormSdk.Abstractions": "[1.0.0, )",
           "Tiro.Health.SmartWebMessaging": "[1.0.0, )"
         }
       },
@@ -223,6 +224,12 @@
         "dependencies": {
           "Sentry": "[6.0.0, )",
           "Tiro.Health.FormFiller.WebView2": "[1.0.0, )"
+        }
+      },
+      "tiro.health.formsdk.abstractions": {
+        "type": "Project",
+        "dependencies": {
+          "System.Text.Json": "[9.0.2, )"
         }
       },
       "tiro.health.smartwebmessaging": {

@@ -271,11 +271,18 @@
         "resolved": "4.5.0",
         "contentHash": "okurQJO6NRE/apDIP23ajJ0hpiNmJ+f0BwOlB/cSqTLQlw5upkf+5+96+iG2Jw40G1fCVCyPz/FhIABUjMR+RQ=="
       },
+      "tiro.health.formsdk.abstractions": {
+        "type": "Project",
+        "dependencies": {
+          "System.Text.Json": "[9.0.2, )"
+        }
+      },
       "tiro.health.formsdk.client": {
         "type": "Project",
         "dependencies": {
           "Hl7.Fhir.Base": "[5.13.2, )",
-          "System.Text.Json": "[9.0.2, )"
+          "System.Text.Json": "[9.0.2, )",
+          "Tiro.Health.FormSdk.Abstractions": "[1.0.0, )"
         }
       },
       "tiro.health.formsdk.client.fhir.r5": {
@@ -476,11 +483,18 @@
           "System.Text.Encodings.Web": "9.0.2"
         }
       },
+      "tiro.health.formsdk.abstractions": {
+        "type": "Project",
+        "dependencies": {
+          "System.Text.Json": "[9.0.2, )"
+        }
+      },
       "tiro.health.formsdk.client": {
         "type": "Project",
         "dependencies": {
           "Hl7.Fhir.Base": "[5.13.2, )",
-          "System.Text.Json": "[9.0.2, )"
+          "System.Text.Json": "[9.0.2, )",
+          "Tiro.Health.FormSdk.Abstractions": "[1.0.0, )"
         }
       },
       "tiro.health.formsdk.client.fhir.r5": {

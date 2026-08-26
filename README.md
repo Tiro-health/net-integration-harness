@@ -15,7 +15,7 @@ There is no umbrella `net-integration-harness` package. In Visual Studio, right-
 - **`Tiro.Health.FormFiller.WebView2.Fhir.R5`** (or `.Fhir.R4` for an R4 consumer) — the closed-binding control. Pulls in the messaging core, the WebView2 host, and `Hl7.Fhir.*` transitively.
 - *(optional)* **`Tiro.Health.FormFiller.WebView2.Sentry`** — Sentry-backed telemetry adapter. Only if you want telemetry; see [Telemetry](#telemetry).
 
-That's it — two top-level package references. Everything else (`Tiro.Health.SmartWebMessaging`, `Tiro.Health.SmartWebMessaging.Fhir.*`, `Tiro.Health.FormFiller.WebView2`, `Hl7.Fhir.Base`, `Hl7.Fhir.R5`/`R4`, `Hl7.Fhir.Conformance`, etc.) comes through transitively.
+That's it — two top-level package references. Everything else (`Tiro.Health.SmartWebMessaging`, `Tiro.Health.SmartWebMessaging.Fhir.*`, `Tiro.Health.FormFiller.WebView2`, `Tiro.Health.FormSdk.Abstractions`, `Hl7.Fhir.Base`, `Hl7.Fhir.R5`/`R4`, `Hl7.Fhir.Conformance`, etc.) comes through transitively.
 
 The resulting `<PackageReference>` block in your `.csproj` / `.vbproj`:
 
@@ -381,6 +381,8 @@ TiroFormViewer.DataEndpointAddress = "https://data.hospital.example/fhir/r5"
 
 `SdcEndpointAddress` is seeded from the closed binding's `DefaultSdcEndpointAddress` (`TiroFormViewerR5.DefaultSdcEndpointAddress` = `https://sdc.tiro.health/fhir/r5`) so out-of-the-box demos work without configuration. `DataEndpointAddress` has no default. Either property must be set **before** `SetContextAsync` (the bridge reads them once, when the page is first wired).
 
+The SDC server you point at must be at or above the version this harness release declares — the first `SetContextAsync` checks it and refuses the session if it isn't. See [SDC server version compatibility](#sdc-server-version-compatibility).
+
 ### Rendering a form read-only
 
 `ReadOnly` renders the form view-only — no answer can be changed. Set it before `SetContextAsync`, like the endpoint properties:
@@ -437,6 +439,7 @@ net-integration-harness/
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R5/    # Designer-friendly R5 viewer
 │   ├── Tiro.Health.FormFiller.WebView2.Fhir.R4/    # Designer-friendly R4 viewer
 │   ├── Tiro.Health.FormFiller.WebView2.Sentry/     # Sentry-backed ITelemetrySink adapter
+│   ├── Tiro.Health.FormSdk.Abstractions/           # Shared SDC-server contract — MinimumSdcVersion + the version probe
 │   ├── Tiro.Health.FormSdk.Client/                 # Typed SDC FHIR client core ($validate/$extract)
 │   └── Tiro.Health.FormSdk.Client.Fhir.R5/         # SDC client — FHIR R5 closed binding
 ├── samples/
@@ -447,7 +450,7 @@ net-integration-harness/
 └── tests/
     ├── Tiro.Health.SmartWebMessaging.Tests/        # MSTest, protocol/handler coverage
     ├── Tiro.Health.FormFiller.WebView2.Tests/      # MSTest, viewer lifecycle + telemetry contracts + embedded assets
-    └── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract over a fake HttpMessageHandler
+    └── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract + the version gate, over a fake HttpMessageHandler
 ```
 
 ### `Tiro.Health.SmartWebMessaging` (core)
@@ -480,6 +483,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
+  - SDC server version check on the first `SetContextAsync`: the session is refused (`SdcServerTooOldException`) when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
 Designer-friendly closed bindings of `TiroFormViewer<,,>`.
@@ -497,6 +501,13 @@ Sentry-backed `ITelemetrySink` adapter. Optional: only depend on this if you wan
   - `SentryTelemetrySink` — the underlying `ITelemetrySink` implementation. Owns two DSNs (one for the .NET host process, one injected into the embedded page) plus environment and release. Use directly only when registering with `TiroFormViewerDefaults.TelemetrySinkFactory` by hand or implementing a custom adapter chain.
 - Auto-detects release as `Tiro.Health.FormFiller.WebView2@<version>+<commit>` from the FormFiller assembly's `AssemblyInformationalVersion` (so traces deep-link to source via Sentry's release pipeline if you upload symbols)
 
+### `Tiro.Health.FormSdk.Abstractions`
+The SDC-server contract shared by the form viewer and the SDC client — everything about the server that both surfaces have to agree on. UI-free, FHIR-model-free, `System.Text.Json` its only dependency; it arrives transitively with either package and integrators never reference it directly.
+
+- **Targets**: `netstandard2.0`, `net48`
+- **Key types**: `SdcCompatibility` (holds `MinimumSdcVersion` and the version grammar), `SdcServerVersionProbe` (reads a live server's version), `SdcVersionCheckResult` / `SdcVersionCheckOutcome`, `SdcServerTooOldException`
+- **Why a separate package**: the viewer and the client stay siblings with no dependency on each other (each has a different runtime and lifecycle), so a floor that lives in either one would have to be duplicated in the other — and two copies of a version number drift. This is the one deliberate shared type between them. See [SDC server version compatibility](#sdc-server-version-compatibility).
+
 ### `Tiro.Health.FormSdk.Client` (core) / `Tiro.Health.FormSdk.Client.Fhir.R5`
 Thin, strongly-typed client over the **stateless SDC server** FHIR operations — call them directly instead of hand-building request bodies and parsing raw responses. A separate concern from the messaging/viewer packages (an HTTP/FHIR client, not an embedded-UI bridge); depend on it only if your host calls the SDC server itself.
 
@@ -507,6 +518,7 @@ Thin, strongly-typed client over the **stateless SDC server** FHIR operations �
 - **Construction**: `new SdcClient(new Uri("https://host/fhir/r5"), httpClient?)` — inject a pre-configured `HttpClient` for custom TLS/proxy/timeouts. The client deliberately has **no default base** — you must pass one.
 - **Point the client at the same SDC server as the form.** `baseAddress` here and the viewer's `SdcEndpointAddress` ([`TiroFormViewer`](#tirohealthformfillerwebview2)) are the *same* concept — the SDC server. A host that embeds the form **and** calls `$validate`/`$extract` directly should **construct the client from `viewer.SdcEndpointAddress`** (see [Extracting after a form submit](#extracting-after-a-form-submit)) so the two can't drift apart. Note this is a **convention, not an enforced guarantee** — nothing in the API stops you from pointing the form and the client at different servers, so derive the client's address from the viewer rather than configuring it separately.
 - **Behaviour**: thin over Firely's serializer + `HttpClient` (POSTs a bare `QuestionnaireResponse`, the shape the SDC server expects). A validation failure comes back as `OperationOutcome` issues; transport/server errors (non-2xx) throw `SdcOperationException`. Responses are parsed in Firely's *recoverable* mode, so a `200` carrying an element/code a newer server emits that this Firely version doesn't recognize is still returned (partial POCO) rather than failing
+- **SDC server version check** — the first operation on a client preflights the server's version against `SdcCompatibility.MinimumSdcVersion` and throws `SdcServerTooOldException` before the operation is sent if the server is older. The check runs once per client instance, travels the injected `HttpClient` (so custom TLS/proxy/auth apply to it too), and its verdict stays readable on `client.ServerVersionCheck`. A server whose version can't be read fails **open**. See [SDC server version compatibility](#sdc-server-version-compatibility)
 - **Telemetry-free** — the client takes no telemetry seam; it's a pure HTTP/FHIR client. If you want a span around a call, wrap it at the call site with a session you own — `Using session.StartTransaction("sdc.extract", "http.client") : Await client.ExtractAsync(qr) : End Using` — where `session` is any `ITelemetrySession` you create (e.g. from a sink via `BeginSession`). Keeping telemetry out of the client avoids coupling its lifetime to a session's
 - **R5-only**: these SDC operations exist only on `/fhir/r5`, so there is no R4/R5 split — a future R4 server would be one new `.Fhir.R4` binding. `$populate` is tracked separately (#29)
 
@@ -577,8 +589,8 @@ WinForms demos.
 - **Framework**: MSTest + Moq
 - **Coverage**:
   - `SmartWebMessaging.Tests` — protocol routing, request/response correlation, payload validation (including `form.submitted` `[Required]` enforcement), event firing, JSON probe, async-task extensions
-  - `FormFiller.WebView2.Tests` — viewer lifecycle (state machine transitions, dispose semantics), telemetry sink contracts (`NullTelemetrySink` no-ops, span ordering, session tagging), embedded `WebAssets/` resource integrity
-  - `FormSdk.Client.Tests` — SDC `$validate`/`$extract` over a fake `HttpMessageHandler`: typed result parsing, validation-issues-without-throw, non-2xx → `SdcOperationException`, and a guard that the request body is a bare `QuestionnaireResponse`
+  - `FormFiller.WebView2.Tests` — viewer lifecycle (state machine transitions, dispose semantics), telemetry sink contracts (`NullTelemetrySink` no-ops, span ordering, session tagging), embedded `WebAssets/` resource integrity, and the SDC server version gate (too old → nothing reaches the page; unknown → the session proceeds)
+  - `FormSdk.Client.Tests` — SDC `$validate`/`$extract` over a fake `HttpMessageHandler`: typed result parsing, validation-issues-without-throw, non-2xx → `SdcOperationException`, and a guard that the request body is a bare `QuestionnaireResponse`. Also covers `Tiro.Health.FormSdk.Abstractions`: the version grammar and prerelease rule, the two-source probe (base-relative `metadata`, origin-relative `/openapi.json` fallback, fail-open on everything unreadable), and the client's startup gate
 
 ## Architecture notes
 
@@ -618,7 +630,51 @@ The harness **embeds** the exact `tiro-web-sdk` version it was validated against
 - **Save-draft** (`SendFormRequestSubmitAsync(intent: "save-draft")`) needs `submit({ status })` (web-sdk >= 0.3.0) — the embedded SDK satisfies this. On the old page-pinned model, an older SDK silently **finalized** instead of saving a draft; that failure mode can no longer occur.
 - **`TiroFormViewer.IsDirty`/`FormDirtyChanged`** needs [`isDirty`/`tiro-dirty-change`](https://github.com/Tiro-health/atticus-frontend/issues/2831) (web-sdk >= 0.3.2) — likewise satisfied by the embedded SDK.
 
-A page that still loads its own `tiro-web-sdk` copy collides with the embedded one: the bridge skips injection, fires `tiro-sdk-collision`, and the viewer **refuses the session** — `SetContextAsync` throws `WebSdkLoadException` — remove the script tag. The same refusal applies when the embedded SDK fails to load (`tiro-sdk-error`), so a broken environment surfaces as a clear exception instead of a blank form. The `build/bridge-contract/` type-check gates every PR and release against the pinned version; the version story for integrators is one line: **pin the harness NuGet, done**.
+A page that still loads its own `tiro-web-sdk` copy collides with the embedded one: the bridge skips injection, fires `tiro-sdk-collision`, and the viewer **refuses the session** — `SetContextAsync` throws `WebSdkLoadException` — remove the script tag. The same refusal applies when the embedded SDK fails to load (`tiro-sdk-error`), so a broken environment surfaces as a clear exception instead of a blank form. The `build/bridge-contract/` type-check gates every PR and release against the pinned version, so nothing in the page is a version choice any more.
+
+### SDC server version compatibility
+
+With the web-sdk embedded, the **SDC server is the only component that can still change underneath a frozen harness** — you run and upgrade your own instance, on your own schedule, while the harness ships inside a released EHR binary. So it gets the one runtime version check, and the integrator story is two numbers, not one:
+
+> **Pin the harness NuGet; run an SDC server at or above `MinimumSdcVersion`.**
+
+```csharp
+Tiro.Health.FormSdk.Abstractions.SdcCompatibility.MinimumSdcVersion   // e.g. "v0.9.38"
+```
+
+The value is also in each release's notes. It is checked at first use on **both** surfaces that talk to the server:
+
+| Surface | When | On failure |
+|---|---|---|
+| `TiroFormViewer` (`SdcEndpointAddress`) | first `SetContextAsync`, after the handshake and **before** anything is sent to the page | `SdcServerTooOldException`; no form is configured or displayed |
+| `SdcClient` (`baseAddress`) | first `$validate` / `$extract` | `SdcServerTooOldException`; the operation is never sent |
+
+Both run the check once and cache the verdict, and the viewer starts it while the browser is initializing, so it adds no measurable latency to a form launch.
+
+**How the version is read.** Two sources, in order:
+
+1. `GET {sdcEndpoint}/metadata` → `CapabilityStatement.software.version`. Resolved *base-relative*, so it survives a gateway path prefix, and it's the FHIR spec's own field for "version of the software running". ~530 bytes, `ETag`ed and cacheable.
+2. `GET {origin}/openapi.json` → `info.version` — the same string from the same source, and the only route servers predating (1) answer. Origin-relative, so unlike (1) it does not survive a gateway path prefix; it's a fallback for the installed base and gets dropped once no supported server needs it.
+
+**Failure semantics.** Only one case fails closed:
+
+- Server answers with a version **below** the floor → **fail closed**, with both versions named in the message.
+- Server unreachable, timed out, answered 4xx/5xx, or reported something outside the version grammar (a `dev` build, a PR checkpoint id, `development`) → **fail open**. A network blip, a server predating both routes, or a developer instance must not brick a working deployment.
+
+**Prerelease rule.** Only `(major, minor, patch)` is compared; a `-rc.N` / `+build` suffix is ignored on both sides. So `v0.9.38-rc.0` **satisfies** a minimum of `v0.9.38` — laxer than semver on purpose, because the production deploy accepts any tag, so a release candidate can legitimately reach a customer and failing closed there would brick a deployment that almost certainly has the feature.
+
+**Seeing what it found.** The check's diagnostics land in *your* logs, not Tiro's — you host the server. Three ways to read them:
+
+- `viewer.SdcServerVersionCheck` / `client.ServerVersionCheck` — the `SdcVersionCheckResult` (outcome, reported version, which source answered, and why if it couldn't tell). `null` until the check has run.
+- A `System.Diagnostics.Trace` warning on every fail-open, so a host with a trace listener sees a check that silently stopped working.
+- For the viewer, a `sdc.version` breadcrumb on the telemetry session, so the verdict is attached to any error captured later in that session.
+
+**When it fires.** Upgrade the SDC server to `MinimumSdcVersion` or newer, or run the harness release whose minimum your server satisfies. There is deliberately no opt-out: a wrong pairing has silent clinical failure modes, which is the whole reason this exists.
+
+Two caveats worth knowing:
+
+- **The viewer's probe is unauthenticated.** It has no `HttpClient` of its own (the page makes the real SDC requests, inside WebView2) and there's no host→page auth seam yet, so a server requiring a credential on `/metadata` answers 401/403 — which is an unknown version, and fails open. `SdcClient` has no such gap: its probe travels the `HttpClient` you inject.
+- **A version-format change on the server would silently disarm the check** in every already-shipped harness, degrading it to fail-open. Nothing in this repo can detect that; it's held by a CI tag check on the server side.
 
 ## Troubleshooting
 

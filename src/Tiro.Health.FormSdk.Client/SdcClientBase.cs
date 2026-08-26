@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -7,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Hl7.Fhir.Model;
 using Hl7.Fhir.Serialization;
+using Tiro.Health.FormSdk.Abstractions;
 
 namespace Tiro.Health.FormSdk.Client
 {
@@ -35,6 +37,12 @@ namespace Tiro.Health.FormSdk.Client
         private readonly bool _ownsHttpClient;
         private readonly JsonSerializerOptions _fhirJson;
         private readonly Uri _baseAddress;
+
+        // Result of the one-time SDC server version check (GH-62); null until it has run.
+        // Deliberately caches the RESULT, not the Task: a shared Task would be poisoned for
+        // every later operation by the first caller's cancellation, and two callers racing
+        // here at worst repeat one small idempotent GET.
+        private volatile SdcVersionCheckResult _versionCheck;
 
         /// <param name="baseAddress">The SDC server FHIR base, e.g. <c>https://host/fhir/r5</c>.</param>
         /// <param name="fhirJson">FHIR-configured serializer options (built with <c>.ForFhir(...)</c> by the binding).</param>
@@ -87,10 +95,57 @@ namespace Tiro.Health.FormSdk.Client
         public Task<TBundle> ExtractAsync(TQuestionnaireResponse questionnaireResponse, CancellationToken cancellationToken = default)
             => PostResourceAsync<TBundle>("QuestionnaireResponse/$extract", questionnaireResponse, cancellationToken);
 
+        /// <summary>
+        /// The outcome of this client's SDC server version check, or <c>null</c> until the
+        /// first operation has run it. Exposed because the check's telemetry lands in the
+        /// <em>customer's</em> logs, not Tiro's — they self-host the server — so a host that
+        /// wants to surface "the version could not be established" in its own diagnostics
+        /// needs a way to read it. See <see cref="SdcCompatibility.MinimumSdcVersion"/>.
+        /// </summary>
+        public SdcVersionCheckResult ServerVersionCheck => _versionCheck;
+
+        /// <summary>
+        /// Runs the SDC server version check once per client instance, before the first
+        /// operation reaches the server (GH-62).
+        /// </summary>
+        /// <remarks>
+        /// Fails closed on a server that answered with a too-old version — the pairing is
+        /// wrong, and letting it through means the mismatch surfaces later as a generic
+        /// <see cref="SdcOperationException"/> or, worse, as a silent behavioural difference.
+        /// Fails open on anything else, loudly: an unreachable server, a timeout, a server
+        /// predating the version routes, or a <c>dev</c> build must not stop a working
+        /// deployment. "Loudly" is <see cref="Trace"/> here rather than a logger, because
+        /// this client is deliberately telemetry-free (GH-33 tracks an optional
+        /// <c>ILogger</c> seam); <see cref="ServerVersionCheck"/> is the programmatic view.
+        /// <para>
+        /// The check goes through the same <see cref="HttpClient"/> as the operations, so a
+        /// host that injected one for custom TLS/proxy/auth has that apply to the probe too.
+        /// </para>
+        /// </remarks>
+        private async Task EnsureServerVersionSupportedAsync(CancellationToken cancellationToken)
+        {
+            var result = _versionCheck;
+            if (result == null)
+            {
+                result = await SdcServerVersionProbe
+                    .CheckAsync(_baseAddress, _http, cancellationToken)
+                    .ConfigureAwait(false);
+                _versionCheck = result;
+
+                if (result.Outcome == SdcVersionCheckOutcome.Unknown)
+                    Trace.TraceWarning("Tiro.Health.FormSdk.Client: " + result);
+            }
+
+            if (result.Outcome == SdcVersionCheckOutcome.TooOld)
+                throw new SdcServerTooOldException(result);
+        }
+
         private async Task<TOut> PostResourceAsync<TOut>(string relativePath, Resource body, CancellationToken cancellationToken)
             where TOut : Resource
         {
             if (body == null) throw new ArgumentNullException(nameof(body));
+
+            await EnsureServerVersionSupportedAsync(cancellationToken).ConfigureAwait(false);
 
             var json = JsonSerializer.Serialize(body, _fhirJson);
 
