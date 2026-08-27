@@ -18,11 +18,16 @@ when server stages are deliberately skipped). A bare `PASS` grep also matched `P
 a run whose server stages were skipped for any reason passed the gate having asserted nothing
 about save-draft, finalize or `$extract`.
 
-What a *pull request* gates on is only the part that needs no server: the bundle, the
-injection order, the handshake. The stages that talk to a live SDC server run nightly and on
-demand (`E2E_SERVER_TESTS=0` / `PROBE_SKIP_SERVER_STAGES=1` on PRs), because a staging outage
-must not redden a pull request that cannot have caused it — a suite that goes red for reasons
-outside the author's control gets ignored just as fast as an advisory one.
+What a *pull request* gates on differs by layer, and the reason is the same in both cases: a
+staging outage must not redden a pull request that cannot have caused it, because a suite that
+goes red for reasons outside the author's control gets ignored just as fast as an advisory one.
+
+- **Layer 1 runs the whole flow on every pull request**, against the floor cell — an SDC server
+  container pinned to `SdcCompatibility.MinimumSdcVersion`, on the runner. Nothing shared, so
+  there is no outage to be hostage to, and `E2E_SERVER_TESTS=1` for every cell including PRs.
+- **Layer 2 runs stage A only** — the bundle, the injection order, the handshake
+  (`PROBE_SKIP_SERVER_STAGES=1`). It cannot have a floor cell: the pinned server is a Linux
+  container and Windows runners cannot host one. Its server-backed stages run nightly.
 
 ## `browser/` — layer 1
 
@@ -97,9 +102,9 @@ handshake carrying no `client` object at all is also accepted — `EvaluateWebSd
 returns no failure. Layer 1 covers both on pull requests (`client.name`, `client.source`, and
 `customElements.get`), which is why the two layers gate together rather than separately.
 
-Stage A stops there and needs no server, which is why it is the part a pull request gates
-on; `WebSdkLoadException` (bundle missing, or a page-owned copy colliding) fails it
-explicitly. Stages B1–B3 then save a draft, finalize, and `$extract`, asserting on typed
+Stage A stops there and needs no server, which is why it is the part a pull request gates on
+*for this layer* — layer 1 gets a pinned server on pull requests, layer 2 cannot;
+`WebSdkLoadException` (bundle missing, or a page-owned copy colliding) fails it explicitly. Stages B1–B3 then save a draft, finalize, and `$extract`, asserting on typed
 FHIR POCOs — so they also prove Firely can deserialize what the real element emits.
 
 **The SDC version check (GH-62) is asserted with the server stages, not with stage A.** This is
@@ -208,8 +213,8 @@ credential in Cloud Build. Reopen it when that 20 hours actually costs something
 **Staging** (`sdc-staging.tiro.health`) is the in-code default for both layers. Two reasons, and
 the second is easy to overlook:
 
-- Staging runs *ahead* of production (it was on `v0.9.38-rc.0` while prod was `v0.9.37`), so
-  a server regression surfaces here before customers meet it.
+- Staging runs *ahead* of production — it deploys on every `-rc.N` tag, while a final tag goes
+  straight to production — so a server regression surfaces here before customers meet it.
 - Never production: these run nightly and write QuestionnaireResponses on every pass, so
   pointing them at prod would mean synthetic clinical data in the instance customers use,
   and CI traffic in the usage signal atticus-backend#3568 aggregates to decide what to
