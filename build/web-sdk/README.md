@@ -7,7 +7,7 @@ integrators or customers make (see the decision record in GH-64).
 
 - `package.json` — the pin: an exact version, no range.
 - `copy-bundle.mjs` — stages the bundle + generated `web-sdk.version.json` into
-  `src/Tiro.Health.FormFiller.WebView2/WebAssets/` (gitignored there, embedded
+  `src/Tiro.Health.FormFiller.WebView2/WebAssets/` (committed there, embedded
   as resources at build time).
 
 ## The pinned version is part of the URL
