@@ -102,6 +102,19 @@ on; `WebSdkLoadException` (bundle missing, or a page-owned copy colliding) fails
 explicitly. Stages B1–B3 then save a draft, finalize, and `$extract`, asserting on typed
 FHIR POCOs — so they also prove Firely can deserialize what the real element emits.
 
+**The SDC version check (GH-62) is asserted with the server stages, not with stage A.** This is
+the only place in the repo it runs against a real server, so it is the only thing holding three
+contracts unit tests cannot reach: that `{base}/metadata` stays locally routed rather than
+tunnelled to the data endpoint, that `software.version` keeps meaning the SDC server's own
+version, and that `software.name` keeps saying what it says. Anything but a `Satisfied` verdict
+fails the run — `Unknown` very much included, since that is the shape of the gate going
+silently disarmed. The verdict is *printed* in stage A because the viewer starts the probe inside
+`SetContextAsync` and it costs nothing to show; reaching it needs the server to answer, so the
+assertion belongs where a server is guaranteed. It briefly did not, and a staging outage would
+have reddened pull requests that could not have caused it. The cost of that placement is real:
+the check is verified nightly rather than per-PR, so a change on the server side surfaces within
+a day rather than on the pull request that happens to follow it.
+
 Only the first submit of a session is retried, and deliberately so: a submit before render is
 silently dropped (see below), but a *resubmit* after render races the first request rather
 than replacing it, and the page refuses a second submit on a finalized response — so retrying
@@ -125,8 +138,51 @@ diagnosable.
 
 ## Which server these run against
 
-**Staging** (`sdc-staging.tiro.health`), both layers, set in the workflow and as the
-in-code default. Two reasons, and the second is easy to overlook:
+### The intended matrix
+
+Three cells over one parameterised job — the only thing that varies is which SDC server the
+suite points at, and what verdict the version check is expected to reach against it.
+
+> **Not built yet.** This is the shape being moved to, recorded here because the reasoning was
+> settled before the code was. Today both layers point at staging and a pull request runs no
+> server-backed stages at all. The floor and dev cells arrive with the floor cell (see
+> *Not done here*); until then, read the table as the plan rather than the behaviour.
+
+| Cell | When | Server | Expected version verdict | The question it answers |
+|---|---|---|---|---|
+| **floor** | every PR + merge | container pinned to `SdcCompatibility.MinimumSdcVersion`, pulled from `docker-ext` | `Satisfied` | Did *this harness change* break the minimum we publish? |
+| **dev** | nightly | `sdc-dev.tiro.health` | `Unknown` **and** `ReportedVersion == "dev"` | Did a server change break us — at the earliest possible moment |
+| **staging** | nightly | `sdc-staging.tiro.health` | `Satisfied` | Did the release candidate break us, against the artifact customers pull |
+
+Deliberately **not** a growing N×M matrix. The harness ships as one pinned artifact, so the
+only interesting points are the bottom of the supported range and the top; there is no middle
+for a cell to occupy. A fourth cell should be a decision, not drift.
+
+**Why the dev cell asserts something different rather than asserting less.** `sdc-dev` reports
+`software.version: "dev"`, which is outside the version grammar by design, so the verdict there
+is always `Unknown` — demanding `Satisfied` would make that cell red forever. But relaxing the
+assertion to "any verdict" would throw away what it is for. `Unknown` is not one bucket:
+`FromReportedVersion("dev")` sets `ReportedVersion` to `"dev"`, while `Unavailable(...)` — an
+unreachable server, a tunnelled `/metadata`, a document that cannot be attributed to the SDC
+server — leaves it `null`. Asserting `Unknown` **and** `"dev"` therefore still holds every
+contract the strict assertion held, except the one dev can never exercise: that the grammar and
+comparison work on a real version string. Staging covers that.
+
+**Why the floor cell can only exist on layer 1.** Layer 2 needs a Windows runner and Windows
+runners cannot run Linux containers, so the pinned-server cells are browser-only. Layer 2 keeps
+URL targets, which is why its version-check assertion runs nightly rather than per pull request
+(see *Not done here*).
+
+**Why there is no release-triggered cell.** Tiro-health/atticus-backend#3601 designed one — the
+SDC release dispatching this suite — and it was closed as deferred. Staging deploys on every
+`-rc.N` tag, so the nightly already catches a breaking release candidate within a day; the
+dispatch buys ~20 hours of latency and per-release attribution, at the cost of a standing GitHub
+credential in Cloud Build. Reopen it when that 20 hours actually costs something.
+
+### The shared servers, and why never production
+
+**Staging** (`sdc-staging.tiro.health`) is the in-code default for both layers. Two reasons, and
+the second is easy to overlook:
 
 - Staging runs *ahead* of production (it was on `v0.9.38-rc.0` while prod was `v0.9.37`), so
   a server regression surfaces here before customers meet it.
@@ -135,9 +191,17 @@ in-code default. Two reasons, and the second is easy to overlook:
   and CI traffic in the usage signal atticus-backend#3568 aggregates to decide what to
   support.
 
-The `{MinimumSdcVersion, latest}` matrix below is what eventually replaces a shared server
-with pinned ones on layer 1; staging stays the right target for the Windows job, which
-cannot run Linux containers.
+The floor cell above is what replaces a shared server with a pinned one on layer 1. Staging
+stays a target regardless — it is the only cell that exercises the *deployment*: real config,
+gateway, TLS, data volume. A container tests an image; those are different things.
+
+There is deliberately no `latest` container cell. It would duplicate staging with worse
+fidelity — an image rather than a deployment — and `latest` is a moving tag, so pinning it for
+reproducibility turns it into neither latest nor the floor.
+
+The stale rationale about atticus-backend#3568's usage signal no longer applies (GH-63 was
+dropped, and §2 of that issue struck with it); the reason to stay off production is the
+synthetic QuestionnaireResponses alone.
 
 ## Sharp edges these tests exposed
 
@@ -153,13 +217,29 @@ cannot run Linux containers.
 
 ## Not done here
 
-- The `{MinimumSdcVersion, latest}` server matrix. It belongs on layer 1, where the public
-  image (`europe-docker.pkg.dev/tiroapp-4cb17/docker-ext/form-sdk-backend`) can be pinned
-  per cell; layer 2 can't run Linux containers on a Windows runner. The server needs no
-  database, so `uvicorn` is a fallback if pulling the image is awkward.
-- A fixture questionnaire in-repo. Both layers pin the canonical to `|1.0.0` now — layer 2's
-  default was unpinned for a while, which made the claim below true of half the suite — and both
-  assert the pin held rather than assuming it, so an edit to the draft cannot reach the suite. A
-  *new* version of the pinned revision still could.
-- Running these in atticus-backend CI too, which is the direction that catches a *server*
-  change breaking the fielded bridge.
+- **The floor cell**, and it needs one thing this suite does not have yet. The image
+  (`europe-docker.pkg.dev/tiroapp-4cb17/docker-ext/form-sdk-backend`) pulls keylessly —
+  atticus-backend#3599 granted `harness-e2e-ar-reader` read on `docker-ext`, and the entrypoint
+  is `uvicorn ... --port ${PORT:-8080} sdc_server.main:app`, so a bare `docker run -p 8080:8080`
+  serves `/fhir/r5`. What a bare container does *not* have is anywhere to get a questionnaire.
+  The SDC server does not store them: the element calls `Questionnaire/$resolve`, and the server
+  forwards that to `{TEMPLATE_SERVER_URL}/fhir/r5/Questionnaire/$resolve`, expecting a single
+  Questionnaire resource back (`sdc/questionnaire_retriever.py`,
+  `CanonicalQuestionnaireRetriever`). Both hops are read from the shipped SDK bundle and the
+  server source rather than inferred. So the container needs a template server, and pointing it
+  at a shared one would put that shared server back in the pull-request path — the whole thing
+  the floor cell exists to remove. The floor cell and the in-repo fixture below are therefore
+  one piece of work, not two.
+- **A fixture questionnaire in-repo**, served to the container as its template server. Both layers
+  pin the canonical to `|1.0.0` now — layer 2's default was unpinned for a while, which made the
+  claim below true of half the suite — and both assert the pin held rather than assuming it, so an
+  edit to the draft cannot reach the suite. A *new* version of the pinned revision still could.
+- Restoring layer 2's version-check assertion to per-pull-request. It runs nightly today
+  because it needs a live server, and the floor cell cannot help: pinned-server cells are
+  layer 1 only. Closing this needs a server layer 2 can reach on a Windows runner, which is
+  not a thing that exists today.
+- Asserting the three `/metadata` contracts from layer 1 in JavaScript, against the floor
+  container. That would put contract coverage back on pull requests. Framed correctly it is a
+  *server contract* test rather than a second implementation of the C# check — "does the server
+  still answer `/metadata` with `software.name` and `software.version`" — so it does not
+  reintroduce the drift the single-source rule exists to prevent.
