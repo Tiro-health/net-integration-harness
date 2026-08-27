@@ -634,54 +634,36 @@ A page that still loads its own `tiro-web-sdk` copy collides with the embedded o
 
 ### SDC server version compatibility
 
-With the web-sdk embedded, the **SDC server is the only component that can still change underneath a frozen harness** — you run and upgrade your own instance, on your own schedule, while the harness ships inside a released EHR binary. So it gets the one runtime version check, and the integrator story is two numbers, not one:
-
-> **Pin the harness NuGet; run an SDC server at or above `MinimumSdcVersion`.**
+> **Pin the harness NuGet; run an SDC server at or above `MinimumSdcVersion`.** That pair is the
+> whole compatibility surface — the embedded web-sdk is not a version you choose.
 
 ```csharp
 Tiro.Health.FormSdk.Abstractions.SdcCompatibility.MinimumSdcVersion   // e.g. "v0.9.39"
 ```
 
-The value is also in each release's notes. It is checked at first use on **both** surfaces that talk to the server:
+The value is in each release's notes. It is checked at first use — `TiroFormViewer` on the first
+`SetContextAsync`, `SdcClient` on the first `$validate`/`$extract` — by reading
+`GET {sdcEndpoint}/metadata` → `CapabilityStatement.software.version`, accepted only from a
+document whose `software.name` identifies it as the SDC server. Each surface checks once and
+caches the verdict. **Nothing is ever refused**; the check reports and gets out of the way.
 
-| Surface | When | On failure |
-|---|---|---|
-| `TiroFormViewer` (`SdcEndpointAddress`) | first `SetContextAsync`, after the handshake | reported; the form still opens |
-| `SdcClient` (`baseAddress`) | first `$validate` / `$extract` | reported; the operation still runs |
+- **Satisfied** — at or above the floor. Silent.
+- **TooOld** — an actionable warning naming both versions. Upgrade the SDC server, or run the
+  harness release whose minimum your server satisfies.
+- **Unknown** — unreachable, timed out, 4xx/5xx, a document that isn't the SDC server's, a server
+  that requires caller credentials, or a version outside the grammar (`dev`, `development`, a PR
+  checkpoint id). A diagnostic about the *check*, not about your server.
 
-Both run the check once and cache the verdict — the viewer per configured endpoint (a `SetContextAsync` retried after a failure reuses it, unless you changed `SdcEndpointAddress` in between, which re-probes), the client per instance and shared across concurrent first operations. The viewer starts it while the browser is initializing, so against a server that answers it adds no measurable latency to a form launch; against one that doesn't answer, the launch waits up to the probe's 3 s deadline before failing open. The client's is strictly serial in front of the first operation, so that one operation pays a single extra round trip.
+Only `(major, minor, patch)` is compared, so `v0.9.39-rc.0` satisfies a floor of `v0.9.39` — the
+production deploy accepts any tag, so a release candidate can legitimately reach a customer.
 
-**How the version is read.** One source: `GET {sdcEndpoint}/metadata` → `CapabilityStatement.software.version`, accepted only from a document whose `software.name` identifies it as the SDC server. The URL is built by *appending* to the address you configured, so the request reaches the same host the forms and the operations talk to, and a gateway path prefix survives. It's also the FHIR spec's own field for "version of the software running", ~530 bytes, `ETag`ed and cacheable.
+Read the verdict from `viewer.SdcServerVersionCheck` / `client.ServerVersionCheck`. The viewer
+also captures an `ITelemetrySink` message, so the Sentry adapter surfaces a warning even when
+nothing else in the session fails, and writes an `sdc.version` breadcrumb. Both surfaces write a
+`System.Diagnostics.Trace` warning; `SdcClient` has only that, since it takes no telemetry seam.
 
-> **Why the `software.name` check, when the URL is already base-relative?** Because base-relativity gets the request to the right *host*; it doesn't say who composed the answer. On a server predating this route, `{base}/metadata` has no local handler and falls into the SDC server's data tunnel, which proxies it to the configured data endpoint — so a self-hosted deployment with `DEFAULT_DATA_ENDPOINT` set replies with the *hospital's own* CapabilityStatement. The body is the only thing that can attribute the read, and `software.name` is `1..1` whenever `software` is present in R4/R5, so requiring it costs nothing a conformant server can take away. A document that fails attribution reads as unknown, never as too old.
-
-> There is deliberately **no fallback** to an origin-relative `/openapi.json`, though the same version string is there. That URL follows the *host* rather than the server: behind a gateway routing `/tiro-sdc/fhir/r5` to the SDC server and `/` to something else, it reads a neighbouring application's version — and FastAPI's default `info.version` is `0.1.0`, which parses, sorts below any real floor, and would refuse every form launch against a perfectly healthy server. Losing it costs nothing: a server too old to answer `metadata` is also older than any floor this harness declares, so it reads as unknown either way.
-
-**Nothing is refused.** Every outcome lets the session or the operation proceed; the check reports and gets out of the way. Two outcomes are worth reading:
-
-- Server answers with a version **below** the floor → an **actionable** warning naming both versions: upgrade the SDC server.
-- Server unreachable, timed out, answered 4xx/5xx, answered with a `CapabilityStatement` that isn't the SDC server's, or reported something outside the version grammar (a `dev` build, a PR checkpoint id, `development`) → a **diagnostic** warning about the check itself, not about your server.
-
-They read differently on purpose: one tells you to do something, the other tells you the check couldn't tell.
-
-**Why it doesn't refuse, given that refusing is the point.** Because refusing would protect nobody yet, and could only misfire. The floor and the code that enforces it live in the same assembly, so they always reach an integrator together — a deployment that hasn't adopted the release carrying a raised floor hasn't adopted its enforcement either, so fielding the refusal early buys no coverage. Meanwhile `MinimumSdcVersion` is currently the *first* server version that can answer the probe at all, so no reachable server is below it: a refusal today could only ever fire on a mistake, in a binary that can't be patched. The release that first raises the floor for a real reason is the release that adds the refusal, alongside the reason. Everything it needs — the probe, the grammar, the attribution guard, the plumbing — is already here and under test; both call sites carry a comment with the exact lines to add.
-
-> **What this can refuse today, honestly.** `v0.9.39` is the first server release that answers `metadata` at all, so every server able to answer the probe is at or above the floor *by construction* — and one too old to answer reads as "unknown" and is let through. The gate therefore refuses nothing yet. It arms on the first raise past `v0.9.39`, once releases exist that answer the probe and sit below the floor. Shipping it now is what makes that later raise a one-line change instead of a new release requirement for every integrator.
-
-**Prerelease rule.** Only `(major, minor, patch)` is compared; a `-rc.N` / `+build` suffix is ignored on both sides. So `v0.9.38-rc.0` **satisfies** a minimum of `v0.9.38` — laxer than semver on purpose, because the production deploy accepts any tag, so a release candidate can legitimately reach a customer and failing closed there would brick a deployment that almost certainly has the feature.
-
-**Seeing what it found.** The check's diagnostics land in *your* logs, not Tiro's — you host the server. Three ways to read them:
-
-- `viewer.SdcServerVersionCheck` / `client.ServerVersionCheck` — the `SdcVersionCheckResult` (outcome, reported version, and why if it couldn't tell). `null` until the check has run.
-- **A captured telemetry message** on the viewer, via `ITelemetrySink.CaptureMessage` — so with the Sentry adapter installed, a silently-disarmed check arrives in your Sentry project as a warning. This is the channel that works when nothing else is going wrong: a breadcrumb only travels if some *later* event in the session is captured, and on a healthy-but-disarmed deployment nothing ever is.
-- A `System.Diagnostics.Trace` warning, on both surfaces, written once per verdict. The default listener routes to `OutputDebugString`, so configure a `TraceListener` if you want to read it outside a debugger. `SdcClient` has only this channel and `ServerVersionCheck`, deliberately — it takes no telemetry seam.
-- For the viewer, a `sdc.version` breadcrumb on the telemetry session, so the verdict is attached to any error captured later in that session.
-
-**Raising the floor.** When the harness starts depending on newer server behaviour, raise `MinimumSdcVersion` to the release *after* the one carrying that behaviour — not to it. The comparison ignores prerelease suffixes, so `vX.Y.Z-rc.0` satisfies a floor of `vX.Y.Z`, and an rc cut before the feature merged would pass. A floor one patch higher can't be satisfied by a prerelease of the release you actually need. A raise only reaches an integrator when they deliberately upgrade the harness, so the release notes are where it gets announced.
-
-**When it warns.** Upgrade the SDC server to `MinimumSdcVersion` or newer, or run the harness release whose minimum your server satisfies.
-
-**Checking it at startup instead.** The check above happens at first use, which for the viewer means a clinician opening a form. A host that would rather learn about a bad pairing at login — where the error reaches IT, not a clinician mid-consult — can run the same probe itself and surface the result:
+To learn about a bad pairing at login — where the error reaches IT rather than a clinician
+mid-consult — run the same probe yourself:
 
 ```vb
 Dim verdict = Await SdcServerVersionProbe.CheckAsync(New Uri(sdcEndpoint))
@@ -690,16 +672,10 @@ If verdict.Outcome = SdcVersionCheckOutcome.TooOld Then
 End If
 ```
 
-Recommended for production hosts. It doesn't replace the per-use check, which stays as the backstop. Pass your own `HttpClient` if the server needs a credential, or to control the connection lifetime — the parameterless overload uses a process-wide client, which is fine for a desktop host but pins DNS for the process on .NET Core.
-
-The check runs once per `SdcClient` instance, so a host that constructs one per `$extract` pays one extra `GET` each time. Reuse a client where the flow allows it.
-
-Two caveats worth knowing:
-
-- **The viewer's probe sends no caller credential.** Today that costs nothing: the SDC server holds its own service-account credentials and requires none from the caller (see [#39](https://github.com/Tiro-health/net-integration-harness/issues/39)) — a hospital-local instance is an internal service and `sdc.tiro.health` is open. If a future server requires one, the probe answers 401/403, which reads as an unknown version and fails open rather than breaking anything; the seam to fix it is `protected virtual CheckSdcServerVersionAsync` on the viewer. `SdcClient` has no equivalent gap: its probe travels the `HttpClient` you inject into the client itself.
-- **The check depends on three things the SDC server must keep doing**, none of which this repo controls: answering `{base}/metadata` *locally* rather than proxying it to the data endpoint; keeping `software.version` meaning the server's own application version; and keeping `software.name` recognisable. All three degrade to a warning rather than a refusal, which is a large part of why nothing is refused yet: a mis-read version cannot take a site down. What holds all three is the nightly end-to-end suite, which asserts a `Satisfied` verdict against a live staging server, so a change to any of them turns that run red within a day.
-
-## Troubleshooting
+> Why this reports rather than refuses, why `software.name` is required, why there is no
+> `/openapi.json` fallback, and how to raise the floor are recorded in
+> [#76](https://github.com/Tiro-health/net-integration-harness/pull/76) and in
+> `SdcCompatibility.MinimumSdcVersion`'s doc comment.
 
 ### WinForms Designer can't load `TiroFormViewerR5/R4`
 
