@@ -130,10 +130,6 @@ if [ "$prev_floor_status" = "3" ]; then
          "the pattern, so this release's notes cannot say whether the floor moved." >&2
 fi
 
-# README anchored at this tag, so a link in a two-year-old release still lands on the text
-# that release actually shipped.
-COMPAT_DOC="$SERVER/$REPO/blob/$TAG/README.md#sdc-server-version-compatibility"
-
 # --- the generated block ---------------------------------------------------------------
 compose_block() {
     printf '%s\n' "$MARK_START"
@@ -200,17 +196,18 @@ compose_block() {
         echo
     fi
 
+    # Deliberately just the two numbers. Everything else that could go here — what the pairing
+    # means, why the page needs no script tag, how the check behaves, a link to all of that — is
+    # standing explanation that would repeat verbatim in every release forever. It lives in the
+    # README, which is where someone reads it once. Release notes carry what is different about
+    # THIS release; the blocks above carry that on the releases where something actually moved.
     cat <<BODY
 ## Compatibility
 
 | | |
 |---|---|
 | **Minimum SDC server** | \`$FLOOR\` |
-| Embedded \`@tiro-health/web-sdk\` | \`$WEB_SDK\` — ships inside the package; not a version you choose |
-
-Pin this NuGet version, and run an SDC server at or above the minimum — that pair is the whole
-compatibility surface. Your \`index.html\` needs no \`<script>\` tag: the harness serves the
-web-sdk bundle it was validated against. See [SDC server version compatibility]($COMPAT_DOC).
+| Embedded \`@tiro-health/web-sdk\` | \`$WEB_SDK\` |
 BODY
 
     printf '%s\n' "$MARK_END"
