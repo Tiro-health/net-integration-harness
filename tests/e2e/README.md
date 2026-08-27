@@ -190,9 +190,12 @@ The fixture is the real published revision, exported verbatim from that same rou
 byte-identical to what `templates-staging` serves. A hand-written one would have meant rewriting
 every assertion that depends on its content: the chip label, the disjoint `linkId`s that make
 "which revision rendered" observable from the QR alone, and the `calculatedExpression` the score
-comes from. A **nightly job compares the two**, so the copy going stale is caught rather than
-hoped against — it fails on a difference and only warns when the template server is unreachable,
-because an outage is not drift.
+comes from. It is deliberately *not* watched for drift against
+the live template server: a fixture is meant to be frozen — that is what makes the suite
+deterministic — and the resource carries `meta.lastUpdated`, so any diff would fire on record
+churn that means nothing. If a pinned revision is ever republished, that is a process problem
+upstream, not something this suite should police. Re-export it deliberately when the template
+it stands in for has genuinely moved on.
 
 **The floor must be a version that exists.** The cell resolves the image tag from
 `SdcCompatibility.MinimumSdcVersion` and fails, loudly and specifically, if `docker-ext` has no
