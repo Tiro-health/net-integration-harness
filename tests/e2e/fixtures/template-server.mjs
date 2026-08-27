@@ -65,6 +65,14 @@ const server = createServer((req, res) => {
   res.end(JSON.stringify(fixture));
 });
 
+// Without this, a bind failure (EADDRINUSE) is an unhandled 'error' event and node exits
+// silently — the workflow's wait loop then has to infer death from absence, which it once got
+// wrong. Say what happened and exit non-zero.
+server.on("error", (err) => {
+  console.error(`[template-server] FATAL: ${err.code ?? "error"} on port ${PORT}: ${err.message}`);
+  process.exit(1);
+});
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[template-server] listening on 0.0.0.0:${PORT}, holding ${CANONICAL}`);
 });

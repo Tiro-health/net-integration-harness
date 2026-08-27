@@ -149,11 +149,22 @@ Three cells over one parameterised job — the only thing that varies is which S
 suite points at, and what verdict the version check is expected to reach against it.
 
 
-| Cell | When | Server | Expected version verdict | The question it answers |
+| Cell | Layer | When | Server | The question it answers |
 |---|---|---|---|---|
-| **floor** | every PR + merge | container pinned to `SdcCompatibility.MinimumSdcVersion`, pulled from `docker-ext` | `Satisfied` | Did *this harness change* break the minimum we publish? |
-| **dev** | nightly | `sdc-dev.tiro.health` | `Unknown` **and** `ReportedVersion == "dev"` | Did a server change break us — at the earliest possible moment |
-| **staging** | nightly | `sdc-staging.tiro.health` | `Satisfied` | Did the release candidate break us, against the artifact customers pull |
+| **floor** | 1 | every PR + merge | container pinned to `SdcCompatibility.MinimumSdcVersion`, from `docker-ext` | Did *this harness change* break the minimum we publish? |
+| **staging** | 1 | nightly; **and on PRs that cannot reach the registry** | `sdc-staging.tiro.health` | Did the release candidate break us, against the artifact customers pull |
+| **dev** | 1 | nightly | `sdc-dev.tiro.health` | Did a server change break us — at the earliest possible moment |
+| **dev** / **staging** | 2 | nightly | the same two endpoints | …and does the **SDC version check** still hold? |
+
+The version-check verdict is a **layer 2** concern only — it lives in `TiroFormViewer`, and layer 1
+has no .NET viewer to read it from. Layer 2 expects `Satisfied` against staging, and `Unknown`
+**with** `ReportedVersion == "dev"` against dev. The floor cell asserts nothing about it, because
+it structurally cannot; see *Not done here*.
+
+Dependabot and fork pull requests get no OIDC id-token, so they cannot pull the pinned image. They
+run the **staging** cell instead — a real end-to-end run against a real server, weaker than the
+floor cell but far better than a red wall or a silent skip. The cell name in the check says which
+one ran.
 
 Deliberately **not** a growing N×M matrix. The harness ships as one pinned artifact, so the
 only interesting points are the bottom of the supported range and the top; there is no middle
@@ -186,8 +197,11 @@ So `tests/e2e/fixtures/template-server.mjs` serves that one route and the contai
 it. Pointing it at a shared template server instead would put a shared server back in the
 pull-request path, which is the whole thing the floor cell exists to remove.
 
-The fixture is the real published revision, exported verbatim from that same route and
-byte-identical to what `templates-staging` serves. A hand-written one would have meant rewriting
+The fixture is the real published revision, exported verbatim from that same route — verified
+byte-identical to what both `sdc-staging` and `templates-staging` return for this canonical. Note
+it carries `meta.tag = SUBSETTED`, FHIR's marker that elements were omitted: that is what the
+template server serves, so the fixture is faithful to what the element really receives, but it is
+not the complete authored resource. A hand-written one would have meant rewriting
 every assertion that depends on its content: the chip label, the disjoint `linkId`s that make
 "which revision rendered" observable from the QR alone, and the `calculatedExpression` the score
 comes from. It is deliberately *not* watched for drift against

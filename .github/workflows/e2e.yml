@@ -33,6 +33,10 @@ name: E2E (GH-26)
 # would be synthetic clinical data in the instance customers use.
 # Actions are pinned to full commit SHAs (GH-53); see ci.yml for the rationale.
 on:
+  # Merges as well as pull requests. Two pull requests that each pass alone can still conflict
+  # semantically, and with squash merges master's content is not any branch that was tested.
+  push:
+    branches: [master]
   pull_request:
     branches: [master]
     # Every project the probe links, not just the WebView2 one: a change in the messaging
@@ -81,7 +85,79 @@ env:
   TEMPLATE_SERVER_PORT: '8089'
 
 jobs:
+  # Which cells a run gets, decided in one place because the rule is not obvious.
+  #
+  # The floor cell needs an OIDC id-token to reach Artifact Registry, and GitHub does not issue
+  # one to a Dependabot or fork pull request — their token is forced read-only whatever this
+  # workflow's `permissions:` block asks for. Left alone, every weekly web-sdk bump would get a
+  # red, unfixable browser job: the exact pull requests this gate exists for.
+  #
+  # So those runs get the staging cell instead. It is a real end-to-end run against a real
+  # server — weaker than the floor cell (a shared server, so an outage can redden it) but far
+  # better than either a red wall or a silent skip. The cell name says which one ran, so nobody
+  # has to infer it from a green tick.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      browser_targets: ${{ steps.pick.outputs.browser_targets }}
+      credentialled: ${{ steps.pick.outputs.credentialled }}
+    steps:
+      - id: pick
+        env:
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          IS_BOT: ${{ github.actor == 'dependabot[bot]' }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_PR" != "true" ]; then
+            targets='["floor","dev","staging"]'; cred=true
+          elif [ "$IS_BOT" = "true" ] || [ "$IS_FORK" = "true" ]; then
+            echo "::warning::No OIDC id-token is issued to Dependabot or fork pull requests, so the" \
+                 "pinned-server (floor) cell cannot run. Falling back to the staging cell: this PR is" \
+                 "tested end to end, but against a shared server rather than the declared floor."
+            targets='["staging"]'; cred=false
+          else
+            targets='["floor"]'; cred=true
+          fi
+          echo "browser_targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "credentialled=$cred" >> "$GITHUB_OUTPUT"
+          echo "browser cells: $targets (credentialled=$cred)"
+
+  # Needs no server at all, so it is its own job rather than a step inside the floor cell.
+  # It used to live there, which quietly put GH-60's only end-to-end assertion behind WIF, a
+  # registry pull and a container boot — so a registry hiccup removed it from the run entirely.
+  collision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Stage pinned web-sdk bundle
+        uses: ./.github/actions/stage-web-sdk
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Playwright
+        working-directory: tests/e2e/browser
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium-headless-shell
+
+      # GH-60's promise is that there is no opt-out. Delete the bridge's collision branch and
+      # every other test in this suite stays green, so this is the only thing holding it.
+      - name: A page-owned SDK is refused
+        working-directory: tests/e2e/browser
+        env:
+          PAGE_OWNS_SDK: '1'
+          E2E_SERVER_TESTS: '0'
+        run: npm test
+
   browser:
+    needs: plan
     runs-on: ubuntu-latest
     # A hung Playwright wait would otherwise sit on the runner for six hours.
     timeout-minutes: 20
@@ -98,10 +174,7 @@ jobs:
       # is fine" and "both broke" are different diagnoses, and fail-fast erases the difference.
       fail-fast: false
       matrix:
-        # A pull request runs the floor cell alone — it is the only one that needs no shared
-        # server, so it is the only one whose result the author can act on. The nightly adds
-        # the two live endpoints.
-        target: ${{ fromJSON(github.event_name == 'pull_request' && '["floor"]' || '["floor","dev","staging"]') }}
+        target: ${{ fromJSON(needs.plan.outputs.browser_targets) }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -128,6 +201,8 @@ jobs:
       # notes use, so CI already guards it on every pull request.
       - name: Resolve the declared floor
         if: matrix.target == 'floor'
+        env:
+          SDC_FLOOR_OVERRIDE_INPUT: ${{ inputs.sdc_floor_override }}
         run: |
           set -euo pipefail
           FLOOR=$(bash build/release-notes/compose.sh --check | sed -n 's/^MinimumSdcVersion=//p')
@@ -136,7 +211,10 @@ jobs:
           # Reachable only from a manual dispatch — a pull request and the nightly always test
           # the declared floor, so this cannot quietly become the version everything runs
           # against. It is announced in the log for the same reason.
-          OVERRIDE="${{ inputs.sdc_floor_override }}"
+          # Passed via env, never interpolated into the script body. An inline expression
+          # substitution of a free-text dispatch input would let it execute shell on a runner
+          # holding a live GCP credential.
+          OVERRIDE="${SDC_FLOOR_OVERRIDE_INPUT:-}"
           if [ -n "$OVERRIDE" ]; then
             echo "::warning::floor OVERRIDDEN for this manual run: testing $OVERRIDE, not the declared floor $FLOOR"
             FLOOR="$OVERRIDE"
@@ -157,7 +235,9 @@ jobs:
             echo "$TAGS"
             exit 1
           fi
-          if ! grep -qx -- "$SDC_FLOOR" <<<"$TAGS"; then
+          # -F: the tag is a literal. Without it '.' is a metacharacter, so an override of
+          # '.*' would satisfy this guard against any tag list at all.
+          if ! grep -qxF -- "$SDC_FLOOR" <<<"$TAGS"; then
             echo "::error::The declared floor $SDC_FLOOR has NO IMAGE in $SDC_FLOOR_IMAGE_REPO."
             echo "::error::MinimumSdcVersion names a server version nobody can pull, so the minimum"
             echo "::error::this harness publishes cannot be run — by an integrator or by this test."
@@ -176,14 +256,43 @@ jobs:
         run: |
           set -euo pipefail
           node tests/e2e/fixtures/template-server.mjs > "$RUNNER_TEMP/template-server.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/template-server.pid"
+          pid=$!
+          echo "$pid" > "$RUNNER_TEMP/template-server.pid"
+
+          # Waits for the ONE route the container will actually call, and fails if it never
+          # answers. The previous version looped without checking the outcome and accepted any
+          # HTTP response at all, so a stub that had died on EADDRINUSE was indistinguishable
+          # from a healthy one — the run then started a container pointed at whatever else held
+          # the port, passed every health and version check (none of which touch this hop), and
+          # died two minutes later inside a Playwright render timeout that read as a product bug.
+          CANONICAL=$(python3 -c "import json;q=json.load(open('tests/e2e/fixtures/questionnaire-cha2ds2-vasc-1.0.0.json'));print(q['url']+'|'+q['version'])")
+          #
+          # The response is VALIDATED, not merely counted as a 200. Checking only for success
+          # still passes when a foreign process holds the port and answers everything — which is
+          # precisely the scenario this guard exists for, and a first attempt at it failed this
+          # way in testing. Asking whether the body is the fixture is the only check that
+          # distinguishes our stub from something else listening.
+          ok=
           for _ in $(seq 1 50); do
-            curl -sf -o /dev/null "http://127.0.0.1:$TEMPLATE_SERVER_PORT/fhir/r5/Questionnaire/\$resolve" && break
-            # A 404 means it is listening and rejecting, which is all we need to proceed.
-            curl -s -o /dev/null "http://127.0.0.1:$TEMPLATE_SERVER_PORT/" && break
+            if curl -sf -m 5 -o "$RUNNER_TEMP/probe.json" --get \
+                 "http://127.0.0.1:$TEMPLATE_SERVER_PORT/fhir/r5/Questionnaire/\$resolve" \
+                 --data-urlencode "canonical=$CANONICAL" \
+               && python3 -c "import json,sys;q=json.load(open('$RUNNER_TEMP/probe.json'));sys.exit(0 if q.get('resourceType')=='Questionnaire' and q.get('url')+'|'+q.get('version')=='$CANONICAL' else 1)" 2>/dev/null; then
+              ok=1; break
+            fi
+            # Died rather than not-yet-listening: stop waiting out the full ten seconds for a
+            # process that is gone.
+            kill -0 "$pid" 2>/dev/null || break
             sleep 0.2
           done
           cat "$RUNNER_TEMP/template-server.log"
+          if [ -z "$ok" ]; then
+            echo "::error::the template server never served the fixture on port $TEMPLATE_SERVER_PORT."
+            echo "::error::Its log is above. A bind failure here means something else holds that port;"
+            echo "::error::continuing would point the SDC container at a foreign process and produce a"
+            echo "::error::render timeout later that looks nothing like the actual cause."
+            exit 1
+          fi
 
       # --network host so the container reaches the template server on 127.0.0.1 and publishes
       # its own port without mapping. Linux runners only, which is also why the floor cell
@@ -238,7 +347,11 @@ jobs:
               echo "::error::as the first release that answers this route, so an sdc_floor_override"
               echo "::error::pointing at an older tag cannot work — pick $SDC_FLOOR or newer."
             fi
-            cat "$RUNNER_TEMP/metadata.json" 2>/dev/null | head -5
+            # head -n on the file, not `cat | head`: under pipefail a SIGPIPE'd cat returns 141
+            # and set -e would kill the script before the container log below — the one thing
+            # this failure path exists to capture.
+            head -c 500 "$RUNNER_TEMP/metadata.json" 2>/dev/null || true
+            echo
             docker logs sdc 2>&1 | tail -30 || true
             exit 1
           fi
@@ -311,16 +424,6 @@ jobs:
       # host REFUSES it. GH-60's promise is that there is no opt-out, and that promise had no
       # end-to-end test: delete the bridge's collision branch and every other test stays green.
       # Needs no server, so it runs on pull requests too.
-      # Once per run, not once per cell: it needs no server, so running it against dev and
-      # staging as well would just be the same assertion three times.
-      - name: Run browser e2e — page-owned SDK is refused
-        if: matrix.target == 'floor'
-        working-directory: tests/e2e/browser
-        env:
-          PAGE_OWNS_SDK: '1'
-          E2E_SERVER_TESTS: '0'
-        run: npm test
-
       # always(): when the suite fails against the pinned server, the server's own log is
       # usually the answer, and it is gone once the runner is reclaimed.
       - name: SDC server and template server logs
