@@ -143,10 +143,6 @@ diagnosable.
 Three cells over one parameterised job — the only thing that varies is which SDC server the
 suite points at, and what verdict the version check is expected to reach against it.
 
-> **Not built yet.** This is the shape being moved to, recorded here because the reasoning was
-> settled before the code was. Today both layers point at staging and a pull request runs no
-> server-backed stages at all. The floor and dev cells arrive with the floor cell (see
-> *Not done here*); until then, read the table as the plan rather than the behaviour.
 
 | Cell | When | Server | Expected version verdict | The question it answers |
 |---|---|---|---|---|
@@ -172,6 +168,34 @@ comparison work on a real version string. Staging covers that.
 runners cannot run Linux containers, so the pinned-server cells are browser-only. Layer 2 keeps
 URL targets, which is why its version-check assertion runs nightly rather than per pull request
 (see *Not done here*).
+
+**How the floor cell gets a questionnaire.** The container starts empty, and the SDC server does
+not store questionnaires. The element calls `Questionnaire/$resolve`, and the server forwards
+that to `{TEMPLATE_SERVER_URL}/fhir/r5/Questionnaire/$resolve`, expecting a single Questionnaire
+resource back — not a searchset Bundle (`CanonicalQuestionnaireRetriever`, in the server's
+`sdc/questionnaire_retriever.py`). Both hops were read from the shipped SDK bundle and the server
+source rather than inferred. Note this is **not** `DEFAULT_DATA_ENDPOINT`, which is the FHIR
+tunnel for patient data and has nothing to do with questionnaires.
+
+So `tests/e2e/fixtures/template-server.mjs` serves that one route and the container is pointed at
+it. Pointing it at a shared template server instead would put a shared server back in the
+pull-request path, which is the whole thing the floor cell exists to remove.
+
+The fixture is the real published revision, exported verbatim from that same route and
+byte-identical to what `templates-staging` serves. A hand-written one would have meant rewriting
+every assertion that depends on its content: the chip label, the disjoint `linkId`s that make
+"which revision rendered" observable from the QR alone, and the `calculatedExpression` the score
+comes from. A **nightly job compares the two**, so the copy going stale is caught rather than
+hoped against — it fails on a difference and only warns when the template server is unreachable,
+because an outage is not drift.
+
+**The floor must be a version that exists.** The cell resolves the image tag from
+`SdcCompatibility.MinimumSdcVersion` and fails, loudly and specifically, if `docker-ext` has no
+image for it — the published minimum naming a server nobody can pull is a real defect, not a CI
+inconvenience. It also asserts the container reports the version its tag claims, so a mis-tagged
+image cannot report "the floor works" about some other release. `workflow_dispatch` takes an
+`sdc_floor_override` for bisecting, manual runs only; note that a tag *below* the floor cannot
+work by definition, since the floor is the first release that answers `/metadata` at all.
 
 **Why there is no release-triggered cell.** Tiro-health/atticus-backend#3601 designed one — the
 SDC release dispatching this suite — and it was closed as deferred. Staging deploys on every
@@ -217,23 +241,11 @@ synthetic QuestionnaireResponses alone.
 
 ## Not done here
 
-- **The floor cell**, and it needs one thing this suite does not have yet. The image
-  (`europe-docker.pkg.dev/tiroapp-4cb17/docker-ext/form-sdk-backend`) pulls keylessly —
-  atticus-backend#3599 granted `harness-e2e-ar-reader` read on `docker-ext`, and the entrypoint
-  is `uvicorn ... --port ${PORT:-8080} sdc_server.main:app`, so a bare `docker run -p 8080:8080`
-  serves `/fhir/r5`. What a bare container does *not* have is anywhere to get a questionnaire.
-  The SDC server does not store them: the element calls `Questionnaire/$resolve`, and the server
-  forwards that to `{TEMPLATE_SERVER_URL}/fhir/r5/Questionnaire/$resolve`, expecting a single
-  Questionnaire resource back (`sdc/questionnaire_retriever.py`,
-  `CanonicalQuestionnaireRetriever`). Both hops are read from the shipped SDK bundle and the
-  server source rather than inferred. So the container needs a template server, and pointing it
-  at a shared one would put that shared server back in the pull-request path — the whole thing
-  the floor cell exists to remove. The floor cell and the in-repo fixture below are therefore
-  one piece of work, not two.
-- **A fixture questionnaire in-repo**, served to the container as its template server. Both layers
-  pin the canonical to `|1.0.0` now — layer 2's default was unpinned for a while, which made the
-  claim below true of half the suite — and both assert the pin held rather than assuming it, so an
-  edit to the draft cannot reach the suite. A *new* version of the pinned revision still could.
+- A richer seeded template. If the fixture ever becomes a maintenance burden, the upgrade is to
+  extend atticus-backend's `seed_test_data.py` with a CI template carrying choice items and a
+  `calculatedExpression`, and point the suite at that — a genuine stability guarantee, in version
+  control, without losing the assertions. Today's seeded template has one free-text field, so
+  adopting it as-is would cost the chip click, the coding round trip and the score.
 - Restoring layer 2's version-check assertion to per-pull-request. It runs nightly today
   because it needs a live server, and the floor cell cannot help: pinned-server cells are
   layer 1 only. Closing this needs a server layer 2 can reach on a Windows runner, which is
