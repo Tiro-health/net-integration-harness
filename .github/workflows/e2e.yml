@@ -194,18 +194,47 @@ jobs:
           set -euo pipefail
           gcloud auth configure-docker europe-docker.pkg.dev --quiet
           docker pull "$SDC_FLOOR_IMAGE"
+          # ENVIRONMENT is not optional here. sdc_server/main.py initialises Sentry with a
+          # hardcoded DSN — the real one — and passes environment=os.getenv("ENVIRONMENT"),
+          # which is None when unset, and Sentry then defaults it to "production". So every
+          # error this throwaway container logs lands in the production Sentry project and
+          # corrupts rate analysis there. It cannot be switched off from outside (SENTRY_DSN
+          # is not consulted when a dsn is passed explicitly), so the only lever is to tag it.
           docker run -d --name sdc --network host \
             -e PORT=8080 \
+            -e ENVIRONMENT=ci \
             -e TEMPLATE_SERVER_URL="http://127.0.0.1:$TEMPLATE_SERVER_PORT" \
             "$SDC_FLOOR_IMAGE"
+
+          # Liveness on /openapi.json, NOT on /fhir/r5/metadata. Polling metadata was both
+          # wrong and expensive: on an image below the floor the route has no local handler and
+          # falls through to the FHIR tunnel, which raises and *logs an error* on every attempt
+          # — sixty polls became sixty captured Sentry events. /openapi.json is a plain route
+          # that touches no tunnel, so waiting on it costs nothing when the server is unhappy.
           ok=
           for _ in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8080/fhir/r5/metadata -o "$RUNNER_TEMP/metadata.json"; then ok=1; break; fi
+            if curl -fsS http://127.0.0.1:8080/openapi.json -o /dev/null; then ok=1; break; fi
             sleep 2
           done
           if [ -z "$ok" ]; then
-            echo "::error::the pinned SDC server never answered /fhir/r5/metadata"
+            echo "::error::the pinned SDC server never came up (no answer on /openapi.json)"
             docker logs sdc || true
+            exit 1
+          fi
+
+          # Now ask once. A retry loop here would just repeat whatever the answer is.
+          code=$(curl -s -o "$RUNNER_TEMP/metadata.json" -w '%{http_code}' http://127.0.0.1:8080/fhir/r5/metadata || true)
+          if [ "$code" != "200" ]; then
+            echo "::error::the pinned SDC server answered $code on /fhir/r5/metadata."
+            if grep -q "X-Data-Endpoint" "$RUNNER_TEMP/metadata.json" 2>/dev/null; then
+              echo "::error::The body names X-Data-Endpoint, which means this image has NO LOCAL"
+              echo "::error::/metadata route: the request fell through to the FHIR tunnel. That is"
+              echo "::error::the signature of an image BELOW the floor. MinimumSdcVersion is defined"
+              echo "::error::as the first release that answers this route, so an sdc_floor_override"
+              echo "::error::pointing at an older tag cannot work — pick $SDC_FLOOR or newer."
+            fi
+            cat "$RUNNER_TEMP/metadata.json" 2>/dev/null | head -5
+            docker logs sdc 2>&1 | tail -30 || true
             exit 1
           fi
           # The container is the version we think it is. A mis-tagged image would otherwise let
@@ -233,6 +262,35 @@ jobs:
           # bought. The old per-event skip is gone.
           echo "E2E_SERVER_TESTS=1" >> "$GITHUB_ENV"
           echo "Target ${{ matrix.target }} -> $endpoint"
+
+      # Cloud Run scales these to zero, and a cold start costs more than the suite's 30s render
+      # wait: sdc-dev answered its first $resolve in 30s and the next in 0.1s, which failed the
+      # calculation test for no reason but latency. Warmed here rather than by raising the
+      # timeout, so a genuinely slow render still fails. atticus-backend's deploy-staging.yaml
+      # warms its Cloud Run backends for the same reason.
+      - name: Warm the endpoint
+        if: matrix.target != 'floor'
+        run: |
+          set -uo pipefail
+          CANONICAL=$(python3 -c "import json;q=json.load(open('tests/e2e/fixtures/questionnaire-cha2ds2-vasc-1.0.0.json'));print(q['url']+'|'+q['version'])")
+          for attempt in 1 2 3; do
+            code=$(curl -s -o /dev/null -m 60 -w '%{http_code}' "$SDC_ENDPOINT/metadata" || true)
+            echo "attempt $attempt: metadata -> $code"
+            [ "$code" = "200" ] && break
+          done
+          # The questionnaire path warms separately: it is a different upstream (the template
+          # server), and it is the one the render actually waits on.
+          # shellcheck disable=SC2016  # $resolve is a FHIR operation name, not a variable
+          for attempt in 1 2 3; do
+            code=$(curl -s -o /dev/null -m 60 -w '%{http_code}' \
+              --get "$SDC_ENDPOINT/Questionnaire/\$resolve" --data-urlencode "canonical=$CANONICAL" || true)
+            echo "attempt $attempt: \$resolve -> $code"
+            [ "$code" = "200" ] && break
+          done
+          # Deliberately never fails: this is a latency courtesy, and a warm-up that can redden
+          # a run would just be an extra way for the suite to fail. If the server is genuinely
+          # broken the tests below say so, with a better message than this could.
+          exit 0
 
       - name: Install Playwright
         working-directory: tests/e2e/browser
