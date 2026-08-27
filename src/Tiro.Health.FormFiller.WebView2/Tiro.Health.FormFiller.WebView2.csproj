@@ -66,14 +66,20 @@
   </ItemGroup>
 
   <!-- A package without the pinned bundle is a broken control (no-opt-out embedding,
-       GH-60), so a build with a missing OR stale staged bundle must fail loudly. -->
+       GH-60), so a build with a missing OR mismatched bundle must fail loudly.
+
+       The bundle is committed (GH-59/GH-60): it is public — the same bytes are served from
+       cdn.tiro.health and ship inside the NuGet package on nuget.org — so requiring a private
+       registry token to obtain it protected nothing and made `git clone && build` fail for
+       everyone who had not set one up. Committing it removes the token, the npm install and
+       the staging step from every build, including CI. -->
   <Target Name="EnsureWebSdkBundleStaged" BeforeTargets="BeforeBuild;GenerateNuspec">
     <PropertyGroup>
       <_WebSdkManifest>$(MSBuildProjectDirectory)\WebAssets\web-sdk.version.json</_WebSdkManifest>
       <_WebSdkPinFile>$(MSBuildProjectDirectory)\..\..\build\web-sdk\package.json</_WebSdkPinFile>
     </PropertyGroup>
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\WebAssets\tiro-web-sdk.iife.js') Or !Exists('$(_WebSdkManifest)')"
-           Text="The pinned tiro-web-sdk bundle is not staged. Run: cd build/web-sdk &amp;&amp; npm ci &amp;&amp; node copy-bundle.mjs (needs GitHub Packages read auth — see build/web-sdk/README.md). GH-59/GH-60." />
+           Text="WebAssets/tiro-web-sdk.iife.js or web-sdk.version.json is missing. Both are committed to this repo, so something deleted them — `git checkout -- src/Tiro.Health.FormFiller.WebView2/WebAssets/` restores them. (A `git clean -xdf` will not: they are tracked, not generated.) GH-59/GH-60." />
     <PropertyGroup Condition="Exists('$(_WebSdkManifest)') And Exists('$(_WebSdkPinFile)')">
       <_WebSdkPinned>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkPinFile)')), '&quot;@tiro-health/web-sdk&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkPinned>
       <_WebSdkStaged>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkManifest)')), '&quot;version&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkStaged>
@@ -82,7 +88,7 @@
          nothing downstream can catch it: the served URL would carry the stale manifest's
          version and resolve to the stale bytes. This gate is the only check. -->
     <Error Condition="Exists('$(_WebSdkManifest)') And Exists('$(_WebSdkPinFile)') And '$(_WebSdkPinned)' != '$(_WebSdkStaged)'"
-           Text="Staged web-sdk bundle is v$(_WebSdkStaged) but build/web-sdk pins v$(_WebSdkPinned). Re-run: cd build/web-sdk &amp;&amp; npm ci &amp;&amp; node copy-bundle.mjs. GH-59." />
+           Text="The committed web-sdk bundle is v$(_WebSdkStaged) but build/web-sdk pins v$(_WebSdkPinned). Bumping the pin does not update the bundle: run `cd build/web-sdk &amp;&amp; npm ci &amp;&amp; node copy-bundle.mjs` and COMMIT the result. GH-59." />
   </Target>
 
 </Project>
