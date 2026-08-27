@@ -303,17 +303,23 @@ jobs:
           set -euo pipefail
           gcloud auth configure-docker europe-docker.pkg.dev --quiet
           docker pull "$SDC_FLOOR_IMAGE"
-          # ENVIRONMENT is not optional here. sdc_server/main.py initialises Sentry with a
-          # hardcoded DSN — the real one — and passes environment=os.getenv("ENVIRONMENT"),
-          # which is None when unset, and Sentry then defaults it to "production". So every
-          # error this throwaway container logs lands in the production Sentry project and
-          # corrupts rate analysis there. It cannot be switched off from outside (SENTRY_DSN
-          # is not consulted when a dsn is passed explicitly), so the only lever is to tag it.
+          # ENVIRONMENT is set so the container BOOTS: Settings.ENVIRONMENT is a
+          # Literal["test","development","staging","production"], so an invalid value fails
+          # pydantic validation and uvicorn never starts. "test" is both valid and honest.
           #
-          # "test", not "ci": Settings.ENVIRONMENT is a Literal["test","development","staging",
-          # "production"], so anything else fails validation and the container will not boot.
-          # Note that Settings already defaults this to "development" — the Sentry init is what
-          # bypasses it, reading os.getenv directly and getting None.
+          # It is deliberately NOT what keeps this run out of Sentry. Older images initialised
+          # Sentry with a hardcoded DSN and environment=os.getenv("ENVIRONMENT") — None when
+          # unset, which Sentry resolves to "production" — so a throwaway container's errors
+          # landed in the production project and skewed the rates there. This suite did exactly
+          # that once, ~60 events from one run. Tagging the environment was the only lever a
+          # caller had, and it only relabelled the events rather than stopping them.
+          #
+          # atticus-backend#3610 fixes it properly by inverting the default: Sentry initialises
+          # only when SENTRY_DSN is present, so an unconfigured container reports nothing at
+          # all, and SENTRY_ENVIRONMENT is separate from ENVIRONMENT (which also drives PostHog
+          # and the local profiler). Neither is set here, which is what actually keeps CI out of
+          # Sentry — on images carrying that change. Do not "simplify" this by dropping
+          # ENVIRONMENT: it is load-bearing for startup, not for telemetry.
           docker run -d --name sdc --network host \
             -e PORT=8080 \
             -e ENVIRONMENT=test \
