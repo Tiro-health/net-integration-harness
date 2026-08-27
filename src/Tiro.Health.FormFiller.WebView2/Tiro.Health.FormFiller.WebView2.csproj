@@ -54,9 +54,9 @@
     <EmbeddedResource Include="WebAssets\tiro-swm-bridge.js">
       <LogicalName>$(RootNamespace).WebAssets.tiro-swm-bridge.js</LogicalName>
     </EmbeddedResource>
-    <!-- Staged by `cd build/web-sdk && npm ci && node copy-bundle.mjs` (GH-59/GH-60);
-         gitignored. The harness embeds the exact web-sdk it was validated against and
-         serves it to the page itself — the page carries no SDK script tag. -->
+    <!-- Committed to this repo (GH-59/GH-60); copy-bundle.mjs regenerates it only when the pin
+         moves. The harness embeds the exact web-sdk it was validated against and serves it to
+         the page itself — the page carries no SDK script tag. -->
     <EmbeddedResource Include="WebAssets\tiro-web-sdk.iife.js">
       <LogicalName>$(RootNamespace).WebAssets.tiro-web-sdk.iife.js</LogicalName>
     </EmbeddedResource>
@@ -83,12 +83,29 @@
     <PropertyGroup Condition="Exists('$(_WebSdkManifest)') And Exists('$(_WebSdkPinFile)')">
       <_WebSdkPinned>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkPinFile)')), '&quot;@tiro-health/web-sdk&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkPinned>
       <_WebSdkStaged>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkManifest)')), '&quot;version&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkStaged>
+      <_WebSdkExpectedHash>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(_WebSdkManifest)')), '&quot;sha256&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Result('$1'))</_WebSdkExpectedHash>
     </PropertyGroup>
     <!-- Stale staging is self-consistent (bundle + manifest agree with each other), so
          nothing downstream can catch it: the served URL would carry the stale manifest's
          version and resolve to the stale bytes. This gate is the only check. -->
     <Error Condition="Exists('$(_WebSdkManifest)') And Exists('$(_WebSdkPinFile)') And '$(_WebSdkPinned)' != '$(_WebSdkStaged)'"
            Text="The committed web-sdk bundle is v$(_WebSdkStaged) but build/web-sdk pins v$(_WebSdkPinned). Bumping the pin does not update the bundle: run `cd build/web-sdk &amp;&amp; npm ci &amp;&amp; node copy-bundle.mjs` and COMMIT the result. GH-59." />
+
+    <!-- The pin/manifest check above compares two small TEXT files and cannot see the 6 MB
+         bundle at all. That was safe while copy-bundle.mjs wrote both in one run from one
+         verified tarball; now they are two independently committed files, and a commit can
+         separate them — `git add -p`, a partial cherry-pick, a conflict resolution taking the
+         manifest from one side and the bundle from the other. The result is a self-consistent
+         lie: pin and manifest agree, so nothing above fires, and the harness serves stale bytes
+         from a URL naming the new version. This is what npm's package-lock integrity used to
+         provide for free. -->
+    <GetFileHash Condition="Exists('$(MSBuildProjectDirectory)\WebAssets\tiro-web-sdk.iife.js') And '$(_WebSdkExpectedHash)' != ''"
+                 Files="$(MSBuildProjectDirectory)\WebAssets\tiro-web-sdk.iife.js"
+                 Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Hash" PropertyName="_WebSdkActualHash" />
+    </GetFileHash>
+    <Error Condition="'$(_WebSdkExpectedHash)' != '' And '$(_WebSdkActualHash)' != '' And '$(_WebSdkExpectedHash)' != '$(_WebSdkActualHash)'"
+           Text="WebAssets/tiro-web-sdk.iife.js does not match the sha256 in web-sdk.version.json (expected $(_WebSdkExpectedHash), got $(_WebSdkActualHash)). The bundle and its manifest were committed out of step, or the file was altered in transit — a Windows checkout will corrupt it unless .gitattributes marks it binary. Re-run `cd build/web-sdk &amp;&amp; npm ci --ignore-scripts &amp;&amp; node copy-bundle.mjs` and commit BOTH files. GH-59." />
   </Target>
 
 </Project>

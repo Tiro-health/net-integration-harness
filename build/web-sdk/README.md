@@ -59,10 +59,14 @@ npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
 ```sh
 # edit package.json to the new version, then
 cd build/web-sdk
-npm ci
+npm ci --ignore-scripts
 node copy-bundle.mjs
 git add -A src/Tiro.Health.FormFiller.WebView2/WebAssets build/web-sdk
 ```
+
+A **Dependabot** bump arrives red for exactly this reason: the bot edits the pin and nothing
+else, so the build fails on the mismatch until someone runs the above on its branch and pushes.
+That is the documented flow, not a fault — see the comment atop `.github/dependabot.yml`.
 
 **Commit the result.** Bumping `package.json` alone fails the build: the csproj compares the
 pin against the committed `web-sdk.version.json` and refuses a mismatch, because a stale bundle

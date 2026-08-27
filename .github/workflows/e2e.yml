@@ -55,8 +55,6 @@ on:
       # The floor cell reads MinimumSdcVersion through this script, so a change to either the
       # declaration or the extraction changes which server this suite runs against.
       - 'build/release-notes/**'
-      # The web-sdk bundle is committed, so a change to it is a change to WebAssets/.
-      - 'src/Tiro.Health.FormFiller.WebView2/WebAssets/**'
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
     inputs:

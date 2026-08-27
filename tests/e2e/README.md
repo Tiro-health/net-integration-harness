@@ -53,7 +53,7 @@ npm test
 `package-lock.json` is committed and Playwright is pinned exactly: the version decides which
 browser build runs, so a floating range would change what the suite tests without a review.
 
-Stage the bundle first (`cd build/web-sdk && npm ci --ignore-scripts && node copy-bundle.mjs`),
+The bundle is committed, so there is nothing to stage; if `WebAssets/tiro-web-sdk.iife.js` is missing
 or the SDK 404s. `SDC_ENDPOINT`, `QUESTIONNAIRE`, `ANSWER_LABEL` and `E2E_SERVER_TESTS`
 override the defaults.
 
