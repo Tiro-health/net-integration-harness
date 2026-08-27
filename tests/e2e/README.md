@@ -143,6 +143,11 @@ diagnosable.
 Three cells over one parameterised job — the only thing that varies is which SDC server the
 suite points at, and what verdict the version check is expected to reach against it.
 
+> **Not built yet.** This is the shape being moved to, recorded here because the reasoning was
+> settled before the code was. Today both layers point at staging and a pull request runs no
+> server-backed stages at all. The floor and dev cells arrive with the floor cell (see
+> *Not done here*); until then, read the table as the plan rather than the behaviour.
+
 | Cell | When | Server | Expected version verdict | The question it answers |
 |---|---|---|---|---|
 | **floor** | every PR + merge | container pinned to `SdcCompatibility.MinimumSdcVersion`, pulled from `docker-ext` | `Satisfied` | Did *this harness change* break the minimum we publish? |
@@ -216,13 +221,16 @@ synthetic QuestionnaireResponses alone.
   (`europe-docker.pkg.dev/tiroapp-4cb17/docker-ext/form-sdk-backend`) pulls keylessly —
   atticus-backend#3599 granted `harness-e2e-ar-reader` read on `docker-ext`, and the entrypoint
   is `uvicorn ... --port ${PORT:-8080} sdc_server.main:app`, so a bare `docker run -p 8080:8080`
-  serves `/fhir/r5`. What a bare container does *not* have is anywhere to get a questionnaire:
-  the SDC server does not store them, it **tunnels `Questionnaire` reads to a data endpoint**
-  (`DEFAULT_DATA_ENDPOINT`, allowlist-gated — `sdc_server/api/fhir_r5/endpoints/Questionnaire.py`).
-  Pointing that at staging would put the shared server back in the pull-request path, which is
-  the whole thing the floor cell exists to remove. So the floor cell requires the in-repo fixture
-  below, served locally — the two are one piece of work, not two.
-- **A fixture questionnaire in-repo**, served to the container as its data endpoint. Both layers
+  serves `/fhir/r5`. What a bare container does *not* have is anywhere to get a questionnaire.
+  The SDC server does not store them: the element calls `Questionnaire/$resolve`, and the server
+  forwards that to `{TEMPLATE_SERVER_URL}/fhir/r5/Questionnaire/$resolve`, expecting a single
+  Questionnaire resource back (`sdc/questionnaire_retriever.py`,
+  `CanonicalQuestionnaireRetriever`). Both hops are read from the shipped SDK bundle and the
+  server source rather than inferred. So the container needs a template server, and pointing it
+  at a shared one would put that shared server back in the pull-request path — the whole thing
+  the floor cell exists to remove. The floor cell and the in-repo fixture below are therefore
+  one piece of work, not two.
+- **A fixture questionnaire in-repo**, served to the container as its template server. Both layers
   pin the canonical to `|1.0.0` now — layer 2's default was unpinned for a while, which made the
   claim below true of half the suite — and both assert the pin held rather than assuming it, so an
   edit to the draft cannot reach the suite. A *new* version of the pinned revision still could.
