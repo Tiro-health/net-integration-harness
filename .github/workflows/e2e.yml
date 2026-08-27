@@ -200,9 +200,14 @@ jobs:
           # error this throwaway container logs lands in the production Sentry project and
           # corrupts rate analysis there. It cannot be switched off from outside (SENTRY_DSN
           # is not consulted when a dsn is passed explicitly), so the only lever is to tag it.
+          #
+          # "test", not "ci": Settings.ENVIRONMENT is a Literal["test","development","staging",
+          # "production"], so anything else fails validation and the container will not boot.
+          # Note that Settings already defaults this to "development" — the Sentry init is what
+          # bypasses it, reading os.getenv directly and getting None.
           docker run -d --name sdc --network host \
             -e PORT=8080 \
-            -e ENVIRONMENT=ci \
+            -e ENVIRONMENT=test \
             -e TEMPLATE_SERVER_URL="http://127.0.0.1:$TEMPLATE_SERVER_PORT" \
             "$SDC_FLOOR_IMAGE"
 
