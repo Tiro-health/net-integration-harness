@@ -18,11 +18,16 @@ when server stages are deliberately skipped). A bare `PASS` grep also matched `P
 a run whose server stages were skipped for any reason passed the gate having asserted nothing
 about save-draft, finalize or `$extract`.
 
-What a *pull request* gates on is only the part that needs no server: the bundle, the
-injection order, the handshake. The stages that talk to a live SDC server run nightly and on
-demand (`E2E_SERVER_TESTS=0` / `PROBE_SKIP_SERVER_STAGES=1` on PRs), because a staging outage
-must not redden a pull request that cannot have caused it — a suite that goes red for reasons
-outside the author's control gets ignored just as fast as an advisory one.
+What a *pull request* gates on differs by layer, and the reason is the same in both cases: a
+staging outage must not redden a pull request that cannot have caused it, because a suite that
+goes red for reasons outside the author's control gets ignored just as fast as an advisory one.
+
+- **Layer 1 runs the whole flow on every pull request**, against the floor cell — an SDC server
+  container pinned to `SdcCompatibility.MinimumSdcVersion`, on the runner. Nothing shared, so
+  there is no outage to be hostage to, and `E2E_SERVER_TESTS=1` for every cell including PRs.
+- **Layer 2 runs stage A only** — the bundle, the injection order, the handshake
+  (`PROBE_SKIP_SERVER_STAGES=1`). It cannot have a floor cell: the pinned server is a Linux
+  container and Windows runners cannot host one. Its server-backed stages run nightly.
 
 ## `browser/` — layer 1
 
@@ -97,9 +102,9 @@ handshake carrying no `client` object at all is also accepted — `EvaluateWebSd
 returns no failure. Layer 1 covers both on pull requests (`client.name`, `client.source`, and
 `customElements.get`), which is why the two layers gate together rather than separately.
 
-Stage A stops there and needs no server, which is why it is the part a pull request gates
-on; `WebSdkLoadException` (bundle missing, or a page-owned copy colliding) fails it
-explicitly. Stages B1–B3 then save a draft, finalize, and `$extract`, asserting on typed
+Stage A stops there and needs no server, which is why it is the part a pull request gates on
+*for this layer* — layer 1 gets a pinned server on pull requests, layer 2 cannot;
+`WebSdkLoadException` (bundle missing, or a page-owned copy colliding) fails it explicitly. Stages B1–B3 then save a draft, finalize, and `$extract`, asserting on typed
 FHIR POCOs — so they also prove Firely can deserialize what the real element emits.
 
 **The SDC version check (GH-62) is asserted with the server stages, not with stage A.** This is
@@ -143,16 +148,23 @@ diagnosable.
 Three cells over one parameterised job — the only thing that varies is which SDC server the
 suite points at, and what verdict the version check is expected to reach against it.
 
-> **Not built yet.** This is the shape being moved to, recorded here because the reasoning was
-> settled before the code was. Today both layers point at staging and a pull request runs no
-> server-backed stages at all. The floor and dev cells arrive with the floor cell (see
-> *Not done here*); until then, read the table as the plan rather than the behaviour.
 
-| Cell | When | Server | Expected version verdict | The question it answers |
+| Cell | Layer | When | Server | The question it answers |
 |---|---|---|---|---|
-| **floor** | every PR + merge | container pinned to `SdcCompatibility.MinimumSdcVersion`, pulled from `docker-ext` | `Satisfied` | Did *this harness change* break the minimum we publish? |
-| **dev** | nightly | `sdc-dev.tiro.health` | `Unknown` **and** `ReportedVersion == "dev"` | Did a server change break us — at the earliest possible moment |
-| **staging** | nightly | `sdc-staging.tiro.health` | `Satisfied` | Did the release candidate break us, against the artifact customers pull |
+| **floor** | 1 | every PR + merge | container pinned to `SdcCompatibility.MinimumSdcVersion`, from `docker-ext` | Did *this harness change* break the minimum we publish? |
+| **staging** | 1 | nightly; **and on PRs that cannot reach the registry** | `sdc-staging.tiro.health` | Did the release candidate break us, against the artifact customers pull |
+| **dev** | 1 | nightly | `sdc-dev.tiro.health` | Did a server change break us — at the earliest possible moment |
+| **dev** / **staging** | 2 | nightly | the same two endpoints | …and does the **SDC version check** still hold? |
+
+The version-check verdict is a **layer 2** concern only — it lives in `TiroFormViewer`, and layer 1
+has no .NET viewer to read it from. Layer 2 expects `Satisfied` against staging, and `Unknown`
+**with** `ReportedVersion == "dev"` against dev. The floor cell asserts nothing about it, because
+it structurally cannot; see *Not done here*.
+
+Dependabot and fork pull requests get no OIDC id-token, so they cannot pull the pinned image. They
+run the **staging** cell instead — a real end-to-end run against a real server, weaker than the
+floor cell but far better than a red wall or a silent skip. The cell name in the check says which
+one ran.
 
 Deliberately **not** a growing N×M matrix. The harness ships as one pinned artifact, so the
 only interesting points are the bottom of the supported range and the top; there is no middle
@@ -173,6 +185,40 @@ runners cannot run Linux containers, so the pinned-server cells are browser-only
 URL targets, which is why its version-check assertion runs nightly rather than per pull request
 (see *Not done here*).
 
+**How the floor cell gets a questionnaire.** The container starts empty, and the SDC server does
+not store questionnaires. The element calls `Questionnaire/$resolve`, and the server forwards
+that to `{TEMPLATE_SERVER_URL}/fhir/r5/Questionnaire/$resolve`, expecting a single Questionnaire
+resource back — not a searchset Bundle (`CanonicalQuestionnaireRetriever`, in the server's
+`sdc/questionnaire_retriever.py`). Both hops were read from the shipped SDK bundle and the server
+source rather than inferred. Note this is **not** `DEFAULT_DATA_ENDPOINT`, which is the FHIR
+tunnel for patient data and has nothing to do with questionnaires.
+
+So `tests/e2e/fixtures/template-server.mjs` serves that one route and the container is pointed at
+it. Pointing it at a shared template server instead would put a shared server back in the
+pull-request path, which is the whole thing the floor cell exists to remove.
+
+The fixture is the real published revision, exported verbatim from that same route — verified
+byte-identical to what both `sdc-staging` and `templates-staging` return for this canonical. Note
+it carries `meta.tag = SUBSETTED`, FHIR's marker that elements were omitted: that is what the
+template server serves, so the fixture is faithful to what the element really receives, but it is
+not the complete authored resource. A hand-written one would have meant rewriting
+every assertion that depends on its content: the chip label, the disjoint `linkId`s that make
+"which revision rendered" observable from the QR alone, and the `calculatedExpression` the score
+comes from. It is deliberately *not* watched for drift against
+the live template server: a fixture is meant to be frozen — that is what makes the suite
+deterministic — and the resource carries `meta.lastUpdated`, so any diff would fire on record
+churn that means nothing. If a pinned revision is ever republished, that is a process problem
+upstream, not something this suite should police. Re-export it deliberately when the template
+it stands in for has genuinely moved on.
+
+**The floor must be a version that exists.** The cell resolves the image tag from
+`SdcCompatibility.MinimumSdcVersion` and fails, loudly and specifically, if `docker-ext` has no
+image for it — the published minimum naming a server nobody can pull is a real defect, not a CI
+inconvenience. It also asserts the container reports the version its tag claims, so a mis-tagged
+image cannot report "the floor works" about some other release. `workflow_dispatch` takes an
+`sdc_floor_override` for bisecting, manual runs only; note that a tag *below* the floor cannot
+work by definition, since the floor is the first release that answers `/metadata` at all.
+
 **Why there is no release-triggered cell.** Tiro-health/atticus-backend#3601 designed one — the
 SDC release dispatching this suite — and it was closed as deferred. Staging deploys on every
 `-rc.N` tag, so the nightly already catches a breaking release candidate within a day; the
@@ -184,8 +230,8 @@ credential in Cloud Build. Reopen it when that 20 hours actually costs something
 **Staging** (`sdc-staging.tiro.health`) is the in-code default for both layers. Two reasons, and
 the second is easy to overlook:
 
-- Staging runs *ahead* of production (it was on `v0.9.38-rc.0` while prod was `v0.9.37`), so
-  a server regression surfaces here before customers meet it.
+- Staging runs *ahead* of production — it deploys on every `-rc.N` tag, while a final tag goes
+  straight to production — so a server regression surfaces here before customers meet it.
 - Never production: these run nightly and write QuestionnaireResponses on every pass, so
   pointing them at prod would mean synthetic clinical data in the instance customers use,
   and CI traffic in the usage signal atticus-backend#3568 aggregates to decide what to
@@ -217,23 +263,11 @@ synthetic QuestionnaireResponses alone.
 
 ## Not done here
 
-- **The floor cell**, and it needs one thing this suite does not have yet. The image
-  (`europe-docker.pkg.dev/tiroapp-4cb17/docker-ext/form-sdk-backend`) pulls keylessly —
-  atticus-backend#3599 granted `harness-e2e-ar-reader` read on `docker-ext`, and the entrypoint
-  is `uvicorn ... --port ${PORT:-8080} sdc_server.main:app`, so a bare `docker run -p 8080:8080`
-  serves `/fhir/r5`. What a bare container does *not* have is anywhere to get a questionnaire.
-  The SDC server does not store them: the element calls `Questionnaire/$resolve`, and the server
-  forwards that to `{TEMPLATE_SERVER_URL}/fhir/r5/Questionnaire/$resolve`, expecting a single
-  Questionnaire resource back (`sdc/questionnaire_retriever.py`,
-  `CanonicalQuestionnaireRetriever`). Both hops are read from the shipped SDK bundle and the
-  server source rather than inferred. So the container needs a template server, and pointing it
-  at a shared one would put that shared server back in the pull-request path — the whole thing
-  the floor cell exists to remove. The floor cell and the in-repo fixture below are therefore
-  one piece of work, not two.
-- **A fixture questionnaire in-repo**, served to the container as its template server. Both layers
-  pin the canonical to `|1.0.0` now — layer 2's default was unpinned for a while, which made the
-  claim below true of half the suite — and both assert the pin held rather than assuming it, so an
-  edit to the draft cannot reach the suite. A *new* version of the pinned revision still could.
+- A richer seeded template. If the fixture ever becomes a maintenance burden, the upgrade is to
+  extend atticus-backend's `seed_test_data.py` with a CI template carrying choice items and a
+  `calculatedExpression`, and point the suite at that — a genuine stability guarantee, in version
+  control, without losing the assertions. Today's seeded template has one free-text field, so
+  adopting it as-is would cost the chip click, the coding round trip and the score.
 - Restoring layer 2's version-check assertion to per-pull-request. It runs nightly today
   because it needs a live server, and the floor cell cannot help: pinned-server cells are
   layer 1 only. Closing this needs a server layer 2 can reach on a Windows runner, which is

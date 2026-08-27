@@ -41,6 +41,17 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
         private static readonly bool ServerStagesEnabled =
             Environment.GetEnvironmentVariable("PROBE_SKIP_SERVER_STAGES") != "1";
 
+        // Which verdict this cell expects from the SDC version check. "satisfied" for a released
+        // server; "dev" for sdc-dev, which reports software.version "dev" — outside the version
+        // grammar by design, so Satisfied is unreachable there and demanding it would make that
+        // cell red forever.
+        //
+        // The default is the STRICT value: an unset variable can only ever make this stricter,
+        // never weaker. An unrecognised value fails the run rather than falling back, because a
+        // parameter that quietly selects a weaker assertion is how a suite stops testing anything.
+        private static readonly string ExpectedVerdict =
+            (Environment.GetEnvironmentVariable("SDC_EXPECTED_VERDICT") ?? "satisfied").Trim().ToLowerInvariant();
+
         private static readonly TimeSpan StageTimeout = TimeSpan.FromMinutes(3);
 
         [STAThread]
@@ -104,6 +115,17 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             var dirtyChanges = new List<bool>();
             viewer.FormDirtyChanged += (_, e) => dirtyChanges.Add(e.IsDirty);
 
+            // Checked here rather than where it is used: a typo in the workflow would otherwise
+            // spend a whole WebView2 session before reporting that the run was never going to
+            // assert anything meaningful.
+            if (ExpectedVerdict != "satisfied" && ExpectedVerdict != "dev")
+            {
+                Report("FAIL", "SDC_EXPECTED_VERDICT='" + ExpectedVerdict + "' is not a value this "
+                    + "probe knows. Expected 'satisfied' (a released server) or 'dev' (sdc-dev, "
+                    + "which reports the version string 'dev'). Unset means 'satisfied'.");
+                return 1;
+            }
+
             // --- Stage A: the page comes up (no server needed) --------------------------
             using (var cts = new CancellationTokenSource(StageTimeout))
             {
@@ -159,14 +181,55 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             // pull requests that could not have caused it, which e2e.yml explicitly sets out not
             // to do. A suite that goes red for reasons outside the author's control gets ignored,
             // and this assertion is far too valuable to spend that way.
-            if (versionCheck == null || versionCheck.Outcome != SdcVersionCheckOutcome.Satisfied)
+            if (versionCheck == null)
             {
-                Report("FAIL", "the SDC version check did not reach a Satisfied verdict against "
-                    + SdcEndpoint + " — the server changed something this check depends on, "
-                    + "or the check itself is broken. Either way it is no longer protecting anyone.");
+                Report("FAIL", "the SDC version check never ran against " + SdcEndpoint + ".");
                 return 1;
             }
-            Report("PASS", "SDC version check satisfied against a real server");
+
+            if (ExpectedVerdict == "satisfied")
+            {
+                if (versionCheck.Outcome != SdcVersionCheckOutcome.Satisfied)
+                {
+                    Report("FAIL", "the SDC version check did not reach a Satisfied verdict against "
+                        + SdcEndpoint + " — the server changed something this check depends on, "
+                        + "or the check itself is broken. Either way it is no longer protecting anyone.");
+                    return 1;
+                }
+                Report("PASS", "SDC version check satisfied against a real server");
+            }
+            else if (ExpectedVerdict == "dev")
+            {
+                // Not a relaxation — a different assertion of the same strength. Unknown is not one
+                // bucket: a version outside the grammar keeps ReportedVersion (here, "dev"), while
+                // an unreachable server, a tunnelled /metadata, or a document that cannot be
+                // attributed to the SDC server all leave it null. Requiring both therefore still
+                // proves the route is locally handled, the document is attributable, and the
+                // version is read from the field it is supposed to be read from. The one thing it
+                // cannot prove is that the grammar and comparison work on a real version string —
+                // dev never emits one, and the staging cell covers it.
+                if (versionCheck.Outcome != SdcVersionCheckOutcome.Unknown
+                    || versionCheck.ReportedVersion != "dev")
+                {
+                    Report("FAIL", "expected the dev server to report an Unknown verdict carrying the "
+                        + "version string 'dev', got outcome=" + versionCheck.Outcome
+                        + " reportedVersion=" + (versionCheck.ReportedVersion ?? "(null)")
+                        + ". A null reportedVersion means no version could be read at all — the "
+                        + "route is no longer locally handled, or the document is no longer "
+                        + "attributable to the SDC server. A different string means the dev build's "
+                        + "version sentinel changed, and this assertion needs updating with it.");
+                    return 1;
+                }
+                Report("PASS", "SDC version check reached the expected dev verdict (Unknown, 'dev')");
+            }
+            else
+            {
+                // Unreachable given the guard at the top of this method, and kept anyway: if a
+                // third verdict is ever added there, this is what stops it reaching here and
+                // asserting nothing at all.
+                Report("FAIL", "no assertion is defined for SDC_EXPECTED_VERDICT='" + ExpectedVerdict + "'.");
+                return 1;
+            }
 
             // --- Stage B: save-draft, keep filling, finalize, extract ------------------
             // Mirrors the EhrShell + Extract samples. Every assertion here is on a typed
