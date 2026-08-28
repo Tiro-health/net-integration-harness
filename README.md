@@ -357,6 +357,53 @@ For any other backend, implement `ITelemetrySink` yourself and register it direc
 TiroFormViewerDefaults.TelemetrySinkFactory = Function() New MyCustomTelemetrySink()
 ```
 
+### When Sentry can't leave the hospital network
+
+`FileTelemetrySink` writes a JSONL transcript of the session to disk. It ships **in the core package** — no Sentry NuGet, no network path — for sites whose intranet blocks egress to `ingest.de.sentry.io`. The failure it exists for is a quiet one: the Sentry .NET SDK drops transport failures silently, so a blocked DSN and a healthy one look identical from inside the process, and nobody finds out until support asks for a trace that was never sent.
+
+```vb
+' Air-gapped: file only.
+TiroFormViewerDefaults.TelemetrySinkFactory =
+    Function() New FileTelemetrySink()
+
+' Both. The file always works; Sentry works when the network allows it.
+TiroFormViewerDefaults.TelemetrySinkFactory =
+    Function() New FileTelemetrySink(FileTelemetrySink.DefaultDirectory, New SentryTelemetrySink())
+```
+
+It's a **decorator**, not a second backend: it records each call and forwards it to the inner sink (`NullTelemetrySink` when you pass none). So `UseSentry()` and this are not an either/or — wrapping a `SentryTelemetrySink` keeps every Sentry behaviour above, including the embedded page's DSN and the unified trace, and adds a local copy. Prefer wrapping to choosing, since you generally can't tell from outside whether a given site's egress works.
+
+One file per session, in `%LOCALAPPDATA%\Tiro.Health\FormFiller\telemetry` unless you pass a directory, named `<timestamp>-<session>.jsonl`. That's the artifact to attach to a support ticket. Transcripts older than 14 days are swept on startup.
+
+```
+{"type":"header","ts":"2026-08-28T09:47:59.100Z","sid":"88a79be6","v":1,"session":"88a79be6-be74-49b3-9b10-0f344e5f2468","release":"Tiro.Health.FormFiller.WebView2@1.0.0","host":"WKS-RAD-114","file_schema":"tiro-formfiller-telemetry-jsonl"}
+{"type":"crumb","ts":"2026-08-28T09:47:59.102Z","sid":"88a79be6","cat":"lifecycle","msg":"TiroFormViewer constructed"}
+{"type":"span.start","ts":"2026-08-28T09:47:59.103Z","sid":"88a79be6","span":"84c719e7","parent":null,"name":"sdc.displayQuestionnaire","op":"swm.send"}
+{"type":"span.tag","ts":"2026-08-28T09:47:59.103Z","sid":"88a79be6","span":"84c719e7","k":"questionnaire_url","v":"http://tiro.health/Questionnaire/mammo-report"}
+{"type":"span.end","ts":"2026-08-28T09:47:59.103Z","sid":"88a79be6","span":"84c719e7","status":"ok","ms":308}
+{"type":"span.end","ts":"2026-08-28T09:47:59.103Z","sid":"88a79be6","span":"cdf93840","status":"internal_error","ms":5002,"exc":"System.TimeoutException"}
+{"type":"error","ts":"2026-08-28T09:47:59.103Z","sid":"88a79be6","span":"cdf93840","exc":"System.TimeoutException","msg":"Handshake not received within 5s","stack":"   at Tiro.Health..."}
+{"type":"session.end","ts":"2026-08-28T09:47:59.110Z","sid":"88a79be6"}
+```
+
+One line per event, flat keys, `sid` on every line — readable in Notepad on a locked-down box with no `jq`, and greppable by anything else. Reading it:
+
+| | |
+|---|---|
+| `session` in the header | the full `form.session.id`. Paste it into Sentry to find the same session there — the header also carries `trace` when an inner Sentry sink supplied one, so the file and the Sentry trace are the *same* trace |
+| `span.start` with no matching `span.end` | the viewer was still waiting when the file ended. Start records exist for exactly this: a span that never finishes is the failure you most want the file for, and it would otherwise write nothing at all |
+| `session.end` | the file is complete. Its absence means the process died mid-session |
+| `"repeat":true` on a `span.end` | a second `Finish` the real span correctly ignored under first-finish-wins. The transcript records what the caller *asked for*, which is how you find out why a trace shipped green |
+| `inner.error` | the wrapped backend threw. Covers a Sentry that couldn't initialise — a bad DSN, a broken options object. It does **not** cover a firewall silently dropping envelopes, which raises no exception |
+| `trunc` | the 8 MB per-file cap was reached and recording stopped |
+
+**The transcript is held to the same PHI rule as Sentry: no FHIR payloads.** That matters more here, not less, because the point of the file is to leave the hospital — it writes only what callers pass to `ITelemetrySink`, never reflects over a `SetExtra` object graph, caps every value's length, replaces the user-profile path with `%USERPROFILE%` (a Windows account name is often a person's name), and never writes a DSN. If your own code puts patient identifiers in exception messages, scrub them before they bubble up — the same caveat as for Sentry above.
+
+Two limits worth knowing:
+
+- **The embedded page stays dark in a file-only deployment.** Page-side telemetry needs a DSN to bootstrap, so with no inner Sentry sink there's nothing to inject and the JS side reports nothing. The transcript covers the .NET host only. Wrapping a `SentryTelemetrySink` restores it.
+- **A blocked network is still not self-announcing.** The file tells you what the host did; it can't tell you Sentry's envelopes were dropped in transit. Comparing a transcript against a Sentry side with no matching `form.session.id` is what shows that.
+
 ## Configuring FHIR endpoints from the host
 
 A `<tiro-form-filler>` typically talks to **two** FHIR servers:
@@ -482,12 +529,13 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
 
 - **Targets**: `net48` (C# SDK-style, WinForms + WebView2)
 - **Key type**: `TiroFormViewer<TResource, TQR, TOO>` — abstract generic UserControl
-- **Telemetry seam** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`): `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, and `NullTelemetrySink` (the no-op default). No backend dependency — the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend.
+- **Telemetry seam** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`): `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, `NullTelemetrySink` (the no-op default), and `FileTelemetrySink` (a local JSONL transcript that also decorates any other sink). No backend dependency — the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend.
 - **Features**:
   - Explicit lifecycle state machine (`TiroFormViewerState`: Initializing → Ready → ContextSet → Submitted → Disposed)
   - Async API with `CancellationToken` end-to-end; in-flight operations cancel cleanly on disposal
   - Pluggable `IEmbeddedBrowser` seam for testability (default: `WebView2EmbeddedBrowser`)
   - Pluggable `ITelemetrySink` seam (default: `NullTelemetrySink`); see telemetry section below
+  - `FileTelemetrySink` — JSONL session transcript on local disk, standalone or wrapped around Sentry, for sites whose network blocks telemetry egress; see [When Sentry can't leave the hospital network](#when-sentry-cant-leave-the-hospital-network)
   - Embeds `WebAssets/tiro-swm-bridge.js` and auto-injects it into every page via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` — page is UI-only
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
