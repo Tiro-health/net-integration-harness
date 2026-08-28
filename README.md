@@ -357,6 +357,126 @@ For any other backend, implement `ITelemetrySink` yourself and register it direc
 TiroFormViewerDefaults.TelemetrySinkFactory = Function() New MyCustomTelemetrySink()
 ```
 
+### When Sentry can't leave the hospital network
+
+`FileTelemetrySink` writes a rolling JSONL transcript of every session to local disk. It ships **in the core package** — no Sentry NuGet, no network path — for sites whose intranet blocks egress to `ingest.de.sentry.io`. The failure it exists for is a quiet one: the Sentry .NET SDK drops transport failures silently, so a blocked DSN and a healthy one look identical from inside the process, and nobody finds out until support asks for a trace that was never sent.
+
+```vb
+' Air-gapped: file only.
+TiroFormViewerDefaults.TelemetrySinkFactory =
+    Function() New FileTelemetrySink()
+
+' Both. The file always works; Sentry works when the network allows it.
+TiroFormViewerDefaults.TelemetrySinkFactory =
+    Function() New FileTelemetrySink(FileTelemetrySink.DefaultDirectory, New SentryTelemetrySink())
+```
+
+This is not an either/or with `UseSentry()`. Wrapping a `SentryTelemetrySink` keeps every Sentry behaviour described above — the embedded page's DSN, the unified trace, all of it — and adds a local copy; passing no inner sink gives you the file alone. Prefer wrapping to choosing, since you generally can't tell from outside whether a given site's egress works.
+
+To change where it writes, how long it keeps, or how large files get, pass a `FileTelemetryOptions`:
+
+```vb
+TiroFormViewerDefaults.TelemetrySinkFactory =
+    Function() New FileTelemetrySink(New FileTelemetryOptions With {
+        .Directory = "D:\HospitalLogs\TiroFormFiller",
+        .RetentionDays = 30,
+        .MaxBytesPerFile = 1024L * 1024L
+    }, New SentryTelemetrySink())
+```
+
+#### The transcript
+
+One file per day, in `%LOCALAPPDATA%\Tiro.Health\FormFiller\telemetry` unless you set `Directory`:
+
+```
+20260828.jsonl
+```
+
+Every viewer in the process writes to the same file — the log is shared and reference-counted, so two forms open at once don't fight over it and the first one closed doesn't take it from the others. Sessions are delimited by `session.start` / `session.end` records rather than by separate files, which is what makes bugs that span sessions visible at all. `FileTelemetrySink.CurrentFilePath` gives you the path, which is what an *Attach diagnostics* button should use rather than reconstructing a name.
+
+A real capture, verbatim, from the e2e suite's stage C — one form session on a Windows runner
+against a live SDC server, see [tests/e2e/README.md](tests/e2e/README.md). Every run uploads one
+as an artifact:
+
+```
+{"type":"header","ts":"2026-08-28T12:51:31.082Z","sid":"process","v":1,"file_schema":"tiro-formfiller-telemetry-jsonl","host":"runnervmeef0v","pid":1948}
+{"type":"session.start","ts":"2026-08-28T12:51:31.099Z","sid":"d6f21f64","session":"d6f21f64-49f8-4c37-80cc-cadca6042c0a","release":"Tiro.Health.FormFiller.WebView2@1.0.0+1d0dedbf962634084006fa63010ce31df692e746"}
+{"type":"crumb","ts":"2026-08-28T12:51:31.100Z","sid":"d6f21f64","cat":"lifecycle","msg":"TiroFormViewer constructed"}
+{"type":"span.start","ts":"2026-08-28T12:51:31.132Z","sid":"d6f21f64","span":"742fc8a5","parent":null,"name":"Initialize WebView","op":"swm.lifecycle.init"}
+{"type":"span.start","ts":"2026-08-28T12:51:31.876Z","sid":"d6f21f64","span":"d9c34f79","parent":null,"name":"sdc.displayQuestionnaire","op":"swm.send"}
+{"type":"span.tag","ts":"2026-08-28T12:51:31.876Z","sid":"d6f21f64","span":"d9c34f79","k":"messageType","v":"sdc.displayQuestionnaire"}
+{"type":"span.tag","ts":"2026-08-28T12:51:31.878Z","sid":"d6f21f64","span":"d9c34f79","k":"questionnaire_url","v":"http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699|1.0.0"}
+{"type":"span.end","ts":"2026-08-28T12:51:32.963Z","sid":"d6f21f64","span":"742fc8a5","status":"ok","ms":1825}
+{"type":"span.start","ts":"2026-08-28T12:51:33.665Z","sid":"d6f21f64","span":"52bae698","parent":null,"name":"status.handshake","op":"swm.receive"}
+{"type":"span.tag","ts":"2026-08-28T12:51:33.665Z","sid":"d6f21f64","span":"52bae698","k":"messageType","v":"status.handshake"}
+{"type":"crumb","ts":"2026-08-28T12:51:33.845Z","sid":"d6f21f64","cat":"lifecycle","msg":"Handshake received (tiro-web-sdk 0.3.3)"}
+{"type":"span.start","ts":"2026-08-28T12:51:33.862Z","sid":"d6f21f64","span":"e36c2668","parent":"52bae698","name":"response","op":"swm.send"}
+{"type":"span.end","ts":"2026-08-28T12:51:33.862Z","sid":"d6f21f64","span":"e36c2668","status":"ok","ms":0}
+{"type":"span.end","ts":"2026-08-28T12:51:33.862Z","sid":"d6f21f64","span":"52bae698","status":"ok","ms":197}
+{"type":"crumb","ts":"2026-08-28T12:51:33.866Z","sid":"d6f21f64","cat":"sdc.version","msg":"SDC server version v0.9.40-rc.0 satisfies the minimum v0.9.39 (read from CapabilityStatement.software.version)."}
+{"type":"span.start","ts":"2026-08-28T12:51:33.866Z","sid":"d6f21f64","span":"724c0e90","parent":null,"name":"sdc.configure","op":"swm.send"}
+{"type":"span.tag","ts":"2026-08-28T12:51:33.866Z","sid":"d6f21f64","span":"724c0e90","k":"messageType","v":"sdc.configure"}
+{"type":"span.tag","ts":"2026-08-28T12:51:33.866Z","sid":"d6f21f64","span":"724c0e90","k":"sdc_server","v":"https://sdc-staging.tiro.health/fhir/r5"}
+{"type":"span.end","ts":"2026-08-28T12:51:34.028Z","sid":"d6f21f64","span":"d9c34f79","status":"cancelled","ms":2150}
+{"type":"span.end","ts":"2026-08-28T12:51:34.028Z","sid":"d6f21f64","span":"724c0e90","status":"cancelled","ms":160}
+{"type":"crumb","ts":"2026-08-28T12:51:34.029Z","sid":"d6f21f64","cat":"lifecycle","msg":"TiroFormViewer disposed"}
+{"type":"session.end","ts":"2026-08-28T12:51:34.030Z","sid":"d6f21f64"}
+```
+
+That's 22 records for one form session — 3,054 bytes. One line per event, flat keys, `sid` on every line: readable in Notepad on a locked-down box with no `jq`, and greppable by anything else.
+
+Reading that one: `e36c2668` has `"parent":"52bae698"`, so it is a child span of the `status.handshake` transaction — that is how nesting appears. The two `"status":"cancelled"` spans are what a viewer disposed mid-send looks like, which here means a form closed while it was still loading. `release` carries the build's commit, so a transcript names the exact binary that wrote it.
+
+**To pull one session out of a day:**
+
+```
+findstr d6f21f64 20260828.jsonl        REM Windows
+grep    d6f21f64 20260828.jsonl        # anywhere else
+```
+
+Record types: `header` (once per file open), `session.start` / `session.end`, `crumb`, `tag`, `span.start` / `span.tag` / `span.extra` / `span.end`, `error`, `message`, `inner.error`, and `trunc`. Reading it:
+
+| What you see | What it means |
+|---|---|
+| `session` on `session.start` | the full `form.session.id`. Paste it into Sentry to find the same session there — the record also carries `trace` when an inner Sentry sink supplied one, so the file and the Sentry trace are the *same* trace |
+| `span.start` with no matching `span.end` | the viewer was still waiting. Start records exist for exactly this: a span that never finishes is the failure you most want the file for, and it would otherwise write nothing at all |
+| `session.end` | that session ended. Records after it belong to the process, not the session, and carry `sid":"process"` |
+| `"repeat":true` on a `span.end` | a second `Finish` the real span correctly ignored under first-finish-wins. The transcript records what the caller *asked for*, which is how you find out why a trace shipped green |
+| `error` with `"span":null` | an exception captured out-of-band of any span (`ITelemetrySink.CaptureException`). A span-level error carries its span id instead — the field is always present so a reader never has to guess |
+| `inner.error` | a call into the wrapped backend threw, and was swallowed rather than reaching the host. Note this does **not** cover a Sentry that failed to *initialise* — `SentrySdk.Init` runs in the `SentryTelemetrySink` constructor, before this sink ever sees it, so that failure throws out of your startup code and produces no transcript at all. Nor does it cover a firewall silently dropping envelopes, which raises no exception |
+| a `-2` suffix on the file name | the previous file hit its size cap, or another process holds it. `-p<pid>` appears only in the rare case where every plain name is taken, so two processes can't lock each other out |
+| `trunc` | a record was refused for size; the log rolled to the next file and continued |
+
+#### Size and retention
+
+A form session is a few dozen records, so this stays small on its own. Three bounds keep it that way regardless:
+
+| Scope | Limit | Behaviour at the limit |
+|---|---|---|
+| Per value | 2048 chars for values (`msg`, `v`, `stack`) · 256 for names (`k`, `cat`, `op`, `release`, `env`, `session`, `trace`, `host`, `name`) | truncated, with a `…[trimmed]` marker on the end |
+| Per file | `MaxBytesPerFile`, 8 MB by default | rolls to `20260828-2.jsonl` and keeps writing — no records are lost |
+| Per directory | `RetentionDays` (7) **and** `MaxTotalBytes` (64 MB) | oldest files deleted; both bounds apply |
+
+The sweep runs **at most once an hour**, and only when a file is opened or rolled — so a process with a viewer open all day sweeps at startup and again at the midnight roll, not on a timer. It deletes only files whose names match the ones this component writes (`yyyyMMdd[-n][-p<pid>].jsonl`), so pointing `Directory` at a folder holding your own `.jsonl` files is safe.
+
+7 days is sized to how long a support request takes to arrive rather than to disk usage. If your own support process is slower than that, raise `RetentionDays`.
+
+#### PHI
+
+**The transcript is held to the same rule as Sentry: no FHIR payloads.** That matters more here, not less, because the point of the file is to leave the hospital. Concretely:
+
+- **Every** string written is length-capped and has the user-profile path replaced with `%USERPROFILE%` — values and names alike (a Windows account name is often a person's name). Note the limit of that scrubbing: release-build stack traces carry the *build* machine's paths, which won't match, so it protects patient-adjacent paths rather than every path.
+- **`SetExtra` writes strings and primitives; everything else becomes just its type name** — `<Hl7.Fhir.Model.QuestionnaireResponse>`. So attaching a resource records *that* you attached one, not its contents. If you need a detail from it in the transcript, pass that detail as a string.
+- **No DSN is ever written**, on any path.
+- If your own code puts patient identifiers in exception messages, scrub them before they bubble up — the same caveat as for Sentry above.
+
+One deliberate difference from Sentry, worth knowing before you send a file: the header records `host` (the machine name), and the Sentry adapter leaves `SendDefaultPii` off, so **Sentry never receives a machine name and the file does**. Support needs to know which workstation a transcript came from; if your workstation names identify people or rooms, that's a reason to review a file before forwarding it.
+
+#### What it doesn't cover
+
+- **The embedded page stays dark in a file-only deployment.** Page-side telemetry needs a DSN to bootstrap, so with no inner Sentry sink there's nothing to inject and the JS side reports nothing. The transcript covers the .NET host only. Wrapping a `SentryTelemetrySink` restores it.
+- **A blocked network is still not self-announcing.** The file tells you what the host did; it can't tell you Sentry's envelopes were dropped in transit. Comparing a transcript against a Sentry side with no matching `form.session.id` is what shows that.
+
 ## Configuring FHIR endpoints from the host
 
 A `<tiro-form-filler>` typically talks to **two** FHIR servers:
@@ -482,12 +602,13 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
 
 - **Targets**: `net48` (C# SDK-style, WinForms + WebView2)
 - **Key type**: `TiroFormViewer<TResource, TQR, TOO>` — abstract generic UserControl
-- **Telemetry seam** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`): `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, and `NullTelemetrySink` (the no-op default). No backend dependency — the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend.
+- **Telemetry seam** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`): `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, `NullTelemetrySink` (the no-op default), and `FileTelemetrySink` + `FileTelemetryOptions` (a rolling local JSONL transcript that also decorates any other sink). No backend dependency — the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend.
 - **Features**:
   - Explicit lifecycle state machine (`TiroFormViewerState`: Initializing → Ready → ContextSet → Submitted → Disposed)
   - Async API with `CancellationToken` end-to-end; in-flight operations cancel cleanly on disposal
   - Pluggable `IEmbeddedBrowser` seam for testability (default: `WebView2EmbeddedBrowser`)
   - Pluggable `ITelemetrySink` seam (default: `NullTelemetrySink`); see telemetry section below
+  - `FileTelemetrySink` — rolling JSONL transcript on local disk (one file per day, shared by every viewer in the process), standalone or wrapped around Sentry, for sites whose network blocks telemetry egress; see [When Sentry can't leave the hospital network](#when-sentry-cant-leave-the-hospital-network)
   - Embeds `WebAssets/tiro-swm-bridge.js` and auto-injects it into every page via WebView2's `AddScriptToExecuteOnDocumentCreatedAsync` — page is UI-only
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit

@@ -14,6 +14,18 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         private NullTelemetrySink() { }
 
         public ITelemetrySession BeginSession(string sessionId) => NullSession.Instance;
+
+        /// <summary>
+        /// The no-op session and span, for decorators that need a harmless stand-in when the sink
+        /// they wrap throws out of a member that has to return one (see
+        /// <see cref="FileTelemetrySink"/>). Returning the caller's own span there would be worse
+        /// than nothing: finishing the substitute would finish the real parent.
+        /// </summary>
+        internal static ITelemetrySession NoopSession => NullSession.Instance;
+
+        /// <inheritdoc cref="NoopSession" />
+        internal static ITelemetrySpan NoopSpan => NullSpan.Instance;
+
         public void CaptureException(Exception ex) { }
 
         /// <inheritdoc />

@@ -5,7 +5,7 @@ Two layers. Neither covers the seam alone, and both run real shipped bytes.
 | Layer | Runs on | Exercises | Blind to |
 |---|---|---|---|
 | `browser/` | ubuntu | real `<tiro-form-filler>` + real bridge + real SDC server | WebView2 specifics, the .NET host |
-| `WebView2Probe/` | windows | real harness binary in real WebView2, typed FHIR round trip | real user input (no clicks) |
+| `WebView2Probe/` | windows | real harness binary in real WebView2, typed FHIR round trip, telemetry transcript | real user input (no clicks) |
 
 They complete the ladder: `build/bridge-contract` checks types, `tests/bridge` drives a
 transcribed stub, these drive the real thing. Both jobs **gate when triggered** — a red run
@@ -16,7 +16,8 @@ filter, so a pull request touching none of those paths never runs it.
 The Windows gate requires the probe's *terminal* marker (`PASS: all stages`, or `PASS: stage A`
 when server stages are deliberately skipped). A bare `PASS` grep also matched `PASS: stage A`, so
 a run whose server stages were skipped for any reason passed the gate having asserted nothing
-about save-draft, finalize or `$extract`.
+about save-draft, finalize or `$extract`. It also requires `PASS: stage C` unconditionally, since
+that stage runs in both modes and is the only place the telemetry sink meets the real viewer.
 
 What a *pull request* gates on differs by layer, and the reason is the same in both cases: a
 staging outage must not redden a pull request that cannot have caused it, because a suite that
@@ -106,6 +107,35 @@ Stage A stops there and needs no server, which is why it is the part a pull requ
 *for this layer* — layer 1 gets a pinned server on pull requests, layer 2 cannot;
 `WebSdkLoadException` (bundle missing, or a page-owned copy colliding) fails it explicitly. Stages B1–B3 then save a draft, finalize, and `$extract`, asserting on typed
 FHIR POCOs — so they also prove Firely can deserialize what the real element emits.
+
+### Stage C — the file telemetry transcript
+
+After the viewer is disposed, the probe reads back the JSONL transcript the run wrote and asserts
+on it: one file, every line parseable, `type`/`ts`/`sid` on every record, a short `sid` throughout
+and the full `form.session.id` on `session.start`, the lifecycle complete from `header` through
+`session.end` including the construction and dispose breadcrumbs, and the `swm.lifecycle.init`
+span the viewer's own init transaction produces. With a server it also requires the
+`sdc.displayQuestionnaire` and `ui.form.requestSubmit` transactions and the `questionnaire_url`
+tag. Then the PHI assertion, against a real session rather than a fixture: the transcript must
+contain no `resourceType`, `linkId` or `valueString`, and must not have grown past 64 KB for one
+session.
+
+**Why it has to be here.** The unit tests drive `ITelemetrySink` through a hand-written imitation
+of the viewer's call sequence, so they cannot notice if the imitation is wrong — and two of the
+bugs an adversarial review found on that branch were precisely about viewer interaction (a
+cancellation continuation the WinForms pump runs after `Dispose` has returned; unguarded
+`CaptureException` call sites). This is the only layer where the sink sees a real WebView2
+session, a real handshake, and a real dispose on a message pump.
+
+It registers `FileTelemetrySink` with **no inner sink** — the air-gapped configuration — so it
+needs no DSN and no egress from the runner. Registration happens before the viewer is constructed,
+because `TiroFormViewerDefaults` is sampled by each viewer's constructor; that ordering is the one
+integrators get wrong, so the probe gets it right in the same place they would.
+
+The transcript is uploaded as a run artifact (`webview2-probe-<target>`) alongside
+`probe-report.log`, and every line is echoed into the step log with an `XCRIPT` prefix. It is the
+only real capture this repo produces, which makes it the right source for the sample in the root
+README rather than a reconstruction.
 
 **The SDC version check (GH-62) is asserted with the server stages, not with stage A.** This is
 the only place in the repo it runs against a real server, so it is the only thing holding three
