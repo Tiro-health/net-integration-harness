@@ -1,15 +1,12 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Threading;
 
 namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
     /// <summary>
-    /// Writes a JSONL transcript of everything the viewer reports, one file per session, and
+    /// Writes a rolling JSONL transcript of everything the viewer reports to local disk, and
     /// forwards every call to an inner <see cref="ITelemetrySink"/>. For deployments where the
     /// hospital network will not let Sentry out — and where a blocked DSN is indistinguishable
     /// from a healthy one from inside the process, because the Sentry transport drops failures
@@ -41,6 +38,11 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
     /// <see cref="CaptureMessage"/> call sites.
     /// </para>
     /// <para>
+    /// The transcript rolls daily and is shared by every sink in the process pointing at the same
+    /// directory — see <see cref="RollingTelemetryLog"/> for why one file per day beats one per
+    /// session, and how retention is bounded.
+    /// </para>
+    /// <para>
     /// PHI: the point of the file is that it leaves the hospital, so it is held to the same rule
     /// as Sentry — <b>no FHIR payloads</b>. It writes only what callers pass to
     /// <see cref="ITelemetrySink"/>, never reflects over a <c>SetExtra</c> object graph, caps
@@ -57,28 +59,33 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Tiro.Health", "FormFiller", "telemetry");
 
-        /// <summary>Files older than this are swept on first construction in a process.</summary>
-        public const int RetentionDays = 14;
-
-        /// <summary>Newest files kept by the sweep regardless of age.</summary>
-        public const int RetentionFileCount = 200;
+        /// <summary>
+        /// Days of transcripts kept. Sized to how long a support request actually takes to arrive
+        /// — a clinician hits a problem on Friday, IT raises a ticket on Monday, someone asks for
+        /// the file on Tuesday — not to disk pressure, of which there is none at a few dozen
+        /// records per session.
+        /// </summary>
+        public const int RetentionDays = 7;
 
         /// <summary>
-        /// Cap per file. Reaching it writes a <c>trunc</c> record and stops. Generous next to a
-        /// session's expected few dozen records — it is a guard against a pathological loop, not
-        /// a budget anybody should hit.
+        /// Cap per file. Reaching it rolls to the next index rather than stopping, so a full file
+        /// costs the oldest records and never the newest.
         /// </summary>
         public const long MaxBytesPerFile = 8L * 1024 * 1024;
 
-        private static int _sweptThisProcess;
+        /// <summary>
+        /// Budget for the whole directory. The second of two bounds that do not multiply: with a
+        /// per-file cap and a file <i>count</i>, the product is the real ceiling and nobody reads
+        /// it off the two constants.
+        /// </summary>
+        public const long MaxTotalBytes = 64L * 1024 * 1024;
 
-        private readonly string _directory;
+        private readonly RollingTelemetryLog _log;
         private readonly ITelemetrySink _inner;
         private readonly bool _ownsInner;
-        private readonly List<TelemetryRecordWriter> _writers = new List<TelemetryRecordWriter>();
         private readonly object _gate = new object();
 
-        private TelemetryRecordWriter _current;
+        private string _currentSessionId = "process";
         private bool _disposed;
 
         /// <summary>Writes to <see cref="DefaultDirectory"/> with no inner sink — file only.</summary>
@@ -93,7 +100,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// <summary>
         /// Writes to <paramref name="directory"/> and forwards to <paramref name="inner"/>.
         /// </summary>
-        /// <param name="directory">Destination for the JSONL files. Created if missing.</param>
+        /// <param name="directory">Destination for the transcripts. Created if missing.</param>
         /// <param name="inner">
         /// Sink to forward to; <see cref="NullTelemetrySink.Instance"/> for file-only. Never null.
         /// </param>
@@ -101,44 +108,43 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// Whether <see cref="Dispose"/> disposes <paramref name="inner"/>. True suits the usual
         /// registration, where the factory builds a fresh inner per viewer and nothing else holds
         /// it. Pass false when one inner instance is shared across viewers, or the first viewer to
-        /// close will dispose telemetry the others are still using.
+        /// close will dispose telemetry the others are still using. (The transcript itself is
+        /// shared and reference-counted regardless, so viewers never take the file from each other.)
         /// </param>
         public FileTelemetrySink(string directory, ITelemetrySink inner, bool ownsInner = true)
         {
             if (string.IsNullOrEmpty(directory)) throw new ArgumentException("Directory must not be null or empty.", nameof(directory));
-            _directory = directory;
             _inner = inner ?? NullTelemetrySink.Instance;
             _ownsInner = ownsInner;
-
-            // Once per process, not once per viewer: the factory runs on every viewer construction
-            // and a form can be opened dozens of times in a shift.
-            if (Interlocked.Exchange(ref _sweptThisProcess, 1) == 0) Sweep(_directory);
+            _log = RollingTelemetryLog.Acquire(directory, MaxBytesPerFile, MaxTotalBytes, RetentionDays);
         }
 
         /// <summary>
-        /// Opens <c>&lt;timestamp&gt;-&lt;session&gt;.jsonl</c> and writes the header record.
-        /// One file per session is deliberate: it is the artifact support asks for — one file, one
-        /// ticket — and it sidesteps reference-counting a handle shared between viewers, which
-        /// <see cref="ITelemetrySink"/>'s ownership rules give no way to do safely.
+        /// Begins a session in the shared transcript. Nothing is opened per session: sessions are
+        /// delimited by their <c>session.start</c> / <c>session.end</c> records and identified by
+        /// the <c>sid</c> on every line.
         /// </summary>
         public ITelemetrySession BeginSession(string sessionId)
         {
             var id = string.IsNullOrEmpty(sessionId) ? Guid.NewGuid().ToString() : sessionId;
             var innerSession = Guard(() => _inner.BeginSession(id), "BeginSession", NullTelemetrySink.NoopSession);
-            var writer = OpenWriter(id);
 
-            if (writer == null) return innerSession;
-            return new FileTelemetrySession(writer, id, innerSession);
+            lock (_gate)
+            {
+                if (_disposed) return innerSession;
+                _currentSessionId = ShortId(id);
+            }
+
+            return new FileTelemetrySession(_log, id, innerSession);
         }
 
         /// <inheritdoc />
         public void CaptureException(Exception ex)
         {
-            // Sink-level capture is out-of-band of any session, but the viewer opens its session in
-            // its constructor before anything can fail, so the current writer is the right file
-            // essentially always. The fallback covers a sink used without a session at all.
-            var writer = CurrentOrFallbackWriter();
-            writer?.Write("error", json =>
+            // Sink-level capture is out-of-band of any session. It is attributed to the session in
+            // flight, since the viewer opens one in its constructor before anything can fail, and
+            // falls back to "process" for a sink used without a session at all.
+            _log.Write("error", CurrentSessionId(), json =>
             {
                 json.WriteString("exc", ex?.GetType().FullName ?? "null");
                 TelemetryRecordWriter.WriteValue(json, "msg", ex?.Message);
@@ -151,8 +157,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// <inheritdoc />
         public void CaptureMessage(string message)
         {
-            var writer = CurrentOrFallbackWriter();
-            writer?.Write("message", json => TelemetryRecordWriter.WriteValue(json, "msg", message));
+            _log.Write("message", CurrentSessionId(), json => TelemetryRecordWriter.WriteValue(json, "msg", message));
 
             Guard(() => _inner.CaptureMessage(message), "CaptureMessage");
         }
@@ -168,10 +173,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         {
             var clock = Stopwatch.StartNew();
 
-            lock (_gate)
-            {
-                foreach (var writer in _writers) writer.Flush();
-            }
+            _log.Flush();
 
             var remaining = timeout - clock.Elapsed;
             if (remaining < TimeSpan.Zero) remaining = TimeSpan.Zero;
@@ -184,88 +186,38 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             {
                 if (_disposed) return;
                 _disposed = true;
-                foreach (var writer in _writers) writer.Dispose();
-                _writers.Clear();
-                _current = null;
             }
+
+            // Release, not Dispose: other viewers in this process may still be writing to the same
+            // transcript, and the last one out closes it.
+            _log.Release();
 
             if (_ownsInner) Guard(() => _inner.Dispose(), "Dispose");
         }
 
-        private TelemetryRecordWriter OpenWriter(string sessionId)
-        {
-            var name = string.Format(
-                CultureInfo.InvariantCulture,
-                "{0:yyyyMMdd'T'HHmmss'Z'}-{1}.jsonl",
-                DateTime.UtcNow,
-                ShortId(sessionId));
-
-            var writer = TelemetryRecordWriter.TryOpen(Path.Combine(_directory, name), ShortId(sessionId), MaxBytesPerFile);
-            if (writer == null) return null;
-
-            lock (_gate)
-            {
-                if (_disposed) { writer.Dispose(); return null; }
-                _writers.Add(writer);
-                _current = writer;
-            }
-
-            return writer;
-        }
-
-        private TelemetryRecordWriter CurrentOrFallbackWriter()
-        {
-            lock (_gate)
-            {
-                if (_disposed) return null;
-                if (_current != null) return _current;
-            }
-
-            return OpenWriter("no-session");
-        }
-
-        /// <summary>First 8 characters of the session id — enough to pair a file with a Sentry event.</summary>
+        /// <summary>
+        /// First 8 alphanumeric characters of the session id. Short because it repeats on every
+        /// line, and 36 characters of GUID per line is most of what makes a transcript unreadable;
+        /// the full id is written once in <c>session.start</c>, which is what pairs the transcript
+        /// with a Sentry event.
+        /// </summary>
         internal static string ShortId(string sessionId)
         {
             if (string.IsNullOrEmpty(sessionId)) return "unknown";
-            var cleaned = new string(sessionId.Where(c => char.IsLetterOrDigit(c)).ToArray());
+            var cleaned = new string(sessionId.Where(char.IsLetterOrDigit).ToArray());
             if (cleaned.Length == 0) return "unknown";
             return cleaned.Length <= 8 ? cleaned : cleaned.Substring(0, 8);
         }
 
-        /// <summary>
-        /// Deletes transcripts past <see cref="RetentionDays"/>, then trims to the newest
-        /// <see cref="RetentionFileCount"/>. Best-effort and silent: a sweep that cannot run is
-        /// not a reason to fail a clinician's form.
-        /// </summary>
-        internal static void Sweep(string directory)
+        private string CurrentSessionId()
         {
-            try
-            {
-                if (!Directory.Exists(directory)) return;
-
-                var cutoff = DateTime.UtcNow.AddDays(-RetentionDays);
-                var files = new DirectoryInfo(directory)
-                    .GetFiles("*.jsonl")
-                    .OrderByDescending(f => f.LastWriteTimeUtc)
-                    .ToList();
-
-                for (var i = 0; i < files.Count; i++)
-                {
-                    if (i >= RetentionFileCount || files[i].LastWriteTimeUtc < cutoff)
-                        try { files[i].Delete(); } catch { /* in use, or not ours to delete */ }
-                }
-            }
-            catch
-            {
-                // Best-effort by contract.
-            }
+            lock (_gate) { return _currentSessionId; }
         }
 
         private void Guard(Action call, string member)
         {
             try { call(); }
-            catch (Exception ex) { CurrentWriterForErrors()?.WriteInnerError(member, ex); }
+            catch (Exception ex) { _log.WriteInnerError(CurrentSessionId(), member, ex); }
         }
 
         private T Guard<T>(Func<T> call, string member, T fallback)
@@ -273,14 +225,9 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             try { return call(); }
             catch (Exception ex)
             {
-                CurrentWriterForErrors()?.WriteInnerError(member, ex);
+                _log.WriteInnerError(CurrentSessionId(), member, ex);
                 return fallback;
             }
-        }
-
-        private TelemetryRecordWriter CurrentWriterForErrors()
-        {
-            lock (_gate) { return _current; }
         }
     }
 }

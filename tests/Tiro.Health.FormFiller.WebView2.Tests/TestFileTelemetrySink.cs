@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Tiro.Health.FormFiller.WebView2.Telemetry;
 using Tiro.Health.FormFiller.WebView2.Tests.Fakes;
@@ -25,6 +26,11 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
     /// oversight in the test: a wedged viewer is the failure this file exists to explain, and
     /// anything the sink defers to <c>Finish</c> is precisely what such a session loses.
     /// </para>
+    /// <para>
+    /// The transcript is one rolling file per day shared by every sink in the process, so these
+    /// tests give each case its own directory and reset the process-wide log in cleanup.
+    /// <see cref="TestRollingTelemetryLog"/> covers the rolling and retention mechanics.
+    /// </para>
     /// </summary>
     [TestClass]
     public class TestFileTelemetrySink
@@ -41,6 +47,9 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         [TestCleanup]
         public void RemoveTempDirectory()
         {
+            // The log is process-wide and reference-counted; a test that leaves a sink undisposed
+            // would otherwise hold a handle into the next one.
+            RollingTelemetryLog.ResetForTests();
             try { Directory.Delete(_dir, recursive: true); } catch { /* best-effort */ }
         }
 
@@ -49,7 +58,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         // -----------------------------------------------------------------------------
 
         [TestMethod]
-        public void OneFilePerSession_HeaderFirst()
+        public void OneFilePerDay_NamedForTheDay_WithAFileHeaderFirst()
         {
             using (var sink = new FileTelemetrySink(_dir))
             {
@@ -57,57 +66,53 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 sink.BeginSession("aaaabbbb-cccc-dddd-eeee-ffff00001111").Dispose();
             }
 
-            var files = Directory.GetFiles(_dir, "*.jsonl");
-            Assert.AreEqual(2, files.Length, "one transcript per session — that is the artifact support attaches to a ticket");
+            var file = Directory.GetFiles(_dir, "*.jsonl").Single();
+            StringAssert.Matches(Path.GetFileName(file), new Regex(@"^\d{8}\.jsonl$"),
+                "the ordinary case — one process, one day — should be one obviously-named file, with no suffix to explain");
 
-            foreach (var file in files)
+            var first = Records(file).First();
+            Assert.AreEqual("header", Type(first), "file-level metadata comes first so a reader knows what the file is before reading it");
+            Assert.AreEqual(1, first.GetProperty("v").GetInt32(), "schema version, for a reader meeting the format later");
+            Assert.IsTrue(first.TryGetProperty("pid", out _), "which process wrote it — the thing you need when two are running");
+            Assert.AreEqual(2, Records(file).Count(r => Type(r) == "session.start"),
+                "both sessions belong to the day's file; they are delimited by records, not by separate files");
+        }
+
+        [TestMethod]
+        public void SinksSharingADirectoryShareTheTranscript()
+        {
+            using (var first = new FileTelemetrySink(_dir))
+            using (var second = new FileTelemetrySink(_dir))
             {
-                var first = Records(file).First();
-                Assert.AreEqual("header", Type(first), "the header must be line 1 so a reader knows what the file is before reading it");
-                Assert.AreEqual(1, first.GetProperty("v").GetInt32(), "schema version, for a reader meeting the format later");
+                first.BeginSession(NewSessionId()).Dispose();
+                second.BeginSession(NewSessionId()).Dispose();
             }
+
+            Assert.AreEqual(1, Directory.GetFiles(_dir, "*.jsonl").Length,
+                "two viewers open at once is the common case; a handle each would mean all but the first silently losing its transcript");
+            Assert.AreEqual(2, AllRecords().Count(r => Type(r) == "session.start"));
         }
 
         [TestMethod]
-        public void FileNameCarriesTheSessionIdSoItPairsWithASentryEvent()
+        public void TheFirstSinkToCloseDoesNotTakeTheTranscriptFromTheOthers()
         {
-            using (var sink = new FileTelemetrySink(_dir))
-                sink.BeginSession("deadbeef-0000-1111-2222-333344445555").Dispose();
-
-            var name = Path.GetFileName(Directory.GetFiles(_dir, "*.jsonl").Single());
-            StringAssert.Contains(name, "deadbeef",
-                "the file name is how a Sentry event's form.session.id finds its transcript");
-        }
-
-        [TestMethod]
-        public void EveryRecordIsSelfContained()
-        {
-            using (var sink = new FileTelemetrySink(_dir))
+            using (var longLived = new FileTelemetrySink(_dir))
             {
-                var session = sink.BeginSession(NewSessionId());
-                session.AddBreadcrumb("lifecycle", "constructed");
-                var span = session.StartTransaction("sdc.displayQuestionnaire", "swm.send");
-                span.SetTag("messageType", "sdc.displayQuestionnaire");
-                span.Finish(TelemetrySpanStatus.Ok);
+                using (var shortLived = new FileTelemetrySink(_dir))
+                    shortLived.BeginSession(NewSessionId()).Dispose();
+
+                var session = longLived.BeginSession(NewSessionId());
+                session.AddBreadcrumb("lifecycle", "still writing after the other sink closed");
                 session.Dispose();
             }
 
-            var records = AllRecords();
-            Assert.IsTrue(records.Count >= 5, "expected header, crumb, span.start, span.tag, span.end, session.end");
-
-            foreach (var record in records)
-            {
-                Assert.IsTrue(record.TryGetProperty("type", out _), "a line with no type cannot be read on its own");
-                Assert.IsTrue(record.TryGetProperty("ts", out _), "a line with no timestamp cannot be placed in a session");
-                Assert.IsTrue(record.TryGetProperty("sid", out var sid) && sid.GetString().Length > 0,
-                    "sid on every line is what lets a grep for one message type still say which session it came from");
-                Assert.IsTrue(sid.GetString().Length <= 8,
-                    "the short form, because it repeats on every line and 36 characters of GUID per line is most of what makes a transcript unreadable");
-            }
+            Assert.IsTrue(AllRecords().Any(r => Type(r) == "crumb" &&
+                r.GetProperty("msg").GetString().Contains("still writing")),
+                "the log is reference-counted: the last sink out closes it, not the first");
         }
 
         [TestMethod]
-        public void TheHeaderCarriesTheFullSessionIdSoTheFilePairsWithASentryEvent()
+        public void SessionStartCarriesTheFullSessionIdSoTheFilePairsWithASentryEvent()
         {
             const string sessionId = "504ccc66-bcae-4dc5-83b6-fc4f7d98e1c2";
 
@@ -115,10 +120,10 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 sink.BeginSession(sessionId).Dispose();
 
             var records = AllRecords();
-            Assert.AreEqual(sessionId, records.First().GetProperty("session").GetString(),
-                "form.session.id in full, once — it is the key a Sentry event is found by");
-            Assert.IsTrue(records.Skip(1).All(r => r.GetProperty("sid").GetString() == "504ccc66"),
-                "and the short form everywhere else");
+            Assert.AreEqual(sessionId, records.Single(r => Type(r) == "session.start").GetProperty("session").GetString(),
+                "form.session.id in full, once per session — it is the key a Sentry event is found by");
+            Assert.IsTrue(records.Where(r => Type(r) != "header").All(r => r.GetProperty("sid").GetString() == "504ccc66"),
+                "and the short form everywhere else, which is what a grep for one session out of a day matches");
         }
 
         [TestMethod]
@@ -138,13 +143,13 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
-        public void SessionEndMarksACompleteFile()
+        public void SessionEndMarksACompletedSession()
         {
             using (var sink = new FileTelemetrySink(_dir))
                 sink.BeginSession(NewSessionId()).Dispose();
 
             Assert.AreEqual("session.end", Type(AllRecords().Last()),
-                "the terminator is the only way a reader can tell a complete file from one cut short by a process that died");
+                "the terminator is the only way a reader can tell a session that ended from one cut short by a process that died");
         }
 
         [TestMethod]
@@ -387,7 +392,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 session.Dispose();
             }
 
-            var header = AllRecords().First();
+            var header = AllRecords().Single(r => Type(r) == "session.start");
             Assert.AreEqual("9c1d4e0a7b2f4c8100000000000000aa", header.GetProperty("trace").GetString(),
                 "recording the inner trace id makes the file and the Sentry trace the same trace, not two things correlated after the fact");
             Assert.AreEqual("staging", header.GetProperty("env").GetString());
@@ -406,7 +411,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 session.Dispose();
             }
 
-            var header = AllRecords().First();
+            var header = AllRecords().Single(r => Type(r) == "session.start");
             Assert.IsFalse(header.TryGetProperty("trace", out _), "no inner sink, no trace to name");
             StringAssert.Contains(header.GetProperty("release").GetString(), "Tiro.Health.FormFiller.WebView2@",
                 "the file-only case still names the build, the way a Sentry event would");
@@ -522,7 +527,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             var text = File.ReadAllText(Directory.GetFiles(_dir, "*.jsonl").Single());
             Assert.IsFalse(text.Contains("sup3rsecret"), "a DSN is a credential and has no business in a file built to be emailed");
-            Assert.IsFalse(text.Contains("dsn"), "not the key either — the header reads two fields by name rather than looping the config");
+            Assert.IsFalse(text.Contains("dsn"), "not the key either — session.start reads two fields by name rather than looping the config");
         }
 
         [TestMethod]
@@ -573,32 +578,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             StringAssert.Contains(msg, "%USERPROFILE%",
                 "Windows account names are routinely a person's name, and this log is built to leave the hospital");
             Assert.IsFalse(msg.Contains(profile));
-        }
-
-        // -----------------------------------------------------------------------------
-        // Retention
-        // -----------------------------------------------------------------------------
-
-        [TestMethod]
-        public void SweepDeletesTranscriptsPastRetentionAndKeepsTheRest()
-        {
-            var old = Path.Combine(_dir, "20200101T000000Z-oldsessn.jsonl");
-            var fresh = Path.Combine(_dir, "20260101T000000Z-newsessn.jsonl");
-            File.WriteAllText(old, "{}\n");
-            File.WriteAllText(fresh, "{}\n");
-            File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-(FileTelemetrySink.RetentionDays + 1)));
-            File.SetLastWriteTimeUtc(fresh, DateTime.UtcNow);
-
-            FileTelemetrySink.Sweep(_dir);
-
-            Assert.IsFalse(File.Exists(old), "transcripts accumulate on a workstation nobody administers; something has to remove them");
-            Assert.IsTrue(File.Exists(fresh), "and the sweep must not take the session someone is about to ask for");
-        }
-
-        [TestMethod]
-        public void SweepOnAMissingDirectoryIsHarmless()
-        {
-            FileTelemetrySink.Sweep(Path.Combine(_dir, "does", "not", "exist"));
         }
 
         // -----------------------------------------------------------------------------

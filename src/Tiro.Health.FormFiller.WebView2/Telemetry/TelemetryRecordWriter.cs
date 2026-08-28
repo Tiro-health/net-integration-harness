@@ -7,10 +7,11 @@ using System.Text.Json;
 namespace Tiro.Health.FormFiller.WebView2.Telemetry
 {
     /// <summary>
-    /// Appends JSONL records to one file — the storage half of <see cref="FileTelemetrySink"/>.
+    /// Appends JSONL records to one file. The storage half of <see cref="FileTelemetrySink"/>;
+    /// which file, and when to move to the next one, is <see cref="RollingTelemetryLog"/>'s job.
     /// One record per line, each carrying <c>type</c>, <c>ts</c> and <c>sid</c> so a line means
-    /// something on its own: a <c>grep</c> for one message type still says which session it came
-    /// from, and a truncated tail costs one record rather than the file.
+    /// something on its own: a <c>grep</c> for one session still works in a file holding a whole
+    /// day of them, and a truncated tail costs one record rather than the file.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -18,7 +19,8 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
     /// Writing a <see cref="Utf8JsonWriter"/> straight at the <see cref="FileStream"/> would leave
     /// half a record on disk when serialization throws part-way (an extra value that will not
     /// serialize), and half a record breaks the one-line-per-record invariant the whole format
-    /// rests on. Buffering also lets the size cap be checked before any bytes are committed.
+    /// rests on. Buffering is also what lets the size cap be checked against the finished record,
+    /// before any of it is committed.
     /// </para>
     /// <para>
     /// <b>Every record is flushed as it is written, synchronously, on the calling thread.</b> Both
@@ -39,13 +41,6 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         private const int MaxExtraLength = 512;
 
         /// <summary>
-        /// Inner-sink failures are logged at most this many times per file. A backend that throws
-        /// once per call would otherwise fill the file with its own failure and bury the session
-        /// the file was opened to record.
-        /// </summary>
-        private const int MaxInnerErrorsLogged = 10;
-
-        /// <summary>
         /// Relaxed escaping, deliberately. The default encoder escapes <c>&lt;</c>, <c>&gt;</c> and
         /// <c>&amp;</c> so output is safe to drop into HTML, which turns a stack frame like
         /// <c>&lt;Main&gt;$</c> into <c>\u003CMain\u003E$</c> — still valid JSON, and noticeably
@@ -57,47 +52,51 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
         private readonly object _gate = new object();
-        private readonly string _sessionId;
         private readonly long _maxBytes;
         private readonly MemoryStream _buffer = new MemoryStream(512);
 
         private FileStream _stream;
         private long _bytesWritten;
-        private int _innerErrorsLogged;
-        private bool _stopped;
 
-        private TelemetryRecordWriter(FileStream stream, string sessionId, long maxBytes)
+        private TelemetryRecordWriter(FileStream stream, string path, long maxBytes)
         {
             _stream = stream;
-            _sessionId = sessionId;
             _maxBytes = maxBytes;
+            FilePath = path;
+            _bytesWritten = stream.Length;
         }
 
-        /// <summary>Full path of the file being written, for diagnostics.</summary>
-        public string FilePath { get; private set; }
+        /// <summary>Full path of the file being written.</summary>
+        public string FilePath { get; }
+
+        /// <summary>Bytes in the file, for the roller's size decisions.</summary>
+        public long Bytes { get { lock (_gate) { return _bytesWritten; } } }
 
         /// <summary>
         /// Opens <paramref name="path"/> for append, or returns <c>null</c> when it cannot be
         /// opened. Failing to write telemetry must never fail the host, so there is no throwing
         /// overload: a null writer means the sink degrades to whatever its inner sink does.
         /// </summary>
+        /// <remarks>
+        /// <b><see cref="FileShare.Read"/> denies other writers, and that is load-bearing.</b>
+        /// Readers are welcome — support copying the file while a clinic is running is the point —
+        /// but a second <i>writer</i> on the same path is what the share mode has to refuse. A
+        /// single <c>Write</c> call is not guaranteed atomic across handles, so two processes
+        /// appending records could interleave halfway through a line and break the format. The
+        /// refusal is also the signal <see cref="RollingTelemetryLog"/> uses to pick its own file:
+        /// this returning null for a path is how a second process discovers it needs one.
+        /// </remarks>
         /// <param name="path">Full path of the transcript to append to. Its directory is created.</param>
-        /// <param name="shortSessionId">
-        /// The abbreviated session id stamped on every line. Short rather than the full GUID
-        /// because it is repeated on every record, and 36 characters of it per line is most of
-        /// what makes a transcript unreadable at a glance; the full id is in the header, which is
-        /// what pairs the file with a Sentry event.
-        /// </param>
-        /// <param name="maxBytes">Size cap; reaching it writes a <c>trunc</c> record and stops.</param>
-        public static TelemetryRecordWriter TryOpen(string path, string shortSessionId, long maxBytes)
+        /// <param name="maxBytes">Size cap. Records that would exceed it are refused, not written.</param>
+        public static TelemetryRecordWriter TryOpen(string path, long maxBytes)
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-                // FileShare.Read so support can copy or tail the file while the host still runs —
-                // the machine is usually not one anybody can stop mid-clinic.
+                var directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
                 var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
-                return new TelemetryRecordWriter(stream, shortSessionId, maxBytes) { FilePath = path, _bytesWritten = stream.Length };
+                return new TelemetryRecordWriter(stream, path, maxBytes);
             }
             catch
             {
@@ -106,15 +105,21 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         }
 
         /// <summary>
-        /// Writes one record: <c>type</c>, <c>ts</c> and <c>sid</c>, then whatever
-        /// <paramref name="fields"/> adds. Best-effort — any failure is swallowed, because a sink
-        /// that throws would take down the host it is reporting on.
+        /// Writes one record — <c>type</c>, <c>ts</c>, <c>sid</c>, then whatever
+        /// <paramref name="fields"/> adds — and reports whether it went in.
         /// </summary>
-        public void Write(string type, Action<Utf8JsonWriter> fields)
+        /// <returns>
+        /// <c>false</c> when the finished record would take the file past its cap. Nothing is
+        /// written in that case and the writer stays usable, so the caller can roll to a fresh
+        /// file and try again: <b>a full file must cost the oldest records, never the newest.</b>
+        /// A record that fails for any other reason is swallowed and reported as written, since a
+        /// sink that throws would take down the host it is reporting on.
+        /// </returns>
+        public bool TryWrite(string type, string sessionId, Action<Utf8JsonWriter> fields)
         {
             lock (_gate)
             {
-                if (_stopped || _stream == null) return;
+                if (_stream == null) return true;
 
                 try
                 {
@@ -124,50 +129,28 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
                         json.WriteStartObject();
                         json.WriteString("type", type);
                         json.WriteString("ts", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
-                        json.WriteString("sid", _sessionId);
+                        json.WriteString("sid", sessionId ?? "process");
                         fields?.Invoke(json);
                         json.WriteEndObject();
                     }
 
-                    if (_maxBytes > 0 && _bytesWritten + _buffer.Length > _maxBytes)
-                    {
-                        // Say so in the file rather than just going quiet: a reader has no other way
-                        // to tell a capped file from a session that stopped emitting.
-                        _stopped = true;
-                        WriteRaw(cap => cap.WriteNumber("limit_bytes", _maxBytes), "trunc");
-                        return;
-                    }
+                    if (_maxBytes > 0 && _bytesWritten + _buffer.Length + 1 > _maxBytes) return false;
 
-                    CommitBuffer();
+                    var bytes = _buffer.GetBuffer();
+                    var length = (int)_buffer.Length;
+                    _stream.Write(bytes, 0, length);
+                    _stream.WriteByte((byte)'\n');
+                    _stream.Flush();
+                    _bytesWritten += length + 1;
+                    return true;
                 }
                 catch
                 {
-                    // Best-effort by contract.
+                    // Best-effort by contract. Reported as written so the caller does not roll the
+                    // file over a fault that rolling cannot fix.
+                    return true;
                 }
             }
-        }
-
-        /// <summary>
-        /// Records that the inner sink threw, and swallows it. This is where a Sentry that cannot
-        /// be initialised — a bad DSN, a broken options object — becomes visible instead of
-        /// vanishing. It does <b>not</b> catch a firewall silently dropping envelopes: the Sentry
-        /// transport does not throw for that, so a healthy-looking session with nothing on the
-        /// Sentry side stays the only signal.
-        /// </summary>
-        public void WriteInnerError(string member, Exception ex)
-        {
-            lock (_gate)
-            {
-                if (_innerErrorsLogged >= MaxInnerErrorsLogged) return;
-                _innerErrorsLogged++;
-            }
-
-            Write("inner.error", json =>
-            {
-                json.WriteString("member", member);
-                json.WriteString("exc", ex.GetType().FullName);
-                json.WriteString("msg", Trim(Redact(ex.Message), MaxValueLength));
-            });
         }
 
         /// <summary>Flushes the underlying stream. Cheap — records are already flushed per write.</summary>
@@ -245,39 +228,6 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
                 value = value.Replace(profile, "%USERPROFILE%");
 
             return value;
-        }
-
-        /// <summary>Writes a record bypassing the size cap — used for the cap's own notice.</summary>
-        private void WriteRaw(Action<Utf8JsonWriter> fields, string type)
-        {
-            try
-            {
-                _buffer.SetLength(0);
-                using (var json = new Utf8JsonWriter(_buffer, WriterOptions))
-                {
-                    json.WriteStartObject();
-                    json.WriteString("type", type);
-                    json.WriteString("ts", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
-                    json.WriteString("sid", _sessionId);
-                    fields?.Invoke(json);
-                    json.WriteEndObject();
-                }
-                CommitBuffer();
-            }
-            catch
-            {
-                // Best-effort by contract.
-            }
-        }
-
-        private void CommitBuffer()
-        {
-            var bytes = _buffer.GetBuffer();
-            var length = (int)_buffer.Length;
-            _stream.Write(bytes, 0, length);
-            _stream.WriteByte((byte)'\n');
-            _stream.Flush();
-            _bytesWritten += length + 1;
         }
     }
 }

@@ -12,22 +12,24 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
     /// </summary>
     internal sealed class FileTelemetrySession : ITelemetrySession
     {
-        private readonly TelemetryRecordWriter _writer;
+        private readonly RollingTelemetryLog _log;
         private readonly string _sessionId;
+        private readonly string _sid;
         private readonly ITelemetrySession _inner;
 
-        public FileTelemetrySession(TelemetryRecordWriter writer, string sessionId, ITelemetrySession inner)
+        public FileTelemetrySession(RollingTelemetryLog log, string sessionId, ITelemetrySession inner)
         {
-            _writer = writer;
+            _log = log;
             _sessionId = sessionId;
+            _sid = FileTelemetrySink.ShortId(sessionId);
             _inner = inner ?? NullTelemetrySink.NoopSession;
 
-            WriteHeader();
+            WriteSessionStart();
         }
 
         public void SetTag(string key, string value)
         {
-            _writer.Write("tag", json =>
+            _log.Write("tag", _sid, json =>
             {
                 json.WriteString("k", key);
                 TelemetryRecordWriter.WriteValue(json, "v", value);
@@ -38,7 +40,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
 
         public void AddBreadcrumb(string category, string message)
         {
-            _writer.Write("crumb", json =>
+            _log.Write("crumb", _sid, json =>
             {
                 json.WriteString("cat", category);
                 TelemetryRecordWriter.WriteValue(json, "msg", message);
@@ -55,7 +57,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
                 "Session.StartTransaction",
                 NullTelemetrySink.NoopSpan);
 
-            return FileTelemetrySpan.Start(_writer, spanId, parentSpanId: null, name: name, operation: operation, inner: innerSpan);
+            return FileTelemetrySpan.Start(_log, _sid, spanId, parentSpanId: null, name: name, operation: operation, inner: innerSpan);
         }
 
         /// <inheritdoc />
@@ -74,15 +76,17 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// </summary>
         public void Dispose()
         {
-            _writer.Write("session.end", null);
+            _log.Write("session.end", _sid, null);
             Guard(() => _inner.Dispose(), "Session.Dispose");
         }
 
         /// <summary>
-        /// The first record: schema version, release, environment, machine, and the trace id the
-        /// inner sink is reporting under.
+        /// Opens the session in the transcript: its full id, release, environment, and the trace id
+        /// the inner sink is reporting under. Schema version, host and pid belong to the file and
+        /// are written once by <see cref="RollingTelemetryLog"/>, since a day-file holds many
+        /// sessions.
         /// </summary>
-        private void WriteHeader()
+        private void WriteSessionStart()
         {
             // Release and environment come from the inner sink's own bootstrap config, so the file
             // learns them without a new interface member. The config also carries a DSN — read the
@@ -97,16 +101,14 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             // things correlated by form.session.id after the fact.
             var trace = TraceIdOf(GetSentryTraceHeader());
 
-            _writer.Write("header", json =>
+            _log.Write("session.start", _sid, json =>
             {
-                json.WriteNumber("v", 1);
-                // The full form.session.id, written once. Every other line carries the short form.
+                // The full form.session.id, written once per session. Every line carries the short
+                // form, which is what a grep for one session out of a day's file matches.
                 json.WriteString("session", _sessionId);
                 json.WriteString("release", release ?? LocalRelease());
                 if (environment != null) json.WriteString("env", environment);
                 if (trace != null) json.WriteString("trace", trace);
-                json.WriteString("host", Environment.MachineName);
-                json.WriteString("file_schema", "tiro-formfiller-telemetry-jsonl");
             });
         }
 
@@ -145,7 +147,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         private void Guard(Action call, string member)
         {
             try { call(); }
-            catch (Exception ex) { _writer.WriteInnerError(member, ex); }
+            catch (Exception ex) { _log.WriteInnerError(_sid, member, ex); }
         }
 
         private T Guard<T>(Func<T> call, string member, T fallback)
@@ -153,7 +155,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             try { return call(); }
             catch (Exception ex)
             {
-                _writer.WriteInnerError(member, ex);
+                _log.WriteInnerError(_sid, member, ex);
                 return fallback;
             }
         }

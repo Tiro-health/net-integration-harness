@@ -25,7 +25,8 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
     /// </remarks>
     internal sealed class FileTelemetrySpan : ITelemetrySpan
     {
-        private readonly TelemetryRecordWriter _writer;
+        private readonly RollingTelemetryLog _log;
+        private readonly string _sid;
         private readonly string _spanId;
         private readonly ITelemetrySpan _inner;
         private readonly Stopwatch _clock;
@@ -33,9 +34,10 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
 
         private bool _endRecorded;
 
-        private FileTelemetrySpan(TelemetryRecordWriter writer, string spanId, ITelemetrySpan inner)
+        private FileTelemetrySpan(RollingTelemetryLog log, string sid, string spanId, ITelemetrySpan inner)
         {
-            _writer = writer;
+            _log = log;
+            _sid = sid;
             _spanId = spanId;
             _inner = inner;
             _clock = Stopwatch.StartNew();
@@ -43,14 +45,15 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
 
         /// <summary>Writes the <c>span.start</c> record and returns the span that continues it.</summary>
         public static FileTelemetrySpan Start(
-            TelemetryRecordWriter writer,
+            RollingTelemetryLog log,
+            string sid,
             string spanId,
             string parentSpanId,
             string name,
             string operation,
             ITelemetrySpan inner)
         {
-            writer.Write("span.start", json =>
+            log.Write("span.start", sid, json =>
             {
                 json.WriteString("span", spanId);
                 if (parentSpanId == null) json.WriteNull("parent"); else json.WriteString("parent", parentSpanId);
@@ -58,14 +61,14 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
                 json.WriteString("op", operation);
             });
 
-            return new FileTelemetrySpan(writer, spanId, inner);
+            return new FileTelemetrySpan(log, sid, spanId, inner);
         }
 
         internal static string NewSpanId() => Guid.NewGuid().ToString("N").Substring(0, 8);
 
         public void SetTag(string key, string value)
         {
-            _writer.Write("span.tag", json =>
+            _log.Write("span.tag", _sid, json =>
             {
                 json.WriteString("span", _spanId);
                 json.WriteString("k", key);
@@ -77,7 +80,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
 
         public void SetExtra(string key, object value)
         {
-            _writer.Write("span.extra", json =>
+            _log.Write("span.extra", _sid, json =>
             {
                 json.WriteString("span", _spanId);
                 json.WriteString("k", key);
@@ -97,7 +100,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
                 "Span.StartChild",
                 NullTelemetrySink.NoopSpan);
 
-            return Start(_writer, childId, _spanId, description, operation, innerChild);
+            return Start(_log, _sid, childId, _spanId, description, operation, innerChild);
         }
 
         public void Finish(TelemetrySpanStatus status)
@@ -127,7 +130,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             // The error record carries the stack; span.end carries the outcome. Two records rather
             // than one fat one keeps every line short enough to read, and keeps the stack — the one
             // multi-line thing here — off the line a reader scans for outcomes.
-            _writer.Write("error", json =>
+            _log.Write("error", _sid, json =>
             {
                 json.WriteString("span", _spanId);
                 json.WriteString("exc", ex?.GetType().FullName ?? "null");
@@ -162,7 +165,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         {
             var elapsedMs = _clock.ElapsedMilliseconds;
 
-            _writer.Write("span.end", json =>
+            _log.Write("span.end", _sid, json =>
             {
                 json.WriteString("span", _spanId);
                 json.WriteString("status", status);
@@ -194,7 +197,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         private void Guard(Action call, string member)
         {
             try { call(); }
-            catch (Exception ex) { _writer.WriteInnerError(member, ex); }
+            catch (Exception ex) { _log.WriteInnerError(_sid, member, ex); }
         }
 
         private T Guard<T>(Func<T> call, string member, T fallback)
@@ -202,7 +205,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             try { return call(); }
             catch (Exception ex)
             {
-                _writer.WriteInnerError(member, ex);
+                _log.WriteInnerError(_sid, member, ex);
                 return fallback;
             }
         }
