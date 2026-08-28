@@ -371,7 +371,7 @@ TiroFormViewerDefaults.TelemetrySinkFactory =
     Function() New FileTelemetrySink(FileTelemetrySink.DefaultDirectory, New SentryTelemetrySink())
 ```
 
-It's a **decorator**, not a second backend: it records each call and forwards it to the inner sink (`NullTelemetrySink` when you pass none). So `UseSentry()` and this are not an either/or — wrapping a `SentryTelemetrySink` keeps every Sentry behaviour above, including the embedded page's DSN and the unified trace, and adds a local copy. Prefer wrapping to choosing, since you generally can't tell from outside whether a given site's egress works.
+This is not an either/or with `UseSentry()`. Wrapping a `SentryTelemetrySink` keeps every Sentry behaviour described above — the embedded page's DSN, the unified trace, all of it — and adds a local copy; passing no inner sink gives you the file alone. Prefer wrapping to choosing, since you generally can't tell from outside whether a given site's egress works.
 
 To change where it writes, how long it keeps, or how large files get, pass a `FileTelemetryOptions`:
 
@@ -425,7 +425,7 @@ as an artifact:
 
 That's 22 records for one form session — 3,054 bytes. One line per event, flat keys, `sid` on every line: readable in Notepad on a locked-down box with no `jq`, and greppable by anything else.
 
-Three things worth reading off it. `e36c2668` carries `"parent":"52bae698"` — a child span under the `status.handshake` receive transaction, which is how nesting appears. The two `"status":"cancelled"` spans are a real dispose arriving while two sends were in flight, which is what a clinician closing a form mid-load looks like. And `release` carries the build's commit, so a transcript names the exact binary that produced it.
+Reading that one: `e36c2668` has `"parent":"52bae698"`, so it is a child span of the `status.handshake` transaction — that is how nesting appears. The two `"status":"cancelled"` spans are what a viewer disposed mid-send looks like, which here means a form closed while it was still loading. `release` carries the build's commit, so a transcript names the exact binary that wrote it.
 
 **To pull one session out of a day:**
 
@@ -449,25 +449,25 @@ Record types: `header` (once per file open), `session.start` / `session.end`, `c
 
 #### Size and retention
 
-Two form sessions are under 2 KB, so this stays small on its own. Three bounds keep it that way regardless:
+A form session is a few dozen records, so this stays small on its own. Three bounds keep it that way regardless:
 
 | Scope | Limit | Behaviour at the limit |
 |---|---|---|
-| Per value | 2048 chars for values (`msg`, `v`, `stack`) · 256 for names (`k`, `cat`, `op`, `release`, `env`, `session`, `trace`, `host`, `name`) | truncated with a `…[trimmed]` marker, so a cut value never reads as complete |
-| Per file | `MaxBytesPerFile`, 8 MB by default | **rolls** to `20260828-2.jsonl` and keeps writing. A bounded log must discard its oldest records, never its newest — those are the ones next to whatever went wrong |
-| Per directory | `RetentionDays` (7) **and** `MaxTotalBytes` (64 MB) | oldest files deleted. Two bounds that don't multiply, unlike a per-file cap times a file count |
+| Per value | 2048 chars for values (`msg`, `v`, `stack`) · 256 for names (`k`, `cat`, `op`, `release`, `env`, `session`, `trace`, `host`, `name`) | truncated, with a `…[trimmed]` marker on the end |
+| Per file | `MaxBytesPerFile`, 8 MB by default | rolls to `20260828-2.jsonl` and keeps writing — no records are lost |
+| Per directory | `RetentionDays` (7) **and** `MaxTotalBytes` (64 MB) | oldest files deleted; both bounds apply |
 
 The sweep runs **at most once an hour**, and only when a file is opened or rolled — so a process with a viewer open all day sweeps at startup and again at the midnight roll, not on a timer. It deletes only files whose names match the ones this component writes (`yyyyMMdd[-n][-p<pid>].jsonl`), so pointing `Directory` at a folder holding your own `.jsonl` files is safe.
 
-Retention is 7 days because it's sized to the support loop, not to disk: a clinician hits a problem on Friday, IT raises a ticket on Monday, someone asks for the file on Tuesday. A window measured in hours is empty by the time anyone looks.
+7 days is sized to how long a support request takes to arrive rather than to disk usage. If your own support process is slower than that, raise `RetentionDays`.
 
 #### PHI
 
 **The transcript is held to the same rule as Sentry: no FHIR payloads.** That matters more here, not less, because the point of the file is to leave the hospital. Concretely:
 
 - **Every** string written is length-capped and has the user-profile path replaced with `%USERPROFILE%` — values and names alike (a Windows account name is often a person's name). Note the limit of that scrubbing: release-build stack traces carry the *build* machine's paths, which won't match, so it protects patient-adjacent paths rather than every path.
-- **`SetExtra` writes strings and primitives; everything else becomes just its type name** — `<Hl7.Fhir.Model.QuestionnaireResponse>`. Attaching a resource to debug a rejected submission is the obvious thing to reach for, and `ToString()` on a record, an anonymous type, a `JsonElement` or an `XElement` is a full state dump, so no caller code runs on that path at all.
-- **No DSN is ever written.** `session.start` reads `environment` and `release` out of the embedded bootstrap config by name rather than looping it.
+- **`SetExtra` writes strings and primitives; everything else becomes just its type name** — `<Hl7.Fhir.Model.QuestionnaireResponse>`. So attaching a resource records *that* you attached one, not its contents. If you need a detail from it in the transcript, pass that detail as a string.
+- **No DSN is ever written**, on any path.
 - If your own code puts patient identifiers in exception messages, scrub them before they bubble up — the same caveat as for Sentry above.
 
 One deliberate difference from Sentry, worth knowing before you send a file: the header records `host` (the machine name), and the Sentry adapter leaves `SendDefaultPii` off, so **Sentry never receives a machine name and the file does**. Support needs to know which workstation a transcript came from; if your workstation names identify people or rooms, that's a reason to review a file before forwarding it.
