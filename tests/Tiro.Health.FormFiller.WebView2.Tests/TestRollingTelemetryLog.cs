@@ -51,15 +51,19 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 log.Release();
             }
 
-            var files = Directory.GetFiles(_dir, "*.jsonl").Select(Path.GetFileName).OrderBy(f => f).ToList();
-            Assert.IsTrue(files.Count > 1, "reaching the cap must roll, not stop — stopping throws away the records closest to the failure");
-            StringAssert.Matches(files[1], new System.Text.RegularExpressions.Regex(@"^\d{8}-2\.jsonl$"),
-                "the second file continues the day's series; got " + files[1]);
+            var day = DateTime.UtcNow.ToString("yyyyMMdd");
+            var files = Directory.GetFiles(_dir, "*.jsonl").Select(Path.GetFileName).ToList();
 
-            var lastFile = Directory.GetFiles(_dir, "*.jsonl").OrderBy(f => f).Last();
-            Assert.IsTrue(Records(lastFile).Any(r => Type(r) == "crumb"),
-                "the newest records are in the newest file");
-            Assert.IsTrue(Records(lastFile).Any(r => Type(r) == "header"),
+            Assert.IsTrue(files.Count > 1, "reaching the cap must roll, not stop — stopping throws away the records closest to the failure");
+            CollectionAssert.Contains(files, day + ".jsonl", "the first file keeps the plain name");
+            CollectionAssert.Contains(files, day + "-2.jsonl", "and the roll continues the day's series");
+
+            // The real invariant, and the one that caught the bug this fix is for: rolling must not
+            // cost a single record. A refused record is never written, so the retry on the fresh
+            // file is the same record, not a replacement for a lost one.
+            Assert.AreEqual(40, AllRecords().Count(r => Type(r) == "crumb"),
+                "every record written before, during and after the roll has to be in the transcript");
+            Assert.AreEqual(files.Count, AllRecords().Count(r => Type(r) == "header"),
                 "each file stands alone, so each carries its own file header");
         }
 
