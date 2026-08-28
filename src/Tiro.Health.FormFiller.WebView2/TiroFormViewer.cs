@@ -390,6 +390,21 @@ namespace Tiro.Health.FormFiller.WebView2
         internal void EndTelemetrySession()
         {
             MarkDisposed();
+
+            // Finish the inbound message still being handled, if there is one. A viewer can be
+            // disposed part-way through a receive — a clinician closing the form on the submit
+            // that just landed is the ordinary case, not a rare race — and this span was
+            // previously abandoned. Cancelled rather than Ok: the round-trip did not complete,
+            // whatever the message itself achieved.
+            //
+            // It matters because an unfinished span is a signal. A backend reads one as work
+            // that never came back, and the file sink's transcript documents it as "the viewer
+            // was still waiting" — so leaving healthy sessions with a dangling span made that
+            // signal mean two different things. First-finish-wins means this cannot overwrite an
+            // outcome a handler already recorded (a validation failure on form.submitted, say).
+            try { _currentReceiveTransaction?.Finish(TelemetrySpanStatus.Cancelled); } catch { /* best-effort */ }
+            _currentReceiveTransaction = null;
+
             try { _session?.AddBreadcrumb("lifecycle", "TiroFormViewer disposed"); } catch { /* best-effort */ }
             try { _session?.Dispose(); } catch { /* best-effort */ }
             try { _telemetry?.Flush(TimeSpan.FromSeconds(1.0)); } catch { /* best-effort */ }
@@ -790,14 +805,23 @@ namespace Tiro.Health.FormFiller.WebView2
             // active receive transaction is _currentReceiveTransaction. Capture into a
             // local before invoking the user handler: if the handler pumps the message
             // loop (e.g. MessageBox.Show), a nested inbound will overwrite then null the
-            // field, but our local still points at the right span. OnBrowserMessageReceived's
-            // final Finish(Ok) does not disturb the status set here: ITelemetrySpan is
-            // first-wins.
+            // field, but our local still points at the right span — which the exception
+            // path below needs, to bind the failure to the right place.
+            // OnBrowserMessageReceived's final Finish(Ok) does not disturb the status set
+            // here: ITelemetrySpan is first-wins.
             var ourReceiveTransaction = _currentReceiveTransaction;
             try
             {
-                FormSubmitted?.Invoke(this, e);
+                // The outcome is recorded BEFORE the subscriber runs, and first-finish-wins makes
+                // it the status that survives whatever the handler then does. That ordering earns
+                // its keep twice. A subscriber that disposes the viewer — "save and close", an
+                // ordinary thing to write — would otherwise have this span finished by
+                // EndTelemetrySession's backstop, labelling a successful submit Cancelled. And the
+                // span measures the SMART Web Messaging round-trip, so a handler that persists to
+                // a database or opens a MessageBox no longer inflates it; that time belongs to the
+                // application, not the protocol.
                 ourReceiveTransaction?.Finish(success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument);
+                FormSubmitted?.Invoke(this, e);
             }
             catch (Exception ex)
             {
