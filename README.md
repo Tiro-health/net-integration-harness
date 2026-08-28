@@ -436,7 +436,7 @@ grep    d6f21f64 20260828.jsonl        # anywhere else
 
 Record types: `header` (once per file open), `session.start` / `session.end`, `crumb`, `tag`, `span.start` / `span.tag` / `span.extra` / `span.end`, `error`, `message`, `inner.error`, and `trunc`. Reading it:
 
-| | |
+| What you see | What it means |
 |---|---|
 | `session` on `session.start` | the full `form.session.id`. Paste it into Sentry to find the same session there — the record also carries `trace` when an inner Sentry sink supplied one, so the file and the Sentry trace are the *same* trace |
 | `span.start` with no matching `span.end` | the viewer was still waiting. Start records exist for exactly this: a span that never finishes is the failure you most want the file for, and it would otherwise write nothing at all |
@@ -451,7 +451,7 @@ Record types: `header` (once per file open), `session.start` / `session.end`, `c
 
 Two form sessions are under 2 KB, so this stays small on its own. Three bounds keep it that way regardless:
 
-| | Limit | Behaviour at the limit |
+| Scope | Limit | Behaviour at the limit |
 |---|---|---|
 | Per value | 2048 chars for values (`msg`, `v`, `stack`) · 256 for names (`k`, `cat`, `op`, `release`, `env`, `session`, `trace`, `host`, `name`) | truncated with a `…[trimmed]` marker, so a cut value never reads as complete |
 | Per file | `MaxBytesPerFile`, 8 MB by default | **rolls** to `20260828-2.jsonl` and keeps writing. A bounded log must discard its oldest records, never its newest — those are the ones next to whatever went wrong |
@@ -472,7 +472,7 @@ Retention is 7 days because it's sized to the support loop, not to disk: a clini
 
 One deliberate difference from Sentry, worth knowing before you send a file: the header records `host` (the machine name), and the Sentry adapter leaves `SendDefaultPii` off, so **Sentry never receives a machine name and the file does**. Support needs to know which workstation a transcript came from; if your workstation names identify people or rooms, that's a reason to review a file before forwarding it.
 
-#### Two limits worth knowing
+#### What it doesn't cover
 
 - **The embedded page stays dark in a file-only deployment.** Page-side telemetry needs a DSN to bootstrap, so with no inner Sentry sink there's nothing to inject and the JS side reports nothing. The transcript covers the .NET host only. Wrapping a `SentryTelemetrySink` restores it.
 - **A blocked network is still not self-announcing.** The file tells you what the host did; it can't tell you Sentry's envelopes were dropped in transit. Comparing a transcript against a Sentry side with no matching `form.session.id` is what shows that.
