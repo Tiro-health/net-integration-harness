@@ -326,6 +326,10 @@ Module Program
 End Module
 ```
 
+The sample's own `Program.vb` registers Sentry **and** a local transcript rather than this one-liner —
+see [When Sentry can't leave the hospital network](#when-sentry-cant-leave-the-hospital-network). The
+placement is what matters here, not which sink you pick.
+
 ---
 
 That's it. Every Designer-placed `TiroFormViewerR5` / `TiroFormViewerR4` in your application — anywhere in the codebase — picks up the configured sink at construction. No `Form_Load` code, no per-form awareness.
@@ -711,6 +715,7 @@ WinForms demos.
   - **Read-only narrative preview** — single-clicking a saved report renders its narrative in a `RichTextBox` (RTF when the SDC's `$generate-narrative` produced one, plain-text fallback otherwise — both via `QuestionnaireResponseHelper`). The preview is decoupled from session state, so the doctor can peek at older reports while a form is in progress.
   - **Reopen a report — edit or read-only** — double-clicking a report (or **Open this report**) prompts how to open it. **Edit** resumes filling it in the main shell's Form tab with the saved QR as `initialResponse`, reusing its report id (blocked while another session is live, to avoid orphaning the active viewer). **Read-only** spawns a separate top-level `ReportConsultationForm` with its own `TiroFormViewerR5` — leaving any live session untouched (showcasing that multiple viewer instances coexist) — setting `ReadOnly = True` so the form renders view-only off the *same* `WebContent/Form/index.html` the editable session uses.
   - **Tabbed embedding with dynamic Form tab** — the Form tab only exists while a session is alive (added to / removed from `TabControl.TabPages` on launch / dispose). A context banner above the form viewer shows what's being filled. Switching tabs while filling *hides* the WebView2 (state preserved, JS keeps running, messages still route); explicit **Close session** button *disposes* it (state gone, viewer recreated next launch). Showcases the hide-vs-dispose contrast.
+  - **Telemetry, both sinks at once** — `Program.vb` registers a local JSONL transcript wrapped around Sentry, which is the configuration to copy for a site whose network might block telemetry egress. Because the shell can have several viewers open (an editable session plus a read-only consultation window), running it also shows the shared day-file: several `session.start` records in one `%LOCALAPPDATA%\Tiro.Health\FormFiller\telemetry\<yyyyMMdd>.jsonl`. See [When Sentry can't leave the hospital network](#when-sentry-cant-leave-the-hospital-network).
   - **Custom `index.html` + host-side role config** — bundles a single `WebContent/Form/index.html`, shared by the editable session and the read-only consultation window. Illustrates where the line sits: the host API owns what the EHR is authoritative about (endpoints, launch context, `ReadOnly`), the page owns static presentation (branding, `auto-collapse` / `compact-grouping` / `density-mode`). Roles that differ only in editability share one page instead of forking it. See [Shipping your own index.html](#shipping-your-own-indexhtml) and [Rendering a form read-only](#rendering-a-form-read-only).
 - All three: `.NET 4.8` (VB.NET, old-style project format).
 
