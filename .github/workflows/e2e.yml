@@ -314,12 +314,22 @@ jobs:
           # that once, ~60 events from one run. Tagging the environment was the only lever a
           # caller had, and it only relabelled the events rather than stopping them.
           #
-          # atticus-backend#3610 fixes it properly by inverting the default: Sentry initialises
+          # atticus-backend#3610 (merged 2026-08-28) inverts that default: Sentry initialises
           # only when SENTRY_DSN is present, so an unconfigured container reports nothing at
           # all, and SENTRY_ENVIRONMENT is separate from ENVIRONMENT (which also drives PostHog
-          # and the local profiler). Neither is set here, which is what actually keeps CI out of
-          # Sentry — on images carrying that change. Do not "simplify" this by dropping
-          # ENVIRONMENT: it is load-bearing for startup, not for telemetry.
+          # and the local profiler). Neither is set here.
+          #
+          # But the floor cell pins SdcCompatibility.MinimumSdcVersion, and the release that
+          # satisfies it today — v0.9.39 — was cut BEFORE #3610. So on the image this actually
+          # runs, ENVIRONMENT is still what keeps these events off the production project, and
+          # it does double duty:
+          #
+          #   startup   always — Settings.ENVIRONMENT is a constrained Literal, so an invalid
+          #             value fails pydantic validation and uvicorn never starts
+          #   telemetry until the floor moves past the first release carrying #3610, after
+          #             which an unset SENTRY_DSN is what does it
+          #
+          # Do not drop this line when that release lands. The startup half never goes away.
           docker run -d --name sdc --network host \
             -e PORT=8080 \
             -e ENVIRONMENT=test \
