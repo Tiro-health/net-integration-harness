@@ -310,6 +310,106 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task DisposingDuringAReceive_FinishesTheInFlightTransaction()
+        {
+            // Found in a real transcript, not by reading the code: a clinician closed the form on
+            // the submit that had just landed, and the receive transaction was abandoned — the
+            // finish that would have recorded it ran after Dispose had released the sink, so the
+            // record was dropped. An unfinished span is a signal (a backend reads one as work that
+            // never came back; the file sink's transcript documents it as "the viewer was still
+            // waiting"), so a healthy session leaving one made that signal mean two things.
+            //
+            // Disposing from inside the FormSubmitted handler is how the field is still set: the
+            // finally that nulls it has not run yet. That is also exactly the real sequence.
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+            viewer.FormSubmitted += (_, __) => viewer.Dispose();
+
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-1", outcomeError: false));
+
+            var receiveSpan = sink.Sessions[0].Transactions.FirstOrDefault(t =>
+                t.Operation == "swm.receive" && t.Name == "form.submitted");
+            Assert.IsNotNull(receiveSpan, "Expected an swm.receive transaction for form.submitted.");
+            Assert.IsTrue(receiveSpan.Finished,
+                "the in-flight receive must be finished on dispose, not abandoned");
+            Assert.AreEqual(TelemetrySpanStatus.Ok, receiveSpan.FinalStatus,
+                "the submit succeeded, so the backstop must record that and not Cancelled");
+        }
+
+        [TestMethod]
+        public async Task DisposingDuringAReceive_KeepsTheOutcomeTheMessageHadReached()
+        {
+            // The discriminating case for the whole design. A validation failure, with the
+            // subscriber disposing the viewer: only a backstop that reads the outcome the message
+            // had already reached lands on InvalidArgument. A hardcoded Cancelled gives Cancelled;
+            // recording the outcome before the subscriber (which breaks the throwing-subscriber
+            // contract) gives InvalidArgument too, but fails that other test — so this assertion
+            // plus that one pin the design from both sides.
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+            viewer.FormSubmitted += (_, __) => viewer.Dispose();
+
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-bad", outcomeError: true));
+
+            var receiveSpan = sink.Sessions[0].Transactions.First(t =>
+                t.Operation == "swm.receive" && t.Name == "form.submitted");
+            Assert.AreEqual(TelemetrySpanStatus.InvalidArgument, receiveSpan.FinalStatus,
+                "a validation failure closed from its own handler must still read as a validation failure");
+        }
+
+        [TestMethod]
+        public async Task DisposingDuringAReceiveWithNoOutcomeYet_FinishesItAsCancelled()
+        {
+            // A receive that never reached an outcome at all — dirtyChanged carries none. Cancelled
+            // is the honest status there, and this is the case that would silently become Ok if the
+            // backstop ever defaulted the other way.
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+            viewer.FormDirtyChanged += (_, __) => viewer.Dispose();
+
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            browser.RaiseMessageReceived(@"{
+                ""messageId"": ""dirty-1"",
+                ""messagingHandle"": ""handle"",
+                ""messageType"": ""ui.form.dirtyChanged"",
+                ""payload"": { ""isDirty"": true }
+            }");
+
+            var receiveSpan = sink.Sessions[0].Transactions.FirstOrDefault(t =>
+                t.Operation == "swm.receive" && t.Name == "ui.form.dirtyChanged");
+            Assert.IsNotNull(receiveSpan, "Expected an swm.receive transaction for ui.form.dirtyChanged.");
+            Assert.IsTrue(receiveSpan.Finished, "abandoned on dispose before this fix");
+            Assert.AreEqual(TelemetrySpanStatus.Cancelled, receiveSpan.FinalStatus,
+                "no outcome had been reached, so Cancelled is the only honest status");
+        }
+
+        [TestMethod]
+        public async Task NoSpanIsLeftDanglingWhenTheViewerIsDisposed()
+        {
+            var sink = new FakeTelemetrySink();
+            var viewer = NewViewer(sink, out var browser, out var handler);
+            await PollFor(() => handler.SendMessage != null, TimeSpan.FromSeconds(5));
+
+            browser.RaiseMessageReceived(BuildHandshakeMessage("hs-1"));
+            browser.RaiseMessageReceived(BuildFormSubmitMessage("fs-1", outcomeError: false));
+            await PollFor(() => viewer.State == TiroFormViewerState.Submitted, TimeSpan.FromSeconds(5));
+
+            viewer.Dispose();
+
+            var unfinished = sink.Sessions[0].Transactions.Where(t => !t.Finished).Select(t => t.Name).ToList();
+            Assert.AreEqual(0, unfinished.Count,
+                "an unfinished span means 'still waiting' to every reader of this data: " + string.Join(", ", unfinished));
+        }
+
+        [TestMethod]
         public async Task InboundFormSubmit_WithFailedOutcome_FinishesAsInvalidArgument()
         {
             var sink = new FakeTelemetrySink();

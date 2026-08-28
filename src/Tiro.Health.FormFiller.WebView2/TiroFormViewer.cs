@@ -172,6 +172,22 @@ namespace Tiro.Health.FormFiller.WebView2
         // the user handler, so its post-pump Finish call still sees the right span.
         private ITelemetrySpan _currentReceiveTransaction;
 
+        /// <summary>
+        /// The status <see cref="_currentReceiveTransaction"/> is <i>going</i> to be finished with,
+        /// once the subscriber for the message returns. Set only while a subscriber is on the
+        /// stack, and read only by <see cref="EndTelemetrySession"/>'s backstop.
+        /// <para>
+        /// It exists because a subscriber may dispose the viewer — "save and close" is an ordinary
+        /// thing to write in a <c>FormSubmitted</c> handler — and the finish that would have
+        /// recorded the outcome then runs after the sink has already been released, so the record
+        /// is dropped and the span dangles. The backstop finishes it instead, and without this
+        /// field it could only guess: labelling a successful submit <c>Cancelled</c> would be a
+        /// worse lie than the dangling span it replaced.
+        /// </para>
+        /// <para>Same thread-affinity as the field above: UI thread only.</para>
+        /// </summary>
+        private TelemetrySpanStatus? _pendingReceiveStatus;
+
         // Explicit lifecycle state. Backed by int so Interlocked CAS/Exchange can transition
         // it atomically. Reads go through Volatile.Read for visibility across threads.
         private int _state = (int)TiroFormViewerState.Initializing;
@@ -390,6 +406,29 @@ namespace Tiro.Health.FormFiller.WebView2
         internal void EndTelemetrySession()
         {
             MarkDisposed();
+
+            // Finish the inbound message still being handled, if there is one. A viewer can be
+            // disposed part-way through a receive — a clinician closing the form on the submit
+            // that just landed is the ordinary case, not a rare race — and this span was
+            // previously abandoned: the finish that would have recorded it runs after this method
+            // has released the sink, so the record is dropped.
+            //
+            // It matters because an unfinished span is a signal. A backend reads one as work that
+            // never came back, and the file sink's transcript documents it as "the viewer was
+            // still waiting" — so leaving healthy sessions with a dangling span made that signal
+            // mean two different things.
+            //
+            // _pendingReceiveStatus carries the outcome the message had already reached, so a
+            // submit that succeeded is recorded as succeeding. Cancelled is only for a receive
+            // that had not got as far as an outcome at all.
+            try
+            {
+                _currentReceiveTransaction?.Finish(_pendingReceiveStatus ?? TelemetrySpanStatus.Cancelled);
+            }
+            catch { /* best-effort */ }
+            _currentReceiveTransaction = null;
+            _pendingReceiveStatus = null;
+
             try { _session?.AddBreadcrumb("lifecycle", "TiroFormViewer disposed"); } catch { /* best-effort */ }
             try { _session?.Dispose(); } catch { /* best-effort */ }
             try { _telemetry?.Flush(TimeSpan.FromSeconds(1.0)); } catch { /* best-effort */ }
@@ -714,6 +753,7 @@ namespace Tiro.Health.FormFiller.WebView2
             finally
             {
                 _currentReceiveTransaction = null;
+                _pendingReceiveStatus = null;
             }
         }
 
@@ -796,6 +836,13 @@ namespace Tiro.Health.FormFiller.WebView2
             var ourReceiveTransaction = _currentReceiveTransaction;
             try
             {
+                // The outcome is recorded AFTER the subscriber, so that a subscriber which throws
+                // gets its exception recorded as the outcome instead of a success asserted moments
+                // earlier — a deliberate contract, pinned by
+                // AThrowingFormSubmittedSubscriber_KeepsItsExceptionAsTheOutcome. What the
+                // subscriber must not be able to do is vanish with the outcome, which is what
+                // _pendingReceiveStatus below is for.
+                _pendingReceiveStatus = success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument;
                 FormSubmitted?.Invoke(this, e);
                 ourReceiveTransaction?.Finish(success ? TelemetrySpanStatus.Ok : TelemetrySpanStatus.InvalidArgument);
             }
