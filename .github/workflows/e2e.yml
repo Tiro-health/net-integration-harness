@@ -506,6 +506,38 @@ jobs:
           }
           if (-not $found) { "WebView2 runtime: NOT FOUND in the usual registry keys" }
 
+      # Wake the SDC server before the probe runs. The version check inside SetContextAsync
+      # gets a hard 3-second deadline, which is the right number in production — it sits on the
+      # path to putting a form in front of a clinician, and it fails open, so a dead server
+      # should be discovered fast rather than kept waiting for. It is the wrong number against
+      # an environment that scales to zero: the first request is what wakes the container, and
+      # sdc-dev reddened a master run by taking longer than that to answer, which cost a re-run
+      # and says nothing about the code.
+      #
+      # So the patience lives here instead of in the library. Deliberately NOT fatal: if warming
+      # fails the probe still runs and its own assertion is still the gate. A warm-up that could
+      # fail the job would just relocate the flake it was added to remove.
+      - name: Wake the SDC server
+        if: env.PROBE_SKIP_SERVER_STAGES != '1'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $url = "$env:SDC_ENDPOINT/metadata"
+          foreach ($attempt in 1..6) {
+            try {
+              $t = Measure-Command {
+                $r = Invoke-WebRequest -Uri $url -Headers @{ Accept = 'application/fhir+json' } `
+                                       -TimeoutSec 20 -UseBasicParsing
+              }
+              Write-Host "awake after $attempt attempt(s) in $([int]$t.TotalMilliseconds) ms (HTTP $($r.StatusCode))"
+              exit 0
+            } catch {
+              Write-Host "attempt ${attempt}: $($_.Exception.Message)"
+              Start-Sleep -Seconds 5
+            }
+          }
+          Write-Host "::warning::could not wake $url; the probe will report the real verdict"
+
       # Start-Process -Wait -PassThru rather than `& $exe`: it yields the exit code even if
       # the process ever detaches from the console, which silently turned this step green
       # once already. An absent or non-zero code must fail the step, never pass it.
