@@ -394,31 +394,44 @@ One file per day, in `%LOCALAPPDATA%\Tiro.Health\FormFiller\telemetry` unless yo
 
 Every viewer in the process writes to the same file — the log is shared and reference-counted, so two forms open at once don't fight over it and the first one closed doesn't take it from the others. Sessions are delimited by `session.start` / `session.end` records rather than by separate files, which is what makes bugs that span sessions visible at all. `FileTelemetrySink.CurrentFilePath` gives you the path, which is what an *Attach diagnostics* button should use rather than reconstructing a name.
 
-Two sessions, from a driven run (hostname and stack path substituted). The e2e suite's stage C
-captures the equivalent from a real WebView2 session and uploads it as a run artifact — see
-[tests/e2e/README.md](tests/e2e/README.md):
+A real capture, verbatim, from the e2e suite's stage C — one form session on a Windows runner
+against a live SDC server, see [tests/e2e/README.md](tests/e2e/README.md). Every run uploads one
+as an artifact:
 
 ```
-{"type":"header","ts":"2026-08-28T12:17:18.993Z","sid":"process","v":1,"file_schema":"tiro-formfiller-telemetry-jsonl","host":"WKS-RAD-114","pid":79484}
-{"type":"session.start","ts":"2026-08-28T12:17:18.996Z","sid":"d313f097","session":"d313f097-ca26-4b0e-baad-05eeedc334f0","release":"Tiro.Health.FormFiller.WebView2@1.0.0"}
-{"type":"crumb","ts":"2026-08-28T12:17:18.997Z","sid":"d313f097","cat":"lifecycle","msg":"TiroFormViewer constructed"}
-{"type":"span.start","ts":"2026-08-28T12:17:18.997Z","sid":"d313f097","span":"0e164da0","parent":null,"name":"sdc.displayQuestionnaire","op":"swm.send"}
-{"type":"span.tag","ts":"2026-08-28T12:17:18.998Z","sid":"d313f097","span":"0e164da0","k":"questionnaire_url","v":"http://tiro.health/Questionnaire/mammo-report"}
-{"type":"span.end","ts":"2026-08-28T12:17:19.318Z","sid":"d313f097","span":"0e164da0","status":"ok","ms":320}
-{"type":"session.end","ts":"2026-08-28T12:17:19.318Z","sid":"d313f097"}
-{"type":"session.start","ts":"2026-08-28T12:17:19.319Z","sid":"64b8cc85","session":"64b8cc85-2a52-42f8-ba5c-ced2e4d1052d","release":"Tiro.Health.FormFiller.WebView2@1.0.0"}
-{"type":"span.start","ts":"2026-08-28T12:17:19.319Z","sid":"64b8cc85","span":"365b6a87","parent":null,"name":"ui.form.requestSubmit","op":"swm.send"}
-{"type":"span.tag","ts":"2026-08-28T12:17:19.319Z","sid":"64b8cc85","span":"365b6a87","k":"intent","v":"finalize"}
-{"type":"span.end","ts":"2026-08-28T12:17:19.443Z","sid":"64b8cc85","span":"365b6a87","status":"internal_error","ms":123,"exc":"System.TimeoutException"}
-{"type":"error","ts":"2026-08-28T12:17:19.444Z","sid":"64b8cc85","span":"365b6a87","exc":"System.TimeoutException","msg":"Handshake not received within 5s","stack":"   at Tiro.Health..."}
-{"type":"session.end","ts":"2026-08-28T12:17:19.465Z","sid":"64b8cc85"}
+{"type":"header","ts":"2026-08-28T12:51:31.082Z","sid":"process","v":1,"file_schema":"tiro-formfiller-telemetry-jsonl","host":"runnervmeef0v","pid":1948}
+{"type":"session.start","ts":"2026-08-28T12:51:31.099Z","sid":"d6f21f64","session":"d6f21f64-49f8-4c37-80cc-cadca6042c0a","release":"Tiro.Health.FormFiller.WebView2@1.0.0+1d0dedbf962634084006fa63010ce31df692e746"}
+{"type":"crumb","ts":"2026-08-28T12:51:31.100Z","sid":"d6f21f64","cat":"lifecycle","msg":"TiroFormViewer constructed"}
+{"type":"span.start","ts":"2026-08-28T12:51:31.132Z","sid":"d6f21f64","span":"742fc8a5","parent":null,"name":"Initialize WebView","op":"swm.lifecycle.init"}
+{"type":"span.start","ts":"2026-08-28T12:51:31.876Z","sid":"d6f21f64","span":"d9c34f79","parent":null,"name":"sdc.displayQuestionnaire","op":"swm.send"}
+{"type":"span.tag","ts":"2026-08-28T12:51:31.876Z","sid":"d6f21f64","span":"d9c34f79","k":"messageType","v":"sdc.displayQuestionnaire"}
+{"type":"span.tag","ts":"2026-08-28T12:51:31.878Z","sid":"d6f21f64","span":"d9c34f79","k":"questionnaire_url","v":"http://templates.tiro.health/templates/23030f2f048445af9ab171a7e4222699|1.0.0"}
+{"type":"span.end","ts":"2026-08-28T12:51:32.963Z","sid":"d6f21f64","span":"742fc8a5","status":"ok","ms":1825}
+{"type":"span.start","ts":"2026-08-28T12:51:33.665Z","sid":"d6f21f64","span":"52bae698","parent":null,"name":"status.handshake","op":"swm.receive"}
+{"type":"span.tag","ts":"2026-08-28T12:51:33.665Z","sid":"d6f21f64","span":"52bae698","k":"messageType","v":"status.handshake"}
+{"type":"crumb","ts":"2026-08-28T12:51:33.845Z","sid":"d6f21f64","cat":"lifecycle","msg":"Handshake received (tiro-web-sdk 0.3.3)"}
+{"type":"span.start","ts":"2026-08-28T12:51:33.862Z","sid":"d6f21f64","span":"e36c2668","parent":"52bae698","name":"response","op":"swm.send"}
+{"type":"span.end","ts":"2026-08-28T12:51:33.862Z","sid":"d6f21f64","span":"e36c2668","status":"ok","ms":0}
+{"type":"span.end","ts":"2026-08-28T12:51:33.862Z","sid":"d6f21f64","span":"52bae698","status":"ok","ms":197}
+{"type":"crumb","ts":"2026-08-28T12:51:33.866Z","sid":"d6f21f64","cat":"sdc.version","msg":"SDC server version v0.9.40-rc.0 satisfies the minimum v0.9.39 (read from CapabilityStatement.software.version)."}
+{"type":"span.start","ts":"2026-08-28T12:51:33.866Z","sid":"d6f21f64","span":"724c0e90","parent":null,"name":"sdc.configure","op":"swm.send"}
+{"type":"span.tag","ts":"2026-08-28T12:51:33.866Z","sid":"d6f21f64","span":"724c0e90","k":"messageType","v":"sdc.configure"}
+{"type":"span.tag","ts":"2026-08-28T12:51:33.866Z","sid":"d6f21f64","span":"724c0e90","k":"sdc_server","v":"https://sdc-staging.tiro.health/fhir/r5"}
+{"type":"span.end","ts":"2026-08-28T12:51:34.028Z","sid":"d6f21f64","span":"d9c34f79","status":"cancelled","ms":2150}
+{"type":"span.end","ts":"2026-08-28T12:51:34.028Z","sid":"d6f21f64","span":"724c0e90","status":"cancelled","ms":160}
+{"type":"crumb","ts":"2026-08-28T12:51:34.029Z","sid":"d6f21f64","cat":"lifecycle","msg":"TiroFormViewer disposed"}
+{"type":"session.end","ts":"2026-08-28T12:51:34.030Z","sid":"d6f21f64"}
 ```
 
-That's 13 records for two form sessions — under 2 KB. One line per event, flat keys, `sid` on every line: readable in Notepad on a locked-down box with no `jq`, and greppable by anything else. **To pull one session out of a day:**
+That's 22 records for one form session — 3,054 bytes. One line per event, flat keys, `sid` on every line: readable in Notepad on a locked-down box with no `jq`, and greppable by anything else.
+
+Three things worth reading off it. `e36c2668` carries `"parent":"52bae698"` — a child span under the `status.handshake` receive transaction, which is how nesting appears. The two `"status":"cancelled"` spans are a real dispose arriving while two sends were in flight, which is what a clinician closing a form mid-load looks like. And `release` carries the build's commit, so a transcript names the exact binary that produced it.
+
+**To pull one session out of a day:**
 
 ```
-findstr d313f097 20260828.jsonl        REM Windows
-grep    d313f097 20260828.jsonl        # anywhere else
+findstr d6f21f64 20260828.jsonl        REM Windows
+grep    d6f21f64 20260828.jsonl        # anywhere else
 ```
 
 Record types: `header` (once per file open), `session.start` / `session.end`, `crumb`, `tag`, `span.start` / `span.tag` / `span.extra` / `span.end`, `error`, `message`, `inner.error`, and `trunc`. Reading it:
