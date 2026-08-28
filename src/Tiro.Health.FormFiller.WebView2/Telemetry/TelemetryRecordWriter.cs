@@ -37,8 +37,12 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// <summary>Longest string written for a caller-supplied value (messages, tags, stacks).</summary>
         private const int MaxValueLength = 2048;
 
-        /// <summary>Longest string written for a <c>SetExtra</c> value — see <see cref="WriteExtraValue"/>.</summary>
-        private const int MaxExtraLength = 512;
+        /// <summary>
+        /// Longest string written for a name-like field: a tag or extra key, a breadcrumb category,
+        /// an operation, a release or environment. Shorter than a value because these are
+        /// identifiers, and a caller who puts prose in one has already lost the plot.
+        /// </summary>
+        private const int MaxKeyLength = 256;
 
         /// <summary>
         /// Relaxed escaping, deliberately. The default encoder escapes <c>&lt;</c>, <c>&gt;</c> and
@@ -172,30 +176,87 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         }
 
         /// <summary>
-        /// Serializes a <c>SetExtra</c> value. Strings and primitives go in as themselves;
-        /// <b>anything else is written as a truncated <c>ToString()</c>, never reflected over.</b>
-        /// The interface takes <see cref="object"/>, so serializing an arbitrary graph would put
-        /// whatever a caller happened to attach — a FHIR resource, say — into a file whose whole
-        /// purpose is to be sent somewhere. The file writes nothing Sentry would not have been
-        /// given, and this is the member where that could otherwise stop being true.
+        /// Serializes a <c>SetExtra</c> value. Strings and primitives are written; <b>every other
+        /// type is written as its type name and nothing else.</b>
         /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This is the highest-stakes member in the file, because <see cref="ITelemetrySpan.SetExtra"/>
+        /// takes <see cref="object"/> and the transcript is built to be emailed to a vendor.
+        /// </para>
+        /// <para>
+        /// An earlier version called <c>ToString()</c> on anything unrecognised, on the reasoning
+        /// that it was not <i>reflection</i> over the graph. That reasoning was wrong in exactly the
+        /// cases that matter: for a C# <c>record</c>, an anonymous type, a <c>JsonElement</c>, an
+        /// <c>XElement</c>, a <c>StringBuilder</c>, a <c>Uri</c> or an <see cref="Exception"/>,
+        /// <c>ToString()</c> <i>is</i> a full state dump. Attaching a QuestionnaireResponse while
+        /// debugging a rejected submission — the obvious thing to do — put a named patient, an NHS
+        /// number and a diagnosis into the file.
+        /// </para>
+        /// <para>
+        /// So no caller code runs here at all. A type name still answers the question a reader
+        /// actually has ("what was attached?") without carrying its contents, and it cannot throw,
+        /// cannot block, and cannot re-enter this writer while its buffer is in use.
+        /// </para>
+        /// </remarks>
         internal static void WriteExtraValue(Utf8JsonWriter json, string name, object value)
         {
             if (value == null) { json.WriteNull(name); return; }
 
             switch (value)
             {
-                case string s: json.WriteString(name, Trim(Redact(s), MaxExtraLength)); return;
+                case string s: json.WriteString(name, Trim(Redact(s), MaxValueLength)); return;
                 case bool b: json.WriteBoolean(name, b); return;
                 case int i: json.WriteNumber(name, i); return;
                 case long l: json.WriteNumber(name, l); return;
+                case short sh: json.WriteNumber(name, sh); return;
+                case byte by: json.WriteNumber(name, by); return;
+                case uint ui: json.WriteNumber(name, ui); return;
+                case ulong ul: json.WriteNumber(name, ul); return;
                 case double d: json.WriteNumber(name, d); return;
                 case float f: json.WriteNumber(name, f); return;
                 case decimal m: json.WriteNumber(name, m); return;
+                case DateTime dt: json.WriteString(name, dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)); return;
+                case Guid g: json.WriteString(name, g.ToString("D")); return;
                 default:
-                    json.WriteString(name, Trim(Redact(Convert.ToString(value, CultureInfo.InvariantCulture)), MaxExtraLength));
+                    json.WriteString(name, Trim("<" + TypeName(value.GetType()) + ">", MaxKeyLength));
                     return;
             }
+        }
+
+        /// <summary>
+        /// A type's name without assembly qualification. <see cref="Type.FullName"/> spells generic
+        /// arguments out in full — version, culture and public key token for each one — so an
+        /// anonymous type of two strings arrives as 200-odd characters of metadata that tells a
+        /// reader nothing. This keeps the namespace, which is the part that identifies what was
+        /// attached, and renders arguments the way source would.
+        /// </summary>
+        private static string TypeName(Type type)
+        {
+            if (!type.IsGenericType) return type.FullName ?? type.Name;
+
+            var name = type.FullName ?? type.Name;
+            var tick = name.IndexOf('`');
+            if (tick > 0) name = name.Substring(0, tick);
+
+            var arguments = type.GetGenericArguments();
+            var rendered = new string[arguments.Length];
+            for (var i = 0; i < arguments.Length; i++) rendered[i] = TypeName(arguments[i]);
+
+            return name + "<" + string.Join(",", rendered) + ">";
+        }
+
+        /// <summary>
+        /// Writes a name-like field — a key, category, operation, release or environment — redacted
+        /// and capped at <see cref="MaxKeyLength"/>. Separate from <see cref="WriteValue"/> only in
+        /// the cap; the point is that these went through <i>neither</i> before, so a breadcrumb
+        /// category was an unbounded, unscrubbed channel sitting next to a scrubbed message on the
+        /// same line.
+        /// </summary>
+        internal static void WriteKey(Utf8JsonWriter json, string name, string value)
+        {
+            if (value == null) json.WriteNull(name);
+            else json.WriteString(name, Trim(Redact(value), MaxKeyLength));
         }
 
         /// <summary>Writes a caller-supplied string, redacted and length-capped.</summary>

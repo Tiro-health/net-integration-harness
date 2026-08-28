@@ -3,7 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Tiro.Health.FormFiller.WebView2.Telemetry;
 using Tiro.Health.FormFiller.WebView2.Tests.Fakes;
@@ -174,8 +177,24 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 "parent ids are what let the tree be rebuilt without holding state across the file");
 
             foreach (var end in AllRecords().Where(r => Type(r) == "span.end"))
-                Assert.IsTrue(end.TryGetProperty("ms", out var ms) && ms.GetInt64() >= 0,
+                Assert.IsTrue(end.TryGetProperty("ms", out _),
                     "ms is precomputed so nothing reading the file has to subtract two timestamps");
+        }
+
+        [TestMethod]
+        public void SpanDurationIsTheRealElapsedTime()
+        {
+            using (var sink = new FileTelemetrySink(_dir))
+            {
+                var session = sink.BeginSession(NewSessionId());
+                var span = session.StartTransaction("slow", "op");
+                Thread.Sleep(40);
+                span.Finish(TelemetrySpanStatus.Ok);
+                session.Dispose();
+            }
+
+            var ms = AllRecords().Single(r => Type(r) == "span.end").GetProperty("ms").GetInt64();
+            Assert.IsTrue(ms >= 25, "a >= 0 assertion passes on a hardcoded zero; the field has to carry the actual duration. Got " + ms);
         }
 
         [TestMethod]
@@ -471,18 +490,29 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
-        public void FlushGivesTheInnerSinkWhatIsLeftOfTheBudget()
+        public void FlushWritesTheFileBeforeHandingTheRemainderToTheInnerSink()
         {
             var inner = new StubInnerSink();
             using (var sink = new FileTelemetrySink(_dir, inner))
             {
-                sink.BeginSession(NewSessionId()).Dispose();
+                var session = sink.BeginSession(NewSessionId());
+                session.AddBreadcrumb("lifecycle", "before the flush");
+
+                // Observed from inside the inner sink's own Flush: by the time the budget reaches
+                // it, the transcript must already be on disk. A timeout-range assertion alone
+                // passes with no arithmetic at all, and passed against an implementation that
+                // simply forwarded the original budget.
+                inner.OnFlush = () => inner.RecordsOnDiskAtFlush = AllRecords().Count(r => Type(r) == "crumb");
+
                 sink.Flush(TimeSpan.FromSeconds(1));
+                session.Dispose();
             }
 
+            Assert.AreEqual(1, inner.RecordsOnDiskAtFlush,
+                "cheap-first ordering is the whole reason a decorator needs no budget arithmetic");
             Assert.AreEqual(1, inner.FlushTimeouts.Count);
             Assert.IsTrue(inner.FlushTimeouts[0] <= TimeSpan.FromSeconds(1) && inner.FlushTimeouts[0] >= TimeSpan.Zero,
-                "the file is flushed first and the remainder handed on: Sentry's flush burns its whole timeout when egress is blocked, which is this sink's whole reason to exist");
+                "and what is left of the budget is what Sentry gets, since its flush burns the lot when egress is blocked");
         }
 
         [TestMethod]
@@ -527,38 +557,134 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             var text = File.ReadAllText(Directory.GetFiles(_dir, "*.jsonl").Single());
             Assert.IsFalse(text.Contains("sup3rsecret"), "a DSN is a credential and has no business in a file built to be emailed");
-            Assert.IsFalse(text.Contains("dsn"), "not the key either — session.start reads two fields by name rather than looping the config");
+            Assert.IsFalse(text.Contains("ingest.de.sentry.io"));
+
+            // On property names rather than a whole-file substring scan, which would fire the day a
+            // legitimate value happened to contain "dsn".
+            foreach (var record in AllRecords())
+                foreach (var property in record.EnumerateObject())
+                    Assert.AreNotEqual("dsn", property.Name.ToLowerInvariant(),
+                        "session.start reads two fields out of the bootstrap config by name rather than looping it");
         }
 
         [TestMethod]
-        public void SetExtraIsNeverReflectedOverAnObjectGraph()
+        public void SetExtraWritesATypeNameForAnythingThatIsNotAStringOrPrimitive()
+        {
+            // Every one of these leaks its whole state through ToString(). That is the point: the
+            // fixture must NOT override ToString, or the test proves only that ToString is called —
+            // which is the defect. An earlier version of this test used a fixture that did, and it
+            // passed green against an implementation that wrote the payload.
+            var leaky = new object[]
+            {
+                new PatientSummary("Jane Doe", "943-476-5919", "BIRADS 5"),
+                new { Patient = "Jane Doe", Nhs = "943-476-5919" },
+                new StringBuilder("Jane Doe 943-476-5919"),
+                new Uri("https://data.hospital.example/Patient/123?name=Jane%20Doe"),
+                new InvalidOperationException("failed for patient Jane Doe (943-476-5919)"),
+            };
+
+            using (var sink = new FileTelemetrySink(_dir))
+            {
+                var session = sink.BeginSession(NewSessionId());
+                var span = session.StartTransaction("a", "op");
+                for (var i = 0; i < leaky.Length; i++) span.SetExtra("extra" + i, leaky[i]);
+                session.Dispose();
+            }
+
+            var text = File.ReadAllText(Directory.GetFiles(_dir, "*.jsonl").Single());
+            Assert.IsFalse(text.Contains("Jane Doe"), "SetExtra takes object, and this file is built to be emailed to a vendor");
+            Assert.IsFalse(text.Contains("943-476-5919"));
+            Assert.IsFalse(text.Contains("BIRADS"));
+
+            var written = AllRecords().Where(r => Type(r) == "span.extra")
+                .Select(r => r.GetProperty("v").GetString()).ToList();
+            Assert.AreEqual(leaky.Length, written.Count, "every extra is still recorded — the key and the type are the diagnostic");
+            foreach (var value in written)
+            {
+                StringAssert.StartsWith(value, "<");
+                StringAssert.EndsWith(value, ">", "a type name answers 'what was attached?' without carrying its contents; got " + value);
+                Assert.IsTrue(value.Length <= 258,
+                    "Type.FullName spells generic arguments out with version, culture and public key token — 200-odd characters " +
+                    "of metadata that tells a reader nothing. Got " + value.Length + ": " + value);
+                Assert.IsFalse(value.Contains("PublicKeyToken"), "assembly qualification is noise in a log line");
+            }
+
+            // The namespace is the part that identifies what was attached, so it has to survive.
+            Assert.IsTrue(written.Any(v => v.Contains("System.Text.StringBuilder")),
+                "actual: " + string.Join(" | ", written));
+        }
+
+        [TestMethod]
+        public void SetExtraStillWritesStringsAndPrimitives()
         {
             using (var sink = new FileTelemetrySink(_dir))
             {
                 var session = sink.BeginSession(NewSessionId());
                 var span = session.StartTransaction("a", "op");
-                span.SetExtra("resource", new PretendResource());
+                span.SetExtra("retry", 2);
+                span.SetExtra("reason", "handshake timeout");
+                span.SetExtra("readonly", true);
                 session.Dispose();
             }
 
-            var value = AllRecords().Single(r => Type(r) == "span.extra").GetProperty("v").GetString();
-            Assert.AreEqual("a stand-in for something PHI-shaped", value,
-                "SetExtra takes object; serializing the graph would put whatever a caller attached into a file whose purpose is to be sent somewhere");
+            var extras = AllRecords().Where(r => Type(r) == "span.extra")
+                .ToDictionary(r => r.GetProperty("k").GetString(), r => r.GetProperty("v"));
+
+            Assert.AreEqual(2, extras["retry"].GetInt32(), "the allowlist must not cost the values that are safe and useful");
+            Assert.AreEqual("handshake timeout", extras["reason"].GetString());
+            Assert.IsTrue(extras["readonly"].GetBoolean());
         }
 
         [TestMethod]
-        public void LongValuesAreCapped()
+        public void LongValuesAreCappedAtTheDocumentedLengths()
         {
             using (var sink = new FileTelemetrySink(_dir))
             {
                 var session = sink.BeginSession(NewSessionId());
-                session.AddBreadcrumb("page-error", new string('x', 10_000));
+                session.AddBreadcrumb(new string('c', 5000), new string('m', 5000));
+                var span = session.StartTransaction("a", "op");
+                span.SetTag(new string('k', 5000), new string('v', 5000));
                 session.Dispose();
             }
 
-            var msg = AllRecords().Single(r => Type(r) == "crumb").GetProperty("msg").GetString();
-            Assert.IsTrue(msg.Length < 10_000, "an unbounded value turns a readable transcript into an unreadable one");
-            StringAssert.EndsWith(msg, "[trimmed]", "and says that it was cut rather than looking complete");
+            var crumb = AllRecords().Single(r => Type(r) == "crumb");
+            var tag = AllRecords().Single(r => Type(r) == "span.tag");
+
+            // The README publishes these numbers, so pin them rather than "shorter than the input".
+            Assert.AreEqual(2048, LengthBeforeMarker(crumb.GetProperty("msg").GetString()), "message cap");
+            Assert.AreEqual(2048, LengthBeforeMarker(tag.GetProperty("v").GetString()), "tag value cap");
+            Assert.AreEqual(256, LengthBeforeMarker(crumb.GetProperty("cat").GetString()), "breadcrumb category cap");
+            Assert.AreEqual(256, LengthBeforeMarker(tag.GetProperty("k").GetString()), "tag key cap");
+
+            foreach (var value in new[] { crumb.GetProperty("msg").GetString(), crumb.GetProperty("cat").GetString(),
+                                          tag.GetProperty("v").GetString(), tag.GetProperty("k").GetString() })
+                StringAssert.EndsWith(value, "[trimmed]", "a cut value must not read as complete");
+        }
+
+        [TestMethod]
+        public void NameLikeFieldsAreRedactedToo_NotJustValues()
+        {
+            var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (string.IsNullOrEmpty(profile)) Assert.Inconclusive("no user profile path on this platform");
+
+            var path = Path.Combine(profile, "case.json");
+
+            using (var sink = new FileTelemetrySink(_dir))
+            {
+                var session = sink.BeginSession(NewSessionId());
+                // A category is a natural place for a subject label, and the PHI paragraph promises
+                // it is scrubbed. It used to be the one unscrubbed field sitting next to a scrubbed
+                // one on the same line.
+                session.AddBreadcrumb(path, path);
+                var span = session.StartTransaction("a", "op");
+                span.SetTag(path, path);
+                session.Dispose();
+            }
+
+            var text = File.ReadAllText(Directory.GetFiles(_dir, "*.jsonl").Single());
+            Assert.IsFalse(text.Contains(profile),
+                "redaction that covers half the fields on a line follows no rule a caller could reason about");
+            StringAssert.Contains(text, "%USERPROFILE%");
         }
 
         [TestMethod]
@@ -581,10 +707,211 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         // -----------------------------------------------------------------------------
+        // Lifetime — a session or span can outlive the sink that made it
+        // -----------------------------------------------------------------------------
+
+        [TestMethod]
+        public void WritingAfterTheSinkIsDisposedIsDropped_NotReopened()
+        {
+            ITelemetrySpan span;
+            ITelemetrySession session;
+
+            var sink = new FileTelemetrySink(_dir);
+            session = sink.BeginSession(NewSessionId());
+            span = session.StartTransaction("sdc.displayQuestionnaire", "swm.send");
+            sink.Dispose();
+
+            var recordsAtDispose = AllRecords().Count;
+
+            // This is not hypothetical: TiroFormViewer cancels in-flight work in Dispose, and the
+            // continuation that calls Finish(Cancelled) is posted to the WinForms pump, so it runs
+            // after Dispose has returned. A second viewer.Dispose() reaches the session the same way.
+            span.Finish(TelemetrySpanStatus.Cancelled);
+            span.Dispose();
+            session.Dispose();
+
+            Assert.AreEqual(recordsAtDispose, AllRecords().Count,
+                "a released log must not resurrect its file: the instance is de-registered and can never be released again, " +
+                "so reopening leaks the handle and forks the transcript");
+        }
+
+        [TestMethod]
+        public void ANewSinkAfterTheLastOneClosedGetsThePlainDayFileBack()
+        {
+            for (var i = 0; i < 5; i++)
+            {
+                var sink = new FileTelemetrySink(_dir);
+                var session = sink.BeginSession(NewSessionId());
+                var span = session.StartTransaction("a", "op");
+                sink.Dispose();
+                span.Finish(TelemetrySpanStatus.Cancelled);   // the late write, every cycle
+                session.Dispose();
+            }
+
+            Assert.AreEqual(1, Directory.GetFiles(_dir, "*.jsonl").Length,
+                "an open/close cycle must not cost a file — on Windows the zombie handle would push each new sink onto -2, -3, " +
+                "and after ~102 cycles telemetry would stop for the day");
+        }
+
+        [TestMethod]
+        public void DisposingASessionTwiceWritesOneTerminator()
+        {
+            using (var sink = new FileTelemetrySink(_dir))
+            {
+                var session = sink.BeginSession(NewSessionId());
+                session.Dispose();
+                session.Dispose();
+            }
+
+            Assert.AreEqual(1, AllRecords().Count(r => Type(r) == "session.end"),
+                "TiroFormViewer.Dispose has no re-entry guard of its own, so a second dispose reaches here");
+        }
+
+        [TestMethod]
+        public void RecordsAfterASessionEndsAreNotAttributedToIt()
+        {
+            using (var sink = new FileTelemetrySink(_dir))
+            {
+                var session = sink.BeginSession(NewSessionId());
+                session.Dispose();
+                sink.CaptureException(Thrown("after the session ended"));
+            }
+
+            var records = AllRecords();
+            var end = records.FindIndex(r => Type(r) == "session.end");
+            var error = records.FindIndex(r => Type(r) == "error");
+
+            Assert.IsTrue(error > end, "sanity: the capture really did happen after the terminator");
+            Assert.AreEqual("process", records[error].GetProperty("sid").GetString(),
+                "session.end is documented as that session's terminator, so nothing may claim to belong to it afterwards");
+        }
+
+        // -----------------------------------------------------------------------------
+        // Degrading without a writable directory
+        // -----------------------------------------------------------------------------
+
+        [TestMethod]
+        public void AnUnwritableDirectoryCostsNothingPerRecord()
+        {
+            var blocked = Path.Combine(_dir, "not-a-directory");
+            File.WriteAllText(blocked, "");
+
+            var clock = Stopwatch.StartNew();
+            using (var sink = new FileTelemetrySink(Path.Combine(blocked, "telemetry")))
+            {
+                var session = sink.BeginSession(NewSessionId());
+                for (var i = 0; i < 500; i++) session.AddBreadcrumb("lifecycle", "record " + i);
+                session.Dispose();
+            }
+            clock.Stop();
+
+            // Every record used to re-walk all 102 candidate names, each a thrown-and-caught
+            // exception, on whatever thread the viewer reports from — the UI thread for anything
+            // driven by a browser message. Measured at 1.42 ms per record before the backoff.
+            Assert.IsTrue(clock.ElapsedMilliseconds < 200,
+                "telemetry that cannot write must cost less than telemetry that can, not more. Took " + clock.ElapsedMilliseconds + " ms for 500 records");
+        }
+
+        // -----------------------------------------------------------------------------
+        // The file support is meant to hand over
+        // -----------------------------------------------------------------------------
+
+        [TestMethod]
+        public void TheCurrentFilePathIsDiscoverable()
+        {
+            using (var sink = new FileTelemetrySink(_dir))
+            {
+                Assert.IsNull(sink.CurrentFilePath, "nothing is opened until there is something to write");
+
+                var session = sink.BeginSession(NewSessionId());
+                var path = sink.CurrentFilePath;
+
+                Assert.IsNotNull(path, "an application offering an 'attach diagnostics' button cannot reconstruct this — " +
+                                       "the suffix rules are exactly the cases where guessing is wrong");
+                Assert.IsTrue(File.Exists(path));
+                Assert.AreEqual(Directory.GetFiles(_dir, "*.jsonl").Single(), path);
+
+                session.Dispose();
+            }
+        }
+
+        [TestMethod]
+        public void EveryErrorRecordCarriesASpanFieldEvenWhenThereIsNoSpan()
+        {
+            using (var sink = new FileTelemetrySink(_dir))
+            {
+                var session = sink.BeginSession(NewSessionId());
+                session.StartTransaction("a", "op").Finish(Thrown("from a span"));
+                sink.CaptureException(Thrown("out of band"));
+                session.Dispose();
+            }
+
+            var errors = AllRecords().Where(r => Type(r) == "error").ToList();
+            Assert.AreEqual(2, errors.Count);
+            foreach (var error in errors)
+                Assert.IsTrue(error.TryGetProperty("span", out _),
+                    "a reader keying error -> span must not have to guess which of two shapes it got");
+
+            Assert.AreEqual(1, errors.Count(e => e.GetProperty("span").ValueKind == JsonValueKind.Null),
+                "the out-of-band capture belongs to no span, and says so explicitly");
+        }
+
+        // -----------------------------------------------------------------------------
+        // Options
+        // -----------------------------------------------------------------------------
+
+        [TestMethod]
+        public void OptionsCanChangeTheFileSizeCap()
+        {
+            var options = new FileTelemetryOptions { Directory = _dir, MaxBytesPerFile = 900 };
+
+            using (var sink = new FileTelemetrySink(options))
+            {
+                var session = sink.BeginSession(NewSessionId());
+                for (var i = 0; i < 40; i++) session.AddBreadcrumb("lifecycle", "padding padding padding");
+                session.Dispose();
+            }
+
+            Assert.IsTrue(Directory.GetFiles(_dir, "*.jsonl").Length > 1,
+                "a published limit a consumer can read but not change reads as configuration when it is not");
+            Assert.AreEqual(40, AllRecords().Count(r => Type(r) == "crumb"), "and changing it must not cost records");
+        }
+
+        [TestMethod]
+        public void OptionsAreCopiedSoLaterMutationDoesNothing()
+        {
+            var options = new FileTelemetryOptions { Directory = _dir };
+
+            using (var sink = new FileTelemetrySink(options))
+            {
+                options.Directory = Path.Combine(_dir, "moved");
+                var session = sink.BeginSession(NewSessionId());
+                StringAssert.StartsWith(sink.CurrentFilePath, _dir);
+                Assert.IsFalse(Directory.Exists(Path.Combine(_dir, "moved")));
+                session.Dispose();
+            }
+        }
+
+        [TestMethod]
+        public void AnEmptyOptionsDirectoryIsRejectedAtConstruction()
+        {
+            Assert.ThrowsException<ArgumentException>(
+                () => new FileTelemetrySink(new FileTelemetryOptions { Directory = "" }),
+                "better here than on the first record, which lands inside a viewer catch block");
+        }
+
+        // -----------------------------------------------------------------------------
         // Helpers
         // -----------------------------------------------------------------------------
 
         private static string NewSessionId() => Guid.NewGuid().ToString();
+
+        /// <summary>Length of a capped value with the trim marker removed.</summary>
+        private static int LengthBeforeMarker(string value)
+        {
+            const string marker = "…[trimmed]";
+            return value.EndsWith(marker, StringComparison.Ordinal) ? value.Length - marker.Length : value.Length;
+        }
 
         private static string Type(JsonElement record) => record.GetProperty("type").GetString();
 
@@ -615,11 +942,20 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             catch (Exception ex) { return ex; }
         }
 
-        private sealed class PretendResource
+        /// <summary>
+        /// PHI-shaped and, deliberately, <b>without</b> a ToString override — the compiler-generated
+        /// one for a positional type dumps every member, which is exactly the leak being guarded.
+        /// </summary>
+        private sealed class PatientSummary
         {
-            public string Patient { get; } = "Jane Doe";
-            public string Nhs { get; } = "943-476-5919";
-            public override string ToString() => "a stand-in for something PHI-shaped";
+            public PatientSummary(string name, string nhs, string diagnosis)
+            {
+                Name = name; Nhs = nhs; Diagnosis = diagnosis;
+            }
+
+            public string Name { get; }
+            public string Nhs { get; }
+            public string Diagnosis { get; }
         }
 
         /// <summary>
@@ -633,10 +969,20 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             public IReadOnlyDictionary<string, string> BootstrapConfig { get; set; }
             public List<TimeSpan> FlushTimeouts { get; } = new List<TimeSpan>();
 
+            /// <summary>Runs inside <see cref="Flush"/>, so a test can observe the world at that moment.</summary>
+            public Action OnFlush { get; set; }
+
+            public int RecordsOnDiskAtFlush { get; set; } = -1;
+
             public ITelemetrySession BeginSession(string sessionId) => new Session(this);
             public void CaptureException(Exception ex) { }
             public void CaptureMessage(string message) { }
-            public void Flush(TimeSpan timeout) => FlushTimeouts.Add(timeout);
+
+            public void Flush(TimeSpan timeout)
+            {
+                OnFlush?.Invoke();
+                FlushTimeouts.Add(timeout);
+            }
             public void Dispose() { }
 
             private sealed class Session : ITelemetrySession

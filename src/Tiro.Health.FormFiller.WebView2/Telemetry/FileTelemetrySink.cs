@@ -59,33 +59,15 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Tiro.Health", "FormFiller", "telemetry");
 
-        /// <summary>
-        /// Days of transcripts kept. Sized to how long a support request actually takes to arrive
-        /// — a clinician hits a problem on Friday, IT raises a ticket on Monday, someone asks for
-        /// the file on Tuesday — not to disk pressure, of which there is none at a few dozen
-        /// records per session.
-        /// </summary>
-        public const int RetentionDays = 7;
-
-        /// <summary>
-        /// Cap per file. Reaching it rolls to the next index rather than stopping, so a full file
-        /// costs the oldest records and never the newest.
-        /// </summary>
-        public const long MaxBytesPerFile = 8L * 1024 * 1024;
-
-        /// <summary>
-        /// Budget for the whole directory. The second of two bounds that do not multiply: with a
-        /// per-file cap and a file <i>count</i>, the product is the real ceiling and nobody reads
-        /// it off the two constants.
-        /// </summary>
-        public const long MaxTotalBytes = 64L * 1024 * 1024;
-
         private readonly RollingTelemetryLog _log;
         private readonly ITelemetrySink _inner;
         private readonly bool _ownsInner;
         private readonly object _gate = new object();
 
-        private string _currentSessionId = "process";
+        /// <summary>Sentinel <c>sid</c> for records that belong to the process, not a session.</summary>
+        private const string ProcessSessionId = "process";
+
+        private string _currentSessionId = ProcessSessionId;
         private bool _disposed;
 
         /// <summary>Writes to <see cref="DefaultDirectory"/> with no inner sink — file only.</summary>
@@ -97,12 +79,32 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// <summary>Writes to <see cref="DefaultDirectory"/> and forwards to <paramref name="inner"/>.</summary>
         public FileTelemetrySink(ITelemetrySink inner) : this(DefaultDirectory, inner) { }
 
+        /// <summary>Forwards to <paramref name="inner"/>, writing to <see cref="DefaultDirectory"/>.</summary>
+        /// <param name="inner">Sink to forward to. Never null.</param>
+        /// <param name="ownsInner">See the <c>ownsInner</c> parameter on the main constructor.</param>
+        public FileTelemetrySink(ITelemetrySink inner, bool ownsInner)
+            : this(new FileTelemetryOptions(), inner, ownsInner) { }
+
         /// <summary>
         /// Writes to <paramref name="directory"/> and forwards to <paramref name="inner"/>.
         /// </summary>
         /// <param name="directory">Destination for the transcripts. Created if missing.</param>
         /// <param name="inner">
         /// Sink to forward to; <see cref="NullTelemetrySink.Instance"/> for file-only. Never null.
+        /// </param>
+        /// <param name="ownsInner">See the <c>ownsInner</c> parameter on the main constructor.</param>
+        public FileTelemetrySink(string directory, ITelemetrySink inner, bool ownsInner = true)
+            : this(new FileTelemetryOptions { Directory = directory }, inner, ownsInner) { }
+
+        /// <summary>
+        /// Writes according to <paramref name="options"/> and forwards to <paramref name="inner"/>.
+        /// </summary>
+        /// <param name="options">
+        /// Settings; see <see cref="FileTelemetryOptions"/>. Copied on construction, so later
+        /// changes to the instance have no effect.
+        /// </param>
+        /// <param name="inner">
+        /// Sink to forward to. Null means <see cref="NullTelemetrySink.Instance"/> — file only.
         /// </param>
         /// <param name="ownsInner">
         /// Whether <see cref="Dispose"/> disposes <paramref name="inner"/>. True suits the usual
@@ -111,13 +113,25 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         /// close will dispose telemetry the others are still using. (The transcript itself is
         /// shared and reference-counted regardless, so viewers never take the file from each other.)
         /// </param>
-        public FileTelemetrySink(string directory, ITelemetrySink inner, bool ownsInner = true)
+        public FileTelemetrySink(FileTelemetryOptions options, ITelemetrySink inner = null, bool ownsInner = true)
         {
-            if (string.IsNullOrEmpty(directory)) throw new ArgumentException("Directory must not be null or empty.", nameof(directory));
+            if (options == null) throw new ArgumentNullException(nameof(options));
+            var settings = options.Validated();
+
             _inner = inner ?? NullTelemetrySink.Instance;
             _ownsInner = ownsInner;
-            _log = RollingTelemetryLog.Acquire(directory, MaxBytesPerFile, MaxTotalBytes, RetentionDays);
+            _log = RollingTelemetryLog.Acquire(
+                settings.Directory, settings.MaxBytesPerFile, settings.MaxTotalBytes, settings.RetentionDays);
         }
+
+        /// <summary>
+        /// The transcript currently being written, or <c>null</c> when nothing is open yet (or the
+        /// directory cannot be written to). Exposed because the point of this sink is to hand a file
+        /// to support: an application offering an <i>Attach diagnostics</i> button needs the path,
+        /// and reconstructing it is exactly wrong in the cases that matter — a second process, a
+        /// rolled file, or a midnight roll while the dialog is open, since the day is UTC.
+        /// </summary>
+        public string CurrentFilePath => _log.CurrentFilePath;
 
         /// <summary>
         /// Begins a session in the shared transcript. Nothing is opened per session: sessions are
@@ -135,7 +149,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
                 _currentSessionId = ShortId(id);
             }
 
-            return new FileTelemetrySession(_log, id, innerSession);
+            return new FileTelemetrySession(_log, id, innerSession, onEnded: () => ForgetSession(ShortId(id)));
         }
 
         /// <inheritdoc />
@@ -146,6 +160,9 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             // falls back to "process" for a sink used without a session at all.
             _log.Write("error", CurrentSessionId(), json =>
             {
+                // Explicitly null rather than absent: a span-level error carries its span id, and a
+                // reader keying `error` -> span must not have to guess which shape it has.
+                json.WriteNull("span");
                 json.WriteString("exc", ex?.GetType().FullName ?? "null");
                 TelemetryRecordWriter.WriteValue(json, "msg", ex?.Message);
                 TelemetryRecordWriter.WriteValue(json, "stack", ex?.StackTrace);
@@ -212,6 +229,19 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         private string CurrentSessionId()
         {
             lock (_gate) { return _currentSessionId; }
+        }
+
+        /// <summary>
+        /// Stops attributing out-of-band captures to a session that has ended. Without this an
+        /// error record lands after its own <c>session.end</c>, which the format documents as that
+        /// session's terminator.
+        /// </summary>
+        private void ForgetSession(string shortId)
+        {
+            lock (_gate)
+            {
+                if (_currentSessionId == shortId) _currentSessionId = ProcessSessionId;
+            }
         }
 
         private void Guard(Action call, string member)

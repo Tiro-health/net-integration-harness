@@ -57,8 +57,8 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             {
                 json.WriteString("span", spanId);
                 if (parentSpanId == null) json.WriteNull("parent"); else json.WriteString("parent", parentSpanId);
-                TelemetryRecordWriter.WriteValue(json, "name", name);
-                json.WriteString("op", operation);
+                TelemetryRecordWriter.WriteKey(json, "name", name);
+                TelemetryRecordWriter.WriteKey(json, "op", operation);
             });
 
             return new FileTelemetrySpan(log, sid, spanId, inner);
@@ -71,7 +71,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             _log.Write("span.tag", _sid, json =>
             {
                 json.WriteString("span", _spanId);
-                json.WriteString("k", key);
+                TelemetryRecordWriter.WriteKey(json, "k", key);
                 TelemetryRecordWriter.WriteValue(json, "v", value);
             });
 
@@ -83,7 +83,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             _log.Write("span.extra", _sid, json =>
             {
                 json.WriteString("span", _spanId);
-                json.WriteString("k", key);
+                TelemetryRecordWriter.WriteKey(json, "k", key);
                 TelemetryRecordWriter.WriteExtraValue(json, "v", value);
             });
 

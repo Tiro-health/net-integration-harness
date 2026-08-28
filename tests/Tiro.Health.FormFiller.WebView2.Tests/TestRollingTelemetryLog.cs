@@ -183,6 +183,107 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 "a backend throwing on every call would otherwise bury the sessions the log was opened to record; got " + count);
         }
 
+        [TestMethod]
+        public void SweepLeavesFilesItDidNotWrite()
+        {
+            // A site told to keep logs off %LOCALAPPDATA% can easily point this at a folder that
+            // already holds its own .jsonl exports. Deleting those is unrecoverable data loss
+            // caused by a telemetry component, and the sweep is silent about what it removes.
+            var foreignOld = WriteTranscript("hospital-export-2019.jsonl", 1000, DateTime.UtcNow.AddDays(-30));
+            var foreignRecent = WriteTranscript("audit-log.jsonl", 1000, DateTime.UtcNow.AddDays(-8));
+            var oursOld = WriteTranscript("20200101.jsonl", 1000, DateTime.UtcNow.AddDays(-30));
+            var oursRolled = WriteTranscript("20200102-3.jsonl", 1000, DateTime.UtcNow.AddDays(-30));
+            var oursPid = WriteTranscript("20200103-p4812.jsonl", 1000, DateTime.UtcNow.AddDays(-30));
+
+            RollingTelemetryLog.Sweep(_dir, retentionDays: 7, maxTotalBytes: 0);
+
+            Assert.IsTrue(File.Exists(foreignOld), "not ours to delete, whatever its age");
+            Assert.IsTrue(File.Exists(foreignRecent), "not ours to delete");
+            Assert.IsFalse(File.Exists(oursOld), "ours: plain day name");
+            Assert.IsFalse(File.Exists(oursRolled), "ours: roll index");
+            Assert.IsFalse(File.Exists(oursPid), "ours: per-process series");
+        }
+
+        [TestMethod]
+        public void SweepSparesTheOpenFileWithoutBeingToldTwice()
+        {
+            // The keep argument used to be computed as _writer?.FilePath at two call sites where
+            // _writer was provably null, so it was dead code and only the direct-call test covered
+            // it. Drive it the way production does instead: through a Write.
+            WriteTranscript("20200101.jsonl", 5000, DateTime.UtcNow.AddDays(-30));
+
+            var log = RollingTelemetryLog.Acquire(_dir, maxBytesPerFile: 8192, maxTotalBytes: 100, retentionDays: 7);
+            try
+            {
+                log.Write("crumb", "aaaaaaaa", json => json.WriteString("msg", "the live session"));
+
+                var live = log.CurrentFilePath;
+                Assert.IsNotNull(live);
+                Assert.IsTrue(File.Exists(live),
+                    "a byte budget tighter than the live file must not delete the session in progress moments before it is recreated empty");
+                Assert.IsTrue(Records(live).Any(r => Type(r) == "crumb"));
+            }
+            finally
+            {
+                log.Release();
+            }
+        }
+
+        [TestMethod]
+        public void EachOpenWritesAHeaderSoAnExtractedSessionStillCarriesTheSchema()
+        {
+            var day = new DateTime(2026, 8, 28, 9, 0, 0, DateTimeKind.Utc);
+            RollingTelemetryLog.UtcNowProvider = () => day;
+
+            // Two process lifetimes over the same day file, which is what a restart looks like.
+            for (var i = 0; i < 2; i++)
+            {
+                var log = RollingTelemetryLog.Acquire(_dir, maxBytesPerFile: 1 << 20, maxTotalBytes: 0, retentionDays: 7);
+                try { log.Write("crumb", "aaaaaaaa", json => json.WriteString("msg", "run " + i)); }
+                finally { log.Release(); }
+            }
+
+            var file = Directory.GetFiles(_dir, "*.jsonl").Single();
+            Assert.AreEqual(2, Records(file).Count(r => Type(r) == "header"),
+                "a header only on file creation means an upgrade mid-day appends new-schema records under an old-schema header, " +
+                "and the README's own findstr extraction drops the only line carrying the version");
+        }
+
+        [TestMethod]
+        public void WritingAfterReleaseIsDroppedRatherThanReopeningTheFile()
+        {
+            var log = RollingTelemetryLog.Acquire(_dir, maxBytesPerFile: 1 << 20, maxTotalBytes: 0, retentionDays: 7);
+            log.Write("crumb", "aaaaaaaa", json => json.WriteString("msg", "while open"));
+            var path = log.CurrentFilePath;
+            log.Release();
+
+            log.Write("crumb", "aaaaaaaa", json => json.WriteString("msg", "after release"));
+
+            Assert.IsNull(log.CurrentFilePath, "a released log has no file, and must not open one");
+            Assert.IsFalse(Records(path).Any(r => r.TryGetProperty("msg", out var m) && m.GetString() == "after release"));
+        }
+
+        [TestMethod]
+        public void ASecondSinkWhileTheFirstIsClosingStillGetsThePlainName()
+        {
+            // Release used to de-register the instance and only then close the handle, leaving a
+            // window in which an Acquire built a second instance while the first still held the
+            // file — pinning the newcomer to -2 for the rest of the day on Windows.
+            for (var i = 0; i < 20; i++)
+            {
+                var first = RollingTelemetryLog.Acquire(_dir, 1 << 20, 0, 7);
+                first.Write("crumb", "aaaaaaaa", json => json.WriteString("msg", "one"));
+                first.Release();
+
+                var second = RollingTelemetryLog.Acquire(_dir, 1 << 20, 0, 7);
+                second.Write("crumb", "aaaaaaaa", json => json.WriteString("msg", "two"));
+                second.Release();
+            }
+
+            Assert.AreEqual(1, Directory.GetFiles(_dir, "*.jsonl").Length,
+                "sequential open/close cycles must not fragment the day");
+        }
+
         // -----------------------------------------------------------------------------
         // Helpers
         // -----------------------------------------------------------------------------

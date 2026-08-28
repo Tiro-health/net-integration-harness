@@ -373,62 +373,89 @@ TiroFormViewerDefaults.TelemetrySinkFactory =
 
 It's a **decorator**, not a second backend: it records each call and forwards it to the inner sink (`NullTelemetrySink` when you pass none). So `UseSentry()` and this are not an either/or — wrapping a `SentryTelemetrySink` keeps every Sentry behaviour above, including the embedded page's DSN and the unified trace, and adds a local copy. Prefer wrapping to choosing, since you generally can't tell from outside whether a given site's egress works.
 
+To change where it writes, how long it keeps, or how large files get, pass a `FileTelemetryOptions`:
+
+```vb
+TiroFormViewerDefaults.TelemetrySinkFactory =
+    Function() New FileTelemetrySink(New FileTelemetryOptions With {
+        .Directory = "D:\HospitalLogs\TiroFormFiller",
+        .RetentionDays = 30,
+        .MaxBytesPerFile = 1024L * 1024L
+    }, New SentryTelemetrySink())
+```
+
 #### The transcript
 
-One file per day, in `%LOCALAPPDATA%\Tiro.Health\FormFiller\telemetry` unless you pass a directory:
+One file per day, in `%LOCALAPPDATA%\Tiro.Health\FormFiller\telemetry` unless you set `Directory`:
 
 ```
 20260828.jsonl
 ```
 
-Every viewer in the process writes to the same file — the log is shared and reference-counted, so two forms open at once don't fight over it and the first one closed doesn't take it from the others. Sessions are delimited by `session.start` / `session.end` records rather than by separate files, which is what makes bugs that span sessions visible at all.
+Every viewer in the process writes to the same file — the log is shared and reference-counted, so two forms open at once don't fight over it and the first one closed doesn't take it from the others. Sessions are delimited by `session.start` / `session.end` records rather than by separate files, which is what makes bugs that span sessions visible at all. `FileTelemetrySink.CurrentFilePath` gives you the path, which is what an *Attach diagnostics* button should use rather than reconstructing a name.
+
+Real output, two sessions (hostname and stack path substituted):
 
 ```
-{"type":"header","ts":"2026-08-28T10:12:02.009Z","sid":"process","v":1,"file_schema":"tiro-formfiller-telemetry-jsonl","host":"WKS-RAD-114","pid":71542}
-{"type":"session.start","ts":"2026-08-28T10:12:02.011Z","sid":"d313f097","session":"d313f097-ca26-4b0e-baad-05eeedc334f0","release":"Tiro.Health.FormFiller.WebView2@1.0.0"}
-{"type":"crumb","ts":"2026-08-28T10:12:02.011Z","sid":"d313f097","cat":"lifecycle","msg":"TiroFormViewer constructed"}
-{"type":"span.start","ts":"2026-08-28T10:12:02.013Z","sid":"d313f097","span":"6e75529f","parent":null,"name":"sdc.displayQuestionnaire","op":"swm.send"}
-{"type":"span.tag","ts":"2026-08-28T10:12:02.013Z","sid":"d313f097","span":"6e75529f","k":"questionnaire_url","v":"http://tiro.health/Questionnaire/mammo-report"}
-{"type":"span.end","ts":"2026-08-28T10:12:02.013Z","sid":"d313f097","span":"6e75529f","status":"ok","ms":308}
-{"type":"session.end","ts":"2026-08-28T10:12:02.013Z","sid":"d313f097"}
-{"type":"session.start","ts":"2026-08-28T10:12:02.013Z","sid":"64b8cc85","session":"64b8cc85-2a52-42f8-ba5c-ced2e4d1052d","release":"Tiro.Health.FormFiller.WebView2@1.0.0"}
-{"type":"span.end","ts":"2026-08-28T10:12:02.013Z","sid":"64b8cc85","span":"56a0e402","status":"internal_error","ms":5002,"exc":"System.TimeoutException"}
-{"type":"error","ts":"2026-08-28T10:12:02.013Z","sid":"64b8cc85","span":"56a0e402","exc":"System.TimeoutException","msg":"Handshake not received within 5s","stack":"   at Tiro.Health..."}
+{"type":"header","ts":"2026-08-28T12:17:18.993Z","sid":"process","v":1,"file_schema":"tiro-formfiller-telemetry-jsonl","host":"WKS-RAD-114","pid":79484}
+{"type":"session.start","ts":"2026-08-28T12:17:18.996Z","sid":"d313f097","session":"d313f097-ca26-4b0e-baad-05eeedc334f0","release":"Tiro.Health.FormFiller.WebView2@1.0.0"}
+{"type":"crumb","ts":"2026-08-28T12:17:18.997Z","sid":"d313f097","cat":"lifecycle","msg":"TiroFormViewer constructed"}
+{"type":"span.start","ts":"2026-08-28T12:17:18.997Z","sid":"d313f097","span":"0e164da0","parent":null,"name":"sdc.displayQuestionnaire","op":"swm.send"}
+{"type":"span.tag","ts":"2026-08-28T12:17:18.998Z","sid":"d313f097","span":"0e164da0","k":"questionnaire_url","v":"http://tiro.health/Questionnaire/mammo-report"}
+{"type":"span.end","ts":"2026-08-28T12:17:19.318Z","sid":"d313f097","span":"0e164da0","status":"ok","ms":320}
+{"type":"session.end","ts":"2026-08-28T12:17:19.318Z","sid":"d313f097"}
+{"type":"session.start","ts":"2026-08-28T12:17:19.319Z","sid":"64b8cc85","session":"64b8cc85-2a52-42f8-ba5c-ced2e4d1052d","release":"Tiro.Health.FormFiller.WebView2@1.0.0"}
+{"type":"span.start","ts":"2026-08-28T12:17:19.319Z","sid":"64b8cc85","span":"365b6a87","parent":null,"name":"ui.form.requestSubmit","op":"swm.send"}
+{"type":"span.tag","ts":"2026-08-28T12:17:19.319Z","sid":"64b8cc85","span":"365b6a87","k":"intent","v":"finalize"}
+{"type":"span.end","ts":"2026-08-28T12:17:19.443Z","sid":"64b8cc85","span":"365b6a87","status":"internal_error","ms":123,"exc":"System.TimeoutException"}
+{"type":"error","ts":"2026-08-28T12:17:19.444Z","sid":"64b8cc85","span":"365b6a87","exc":"System.TimeoutException","msg":"Handshake not received within 5s","stack":"   at Tiro.Health..."}
+{"type":"session.end","ts":"2026-08-28T12:17:19.465Z","sid":"64b8cc85"}
 ```
 
-One line per event, flat keys, `sid` on every line — readable in Notepad on a locked-down box with no `jq`, and greppable by anything else. **To pull one session out of a day:**
+That's 13 records for two form sessions — under 2 KB. One line per event, flat keys, `sid` on every line: readable in Notepad on a locked-down box with no `jq`, and greppable by anything else. **To pull one session out of a day:**
 
 ```
 findstr d313f097 20260828.jsonl        REM Windows
 grep    d313f097 20260828.jsonl        # anywhere else
 ```
 
-Reading it:
+Record types: `header` (once per file open), `session.start` / `session.end`, `crumb`, `tag`, `span.start` / `span.tag` / `span.extra` / `span.end`, `error`, `message`, `inner.error`, and `trunc`. Reading it:
 
 | | |
 |---|---|
 | `session` on `session.start` | the full `form.session.id`. Paste it into Sentry to find the same session there — the record also carries `trace` when an inner Sentry sink supplied one, so the file and the Sentry trace are the *same* trace |
 | `span.start` with no matching `span.end` | the viewer was still waiting. Start records exist for exactly this: a span that never finishes is the failure you most want the file for, and it would otherwise write nothing at all |
-| `session.end` | that session finished cleanly. Its absence means the process died mid-session |
+| `session.end` | that session ended. Records after it belong to the process, not the session, and carry `sid":"process"` |
 | `"repeat":true` on a `span.end` | a second `Finish` the real span correctly ignored under first-finish-wins. The transcript records what the caller *asked for*, which is how you find out why a trace shipped green |
-| `inner.error` | the wrapped backend threw. Covers a Sentry that couldn't initialise — a bad DSN, a broken options object. It does **not** cover a firewall silently dropping envelopes, which raises no exception |
-| a `-2` suffix on the file name | the previous file hit its 8 MB cap, or another process holds it |
+| `error` with `"span":null` | an exception captured out-of-band of any span (`ITelemetrySink.CaptureException`). A span-level error carries its span id instead — the field is always present so a reader never has to guess |
+| `inner.error` | a call into the wrapped backend threw, and was swallowed rather than reaching the host. Note this does **not** cover a Sentry that failed to *initialise* — `SentrySdk.Init` runs in the `SentryTelemetrySink` constructor, before this sink ever sees it, so that failure throws out of your startup code and produces no transcript at all. Nor does it cover a firewall silently dropping envelopes, which raises no exception |
+| a `-2` suffix on the file name | the previous file hit its size cap, or another process holds it. `-p<pid>` appears only in the rare case where every plain name is taken, so two processes can't lock each other out |
+| `trunc` | a record was refused for size; the log rolled to the next file and continued |
 
 #### Size and retention
 
-A session is a few dozen records — the two above are 2.7 KB together — so this stays small on its own. Three bounds keep it that way regardless:
+Two form sessions are under 2 KB, so this stays small on its own. Three bounds keep it that way regardless:
 
 | | Limit | Behaviour at the limit |
 |---|---|---|
-| Per value | 2048 chars (messages, tags, stacks) · 512 (`SetExtra`) | truncated with a `…[trimmed]` marker, so a cut value never reads as complete |
-| Per file | 8 MB (`MaxBytesPerFile`) | **rolls** to `20260828-2.jsonl` and keeps writing. A bounded log must discard its oldest records, never its newest — those are the ones next to whatever went wrong |
-| Per directory | 7 days (`RetentionDays`) **and** 64 MB (`MaxTotalBytes`) | oldest files deleted, swept hourly. Two bounds that don't multiply, unlike a per-file cap times a file count |
+| Per value | 2048 chars for values (`msg`, `v`, `stack`) · 256 for names (`k`, `cat`, `op`, `release`, `env`, `session`, `trace`, `host`, `name`) | truncated with a `…[trimmed]` marker, so a cut value never reads as complete |
+| Per file | `MaxBytesPerFile`, 8 MB by default | **rolls** to `20260828-2.jsonl` and keeps writing. A bounded log must discard its oldest records, never its newest — those are the ones next to whatever went wrong |
+| Per directory | `RetentionDays` (7) **and** `MaxTotalBytes` (64 MB) | oldest files deleted. Two bounds that don't multiply, unlike a per-file cap times a file count |
+
+The sweep runs **at most once an hour**, and only when a file is opened or rolled — so a process with a viewer open all day sweeps at startup and again at the midnight roll, not on a timer. It deletes only files whose names match the ones this component writes (`yyyyMMdd[-n][-p<pid>].jsonl`), so pointing `Directory` at a folder holding your own `.jsonl` files is safe.
 
 Retention is 7 days because it's sized to the support loop, not to disk: a clinician hits a problem on Friday, IT raises a ticket on Monday, someone asks for the file on Tuesday. A window measured in hours is empty by the time anyone looks.
 
 #### PHI
 
-**The transcript is held to the same rule as Sentry: no FHIR payloads.** That matters more here, not less, because the point of the file is to leave the hospital — it writes only what callers pass to `ITelemetrySink`, never reflects over a `SetExtra` object graph, caps every value's length, replaces the user-profile path with `%USERPROFILE%` (a Windows account name is often a person's name), and never writes a DSN. If your own code puts patient identifiers in exception messages, scrub them before they bubble up — the same caveat as for Sentry above.
+**The transcript is held to the same rule as Sentry: no FHIR payloads.** That matters more here, not less, because the point of the file is to leave the hospital. Concretely:
+
+- **Every** string written is length-capped and has the user-profile path replaced with `%USERPROFILE%` — values and names alike (a Windows account name is often a person's name). Note the limit of that scrubbing: release-build stack traces carry the *build* machine's paths, which won't match, so it protects patient-adjacent paths rather than every path.
+- **`SetExtra` writes strings and primitives; everything else becomes just its type name** — `<Hl7.Fhir.Model.QuestionnaireResponse>`. Attaching a resource to debug a rejected submission is the obvious thing to reach for, and `ToString()` on a record, an anonymous type, a `JsonElement` or an `XElement` is a full state dump, so no caller code runs on that path at all.
+- **No DSN is ever written.** `session.start` reads `environment` and `release` out of the embedded bootstrap config by name rather than looping it.
+- If your own code puts patient identifiers in exception messages, scrub them before they bubble up — the same caveat as for Sentry above.
+
+One deliberate difference from Sentry, worth knowing before you send a file: the header records `host` (the machine name), and the Sentry adapter leaves `SendDefaultPii` off, so **Sentry never receives a machine name and the file does**. Support needs to know which workstation a transcript came from; if your workstation names identify people or rooms, that's a reason to review a file before forwarding it.
 
 #### Two limits worth knowing
 
@@ -560,7 +587,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
 
 - **Targets**: `net48` (C# SDK-style, WinForms + WebView2)
 - **Key type**: `TiroFormViewer<TResource, TQR, TOO>` — abstract generic UserControl
-- **Telemetry seam** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`): `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, `NullTelemetrySink` (the no-op default), and `FileTelemetrySink` (a rolling local JSONL transcript that also decorates any other sink). No backend dependency — the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend.
+- **Telemetry seam** (namespace `Tiro.Health.FormFiller.WebView2.Telemetry`): `ITelemetrySink` (begins sessions, captures exceptions, flushes), `ITelemetrySession` (starts transactions in one trace), `ITelemetrySpan` (`IDisposable`; transactions and child spans), `TelemetrySpanStatus`, `NullTelemetrySink` (the no-op default), and `FileTelemetrySink` + `FileTelemetryOptions` (a rolling local JSONL transcript that also decorates any other sink). No backend dependency — the Sentry-backed implementation ships in `Tiro.Health.FormFiller.WebView2.Sentry`; implement the interfaces yourself for any other backend.
 - **Features**:
   - Explicit lifecycle state machine (`TiroFormViewerState`: Initializing → Ready → ContextSet → Submitted → Disposed)
   - Async API with `CancellationToken` end-to-end; in-flight operations cancel cleanly on disposal

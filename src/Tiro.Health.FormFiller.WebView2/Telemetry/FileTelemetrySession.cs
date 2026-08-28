@@ -16,13 +16,18 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         private readonly string _sessionId;
         private readonly string _sid;
         private readonly ITelemetrySession _inner;
+        private readonly Action _onEnded;
+        private readonly object _gate = new object();
 
-        public FileTelemetrySession(RollingTelemetryLog log, string sessionId, ITelemetrySession inner)
+        private bool _ended;
+
+        public FileTelemetrySession(RollingTelemetryLog log, string sessionId, ITelemetrySession inner, Action onEnded = null)
         {
             _log = log;
             _sessionId = sessionId;
             _sid = FileTelemetrySink.ShortId(sessionId);
             _inner = inner ?? NullTelemetrySink.NoopSession;
+            _onEnded = onEnded;
 
             WriteSessionStart();
         }
@@ -31,7 +36,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         {
             _log.Write("tag", _sid, json =>
             {
-                json.WriteString("k", key);
+                TelemetryRecordWriter.WriteKey(json, "k", key);
                 TelemetryRecordWriter.WriteValue(json, "v", value);
             });
 
@@ -42,7 +47,7 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
         {
             _log.Write("crumb", _sid, json =>
             {
-                json.WriteString("cat", category);
+                TelemetryRecordWriter.WriteKey(json, "cat", category);
                 TelemetryRecordWriter.WriteValue(json, "msg", message);
             });
 
@@ -70,13 +75,27 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
 
         /// <summary>
         /// Writes a <c>session.end</c> terminator, then disposes the inner session. The terminator
-        /// is what tells a reader the file is complete rather than cut short by a process that
-        /// died — the distinction the transcript exists to make. The file handle itself belongs to
-        /// <see cref="FileTelemetrySink"/>, which the viewer disposes after flushing.
+        /// is what tells a reader the session ended rather than being cut short by a process that
+        /// died — the distinction the transcript exists to make. Idempotent: a second dispose must
+        /// not write a second terminator, and <c>TiroFormViewer.Dispose</c> has no re-entry guard of
+        /// its own. The file handle itself belongs to <see cref="RollingTelemetryLog"/>, shared
+        /// across viewers and closed when the last sink releases it.
         /// </summary>
         public void Dispose()
         {
+            lock (_gate)
+            {
+                if (_ended) return;
+                _ended = true;
+            }
+
             _log.Write("session.end", _sid, null);
+
+            // Tells the sink to stop attributing out-of-band captures to a session that has ended —
+            // otherwise an error record lands after its own session.end, which a reader is entitled
+            // to treat as a terminator.
+            _onEnded?.Invoke();
+
             Guard(() => _inner.Dispose(), "Session.Dispose");
         }
 
@@ -105,10 +124,10 @@ namespace Tiro.Health.FormFiller.WebView2.Telemetry
             {
                 // The full form.session.id, written once per session. Every line carries the short
                 // form, which is what a grep for one session out of a day's file matches.
-                json.WriteString("session", _sessionId);
-                json.WriteString("release", release ?? LocalRelease());
-                if (environment != null) json.WriteString("env", environment);
-                if (trace != null) json.WriteString("trace", trace);
+                TelemetryRecordWriter.WriteKey(json, "session", _sessionId);
+                TelemetryRecordWriter.WriteKey(json, "release", release ?? LocalRelease());
+                if (environment != null) TelemetryRecordWriter.WriteKey(json, "env", environment);
+                if (trace != null) TelemetryRecordWriter.WriteKey(json, "trace", trace);
             });
         }
 
