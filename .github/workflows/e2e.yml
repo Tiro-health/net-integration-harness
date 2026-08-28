@@ -529,4 +529,23 @@ jobs:
             Write-Host "probe exited 0 but never reported '$required'"
             exit 1
           }
-          Write-Host "gate satisfied: '$required'"
+          # Stage C runs in both modes, so it is required unconditionally. Without this marker a
+          # stage that silently stopped running would leave the run green: it is the only layer
+          # where the telemetry sink meets the real viewer instead of a hand-written imitation of it.
+          if (-not (Select-String -Path $log -Pattern 'PASS: stage C' -SimpleMatch -Quiet)) {
+            Write-Host "probe exited 0 but never reported 'PASS: stage C' — the telemetry transcript was not verified"
+            exit 1
+          }
+          Write-Host "gate satisfied: '$required' + 'PASS: stage C'"
+
+      # The transcript is a real capture of a real session — the only one this repo produces.
+      # Worth keeping off a run rather than reconstructing it by hand for docs or triage.
+      - name: Upload probe report and telemetry transcript
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: webview2-probe-${{ matrix.target }}
+          path: |
+            tests/e2e/WebView2Probe/bin/Release/net48/probe-report.log
+            tests/e2e/WebView2Probe/bin/Release/net48/telemetry/*.jsonl
+          if-no-files-found: warn

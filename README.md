@@ -394,7 +394,9 @@ One file per day, in `%LOCALAPPDATA%\Tiro.Health\FormFiller\telemetry` unless yo
 
 Every viewer in the process writes to the same file — the log is shared and reference-counted, so two forms open at once don't fight over it and the first one closed doesn't take it from the others. Sessions are delimited by `session.start` / `session.end` records rather than by separate files, which is what makes bugs that span sessions visible at all. `FileTelemetrySink.CurrentFilePath` gives you the path, which is what an *Attach diagnostics* button should use rather than reconstructing a name.
 
-Real output, two sessions (hostname and stack path substituted):
+Two sessions, from a driven run (hostname and stack path substituted). The e2e suite's stage C
+captures the equivalent from a real WebView2 session and uploads it as a run artifact — see
+[tests/e2e/README.md](tests/e2e/README.md):
 
 ```
 {"type":"header","ts":"2026-08-28T12:17:18.993Z","sid":"process","v":1,"file_schema":"tiro-formfiller-telemetry-jsonl","host":"WKS-RAD-114","pid":79484}

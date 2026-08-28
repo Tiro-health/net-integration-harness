@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Hl7.Fhir.Model;
 using Tiro.Health.FormFiller.WebView2.Fhir.R5;
+using Tiro.Health.FormFiller.WebView2.Telemetry;
 using Tiro.Health.FormSdk.Abstractions;
 using Tiro.Health.FormSdk.Client.Fhir.R5;
 using Tiro.Health.SmartWebMessaging;
@@ -23,7 +24,12 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
     /// upgrades, the bridge runs before page scripts, and the handshake reaches the host.
     /// Stage B needs a server and covers what layer 1 structurally cannot: the QR the real
     /// element produced, deserialized by Firely into a typed POCO, driving the .NET state
-    /// machine and the SdcClient. Exit 0 = pass.
+    /// machine and the SdcClient.
+    ///
+    /// Stage C reads back the file telemetry transcript this run wrote. Unit tests drive
+    /// ITelemetrySink through a hand-written imitation of the viewer's call sequence, which
+    /// cannot notice if the imitation is wrong; this is the only place the sink sees a real
+    /// WebView2 session, a real handshake and a real Dispose on a message pump. Exit 0 = pass.
     /// </summary>
     internal static class Program
     {
@@ -54,6 +60,13 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
 
         private static readonly TimeSpan StageTimeout = TimeSpan.FromMinutes(3);
 
+        /// <summary>
+        /// Where stage C's transcript goes. Beside probe-report.log, so the workflow step that
+        /// already knows how to find one can print and upload the other.
+        /// </summary>
+        private static readonly string TelemetryDirectory =
+            System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "telemetry");
+
         [STAThread]
         private static int Main()
         {
@@ -70,6 +83,13 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             // costs money and says nothing is the worst failure mode available.
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.EnableVisualStyles();
+
+            // File telemetry, with no inner sink: the air-gapped configuration, so this exercises
+            // the transcript without needing a DSN or any egress from the runner. Registered here
+            // because TiroFormViewerDefaults is sampled by each viewer's constructor — after the
+            // viewer below exists it would be too late, which is the ordering integrators get wrong.
+            PrepareTelemetryDirectory();
+            TiroFormViewerDefaults.TelemetrySinkFactory = () => new FileTelemetrySink(TelemetryDirectory);
 
             var exitCode = 1;
             // Declared before the handler so the closure can reach it, assigned after: the mode
@@ -101,6 +121,12 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
 
             Application.Run(form);
             try { viewer.Dispose(); } catch { /* best-effort; the process is exiting anyway */ }
+
+            // After the dispose, deliberately: session.end and the final flush are part of what
+            // stage C checks, and they only happen when the viewer goes away. Only run it if the
+            // stages above passed — a transcript of a failed run has nothing to say.
+            if (exitCode == 0) exitCode = CheckTranscript();
+
             Report("INFO", "exiting with " + exitCode);
             return exitCode;
         }
@@ -428,6 +454,190 @@ namespace Tiro.Health.FormFiller.WebView2.E2E
             Gender = AdministrativeGender.Female,
             BirthDate = "1970-01-01",
         };
+
+        private static void PrepareTelemetryDirectory()
+        {
+            try
+            {
+                if (System.IO.Directory.Exists(TelemetryDirectory))
+                    System.IO.Directory.Delete(TelemetryDirectory, recursive: true);
+            }
+            catch { /* a leftover file only risks a confusing assertion, not a wrong one */ }
+        }
+
+        /// <summary>
+        /// Stage C: the transcript this run produced, read back and checked.
+        /// <para>
+        /// What this can do that a unit test cannot: the records come from the real viewer's own
+        /// calls, so the sequence is the sequence rather than my reading of it. It also prints the
+        /// transcript, which makes the sample in the README a capture instead of a reconstruction.
+        /// </para>
+        /// </summary>
+        private static int CheckTranscript()
+        {
+            string[] files;
+            try
+            {
+                files = System.IO.Directory.Exists(TelemetryDirectory)
+                    ? System.IO.Directory.GetFiles(TelemetryDirectory, "*.jsonl")
+                    : new string[0];
+            }
+            catch (Exception ex)
+            {
+                Report("FAIL", "stage C — could not read " + TelemetryDirectory + ": " + ex.Message);
+                return 1;
+            }
+
+            if (files.Length != 1)
+            {
+                Report("FAIL", "stage C — expected exactly one transcript in " + TelemetryDirectory
+                             + ", found " + files.Length + ". One process, one day, one file.");
+                return 1;
+            }
+
+            var text = System.IO.File.ReadAllText(files[0]);
+            var lines = System.IO.File.ReadAllLines(files[0]);
+            Report("INFO", "stage C — transcript " + System.IO.Path.GetFileName(files[0])
+                         + " (" + text.Length + " bytes, " + lines.Length + " lines)");
+            foreach (var line in lines) Report("XCRIPT", line);
+
+            var types = new List<string>();
+            var ops = new List<string>();
+            var names = new List<string>();
+            var crumbs = new List<string>();
+            var tagKeys = new List<string>();
+            string fullSessionId = null;
+
+            foreach (var line in lines)
+            {
+                if (line.Length == 0) continue;
+
+                System.Text.Json.JsonDocument document;
+                try { document = System.Text.Json.JsonDocument.Parse(line); }
+                catch (Exception ex)
+                {
+                    Report("FAIL", "stage C — a line did not parse, so the one-record-per-line "
+                                 + "invariant is broken: " + ex.Message + " :: " + line);
+                    return 1;
+                }
+
+                using (document)
+                {
+                    var record = document.RootElement;
+
+                    System.Text.Json.JsonElement type;
+                    System.Text.Json.JsonElement sid;
+                    if (!record.TryGetProperty("type", out type) || !record.TryGetProperty("sid", out sid)
+                        || !record.TryGetProperty("ts", out _))
+                    {
+                        Report("FAIL", "stage C — a record is missing type/ts/sid, so it cannot be read "
+                                     + "on its own: " + line);
+                        return 1;
+                    }
+
+                    if (sid.GetString().Length > 8)
+                    {
+                        Report("FAIL", "stage C — sid should be the short form on every line: " + line);
+                        return 1;
+                    }
+
+                    types.Add(type.GetString());
+
+                    System.Text.Json.JsonElement value;
+                    if (type.GetString() == "session.start" && record.TryGetProperty("session", out value))
+                        fullSessionId = value.GetString();
+                    if (record.TryGetProperty("op", out value)) ops.Add(value.GetString());
+                    if (record.TryGetProperty("name", out value)) names.Add(value.GetString());
+                    if (type.GetString() == "crumb" && record.TryGetProperty("msg", out value)) crumbs.Add(value.GetString());
+                    if (record.TryGetProperty("k", out value)) tagKeys.Add(value.GetString());
+                }
+            }
+
+            // The viewer's own lifecycle, start to finish. A missing session.end would mean the
+            // dispose path never reached the transcript.
+            foreach (var required in new[] { "header", "session.start", "span.start", "span.end", "session.end" })
+            {
+                if (!types.Contains(required))
+                {
+                    Report("FAIL", "stage C — no '" + required + "' record. Types seen: " + string.Join(",", types));
+                    return 1;
+                }
+            }
+
+            if (types.IndexOf("session.end") < types.IndexOf("session.start"))
+            {
+                Report("FAIL", "stage C — session.end precedes session.start");
+                return 1;
+            }
+
+            if (fullSessionId == null || fullSessionId.Length < 32)
+            {
+                Report("FAIL", "stage C — session.start carries no full form.session.id ('"
+                             + (fullSessionId ?? "(none)") + "'), which is the key a Sentry event is found by");
+                return 1;
+            }
+
+            if (!ops.Contains("swm.lifecycle.init"))
+            {
+                Report("FAIL", "stage C — no swm.lifecycle.init span; the viewer's own init transaction "
+                             + "never reached the transcript. Ops seen: " + string.Join(",", ops));
+                return 1;
+            }
+
+            if (!crumbs.Exists(c => c.IndexOf("constructed", StringComparison.OrdinalIgnoreCase) >= 0)
+                || !crumbs.Exists(c => c.IndexOf("disposed", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                Report("FAIL", "stage C — the construction and dispose breadcrumbs did not both arrive: "
+                             + string.Join(" | ", crumbs));
+                return 1;
+            }
+
+            if (ServerStagesEnabled)
+            {
+                // Only reachable with a server: these are the per-message transactions.
+                foreach (var required in new[] { "sdc.displayQuestionnaire", "ui.form.requestSubmit" })
+                {
+                    if (!names.Contains(required))
+                    {
+                        Report("FAIL", "stage C — no '" + required + "' transaction. Names seen: "
+                                     + string.Join(",", names));
+                        return 1;
+                    }
+                }
+
+                if (!tagKeys.Contains("questionnaire_url"))
+                {
+                    Report("FAIL", "stage C — no questionnaire_url tag. Tag keys seen: " + string.Join(",", tagKeys));
+                    return 1;
+                }
+            }
+
+            // PHI, against a real session rather than a fixture: the transcript must carry no FHIR
+            // payload. These three markers cannot appear in a QuestionnaireResponse-free file, and
+            // they are what a leak through a tag, a breadcrumb or an extra would drag in.
+            foreach (var marker in new[] { "resourceType", "linkId", "valueString" })
+            {
+                if (text.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    Report("FAIL", "stage C — the transcript contains '" + marker + "', so a FHIR payload "
+                                 + "reached a file built to be emailed");
+                    return 1;
+                }
+            }
+
+            // A real session is a few dozen small records. A transcript an order of magnitude
+            // larger means something is writing payloads even if none of the markers above hit.
+            if (text.Length > 64 * 1024)
+            {
+                Report("FAIL", "stage C — transcript is " + text.Length + " bytes for one session; "
+                             + "a few dozen records should be single-digit KB");
+                return 1;
+            }
+
+            Report("PASS", "stage C — the real viewer's session round-tripped through FileTelemetrySink: "
+                         + lines.Length + " records, every line parseable, lifecycle complete, no FHIR payload");
+            return 0;
+        }
 
         private static void Report(string level, string message)
         {
