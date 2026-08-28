@@ -24,6 +24,13 @@ const REPO = join(HERE, "..", "..", "..");
 const BRIDGE_PATH = process.env.BRIDGE_PATH
   ?? join(REPO, "src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-swm-bridge.js");
 const BUNDLE_PATH = join(REPO, "src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-web-sdk.iife.js");
+// The version the harness believes it embedded. Read from the manifest that ships beside the
+// bundle, not from build/web-sdk/package.json: the pin is what we asked for, the manifest is
+// what was actually staged, and the whole point of the assertion below is to catch them
+// diverging from what the element itself reports.
+const EMBEDDED_VERSION = JSON.parse(
+  readFileSync(join(REPO, "src/Tiro.Health.FormFiller.WebView2/WebAssets/web-sdk.version.json"), "utf8")
+).version;
 // Staging, never the production demo instance: see tests/e2e/README.md.
 const SDC_ENDPOINT = process.env.SDC_ENDPOINT ?? "https://sdc-staging.tiro.health/fhir/r5";
 // Version-pinned: the same canonical also carries a mutable draft-1, and an edit to that
@@ -176,13 +183,17 @@ test("the bridge injects the embedded SDK and reports its identity at handshake"
     assert.equal(handshake.client.name, "tiro-web-sdk");
     // "embedded" proves the bundle came from the host, not a page-owned script tag.
     assert.equal(handshake.client.source, "embedded");
-    // Deliberately asserted as still-absent rather than "null or a string", which the bridge
-    // computes as `typeof v === "string" ? v : null` and so could never fail. This breaks the
-    // day the pin picks up an SDK exposing a static version (atticus-frontend#2927) — which is
-    // the point: that is when the version becomes worth asserting against the staged
-    // web-sdk.version.json, and a test that cannot fail would not tell anyone it had arrived.
-    assert.equal(handshake.client.version, null,
-      "the SDK now reports a version — assert it against build/web-sdk/web-sdk.version.json");
+    // The element reports its build-time version (atticus-frontend#2930, in the SDK from 0.3.3),
+    // and this is where GH-61 is actually closed: the version the element says it is must equal
+    // the version the harness believes it embedded. Until 0.3.3 this asserted `null` as a
+    // tripwire, precisely so that the day a version appeared, someone would have to come here
+    // and turn it into the real comparison rather than let it arrive unnoticed.
+    //
+    // Compared against the staged manifest rather than the pin: the pin is what was requested,
+    // the manifest is what was staged, and a build serving bytes that disagree with either is
+    // the failure this is for.
+    assert.equal(handshake.client.version, EMBEDDED_VERSION,
+      `the element reports ${handshake.client.version} but the harness embedded ${EMBEDDED_VERSION}`);
     assert.ok(await h.page.evaluate("!!customElements.get('tiro-form-filler')"));
   } finally {
     await h.close();

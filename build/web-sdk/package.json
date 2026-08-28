@@ -3,6 +3,6 @@
   "private": true,
   "description": "Pins the exact @tiro-health/web-sdk version embedded in Tiro.Health.FormFiller.WebView2 (GH-59/GH-60). Single source of truth: copy-bundle.mjs stages this version's bundle for embedding, its version goes into the served URL for cache-busting, and CI type-checks the shipped bridge against it.",
   "dependencies": {
-    "@tiro-health/web-sdk": "0.3.2"
+    "@tiro-health/web-sdk": "0.3.3"
   }
 }
