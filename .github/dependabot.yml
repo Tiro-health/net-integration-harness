@@ -1,9 +1,27 @@
-# Dependabot watches the web-sdk pin (build/web-sdk/package.json) so bumps of the
-# embedded @tiro-health/web-sdk arrive as reviewable PRs gated by CI — the
-# bridge-contract type-check runs against the pin, and the bridge behavioral
-# suite + (once GH-26 lands) the e2e smoke gate the pairing. See GH-59.
+# Dependabot watches the web-sdk pin (build/web-sdk/package.json) so a new
+# @tiro-health/web-sdk is proposed rather than noticed. See GH-59.
 #
-# The package is on the private GitHub Packages registry. Dependabot cannot use
+# A bump PR from the bot is RED on arrival, by design, and needs one manual step.
+# Dependabot only edits package.json + package-lock.json; the bundle those describe is
+# committed at src/Tiro.Health.FormFiller.WebView2/WebAssets/, and the csproj refuses a
+# build where the pin and the committed bundle disagree. So the flow is:
+#
+#   1. bot opens a PR bumping the pin; the build fails with "committed web-sdk bundle is
+#      vX but build/web-sdk pins vY" — the error names the command to run
+#   2. a maintainer runs `cd build/web-sdk && npm ci --ignore-scripts && node copy-bundle.mjs`
+#      and pushes the regenerated bundle + manifest onto the bot's branch
+#   3. CI then gates the pairing for real: bridge-contract type-checks against the new pin,
+#      the bridge behavioural suite and the e2e floor cell run against the new bundle
+#
+# That manual step is the price of committing the bundle (which is what makes
+# `git clone && build` work with no token at all). It is not automated because pushing a
+# regenerated 6 MB binary onto a bot branch needs write access and registry auth in a
+# workflow triggered by an external actor — machinery worth more than the step it saves,
+# for something that happens a few times a year and needs human review regardless.
+#
+# The package is on GitHub Packages. Building no longer needs a token — the bundle is
+# committed — but Dependabot still does, because it resolves the registry to find new
+# versions. Dependabot cannot use
 # the workflows' ephemeral GITHUB_TOKEN, so the registry entry below needs a
 # classic PAT with read:packages stored as a **Dependabot secret** named
 # DEPENDABOT_GITHUB_PACKAGES_TOKEN (repo Settings -> Secrets and variables ->

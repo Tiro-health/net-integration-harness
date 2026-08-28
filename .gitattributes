@@ -3,6 +3,17 @@
 ###############################################################################
 * text=auto
 
+# The vendored web-sdk bundle (GH-59/GH-60). `binary` is -text -diff -merge, and all three
+# matter for a 6 MB minified file that is committed rather than generated:
+#   -text   it has no NUL bytes, so `text=auto` classifies it as TEXT and converts line
+#           endings on checkout. nuget-publish runs on windows-latest, so the published
+#           package would embed CRLF bytes differing from the same file on the CDN.
+#   -merge  two branches each bumping the pin would otherwise be 3-way TEXT-merged, and
+#           non-overlapping hunks merge *cleanly* — producing a splice of two versions that
+#           the pin/manifest check cannot see, because both of those are separate files.
+#   -diff   6 MB of minified JS in a diff helps nobody.
+src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-web-sdk.iife.js binary
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

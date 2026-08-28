@@ -16,21 +16,12 @@ jobs:
   build-and-test:
     runs-on: windows-latest
 
-    # packages: read fetches the pinned @tiro-health/web-sdk from GitHub Packages
-    # for the embedded bundle (GH-60).
     permissions:
       contents: read
-      packages: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      # Building Tiro.Health.FormFiller.WebView2 hard-fails without the staged bundle.
-      - name: Stage pinned web-sdk bundle
-        uses: ./.github/actions/stage-web-sdk
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1

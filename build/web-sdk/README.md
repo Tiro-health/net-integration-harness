@@ -7,7 +7,7 @@ integrators or customers make (see the decision record in GH-64).
 
 - `package.json` — the pin: an exact version, no range.
 - `copy-bundle.mjs` — stages the bundle + generated `web-sdk.version.json` into
-  `src/Tiro.Health.FormFiller.WebView2/WebAssets/` (gitignored there, embedded
+  `src/Tiro.Health.FormFiller.WebView2/WebAssets/` (committed there, embedded
   as resources at build time).
 
 ## The pinned version is part of the URL
@@ -30,48 +30,44 @@ equality assert would only add a way to refuse a *working* session, e.g. if a fu
 renamed or dropped its static version field. The reported version is kept purely as
 diagnostics (`TiroFormViewer.PageWebSdkVersion`).
 
-## Staging the bundle (required before any build)
+## The bundle is committed
 
-The package lives on **GitHub Packages** (private), so npm needs a token with
-`read:packages`. Put it in your **user-level** `~/.npmrc` once — the `.npmrc`
-files in this repo deliberately carry no credentials (see the note in
-`.npmrc`):
+`src/Tiro.Health.FormFiller.WebView2/WebAssets/tiro-web-sdk.iife.js` and its
+`web-sdk.version.json` are **tracked in this repo**, so `git clone && build` works with no
+token, no npm install and no staging step — for a new contributor, a fresh CI runner, or you
+on a new machine.
 
-```sh
-gh auth refresh -h github.com -s read:packages                        # one-time, adds the scope
-npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"    # one-time, writes ~/.npmrc
-```
+That is a reversal. They used to be gitignored and fetched from GitHub Packages, which needs a
+`read:packages` token. The token protected nothing: the same bytes are served unauthenticated
+from `cdn.tiro.health/sdk/v<version>/tiro-web-sdk.iife.js`, ship inside the NuGet package on
+nuget.org, and this repo is public. What it did do was make a missing bundle the first of six
+build errors — the other five being dependent projects compiling against a stale DLL and
+reporting an old API surface as though the source were wrong.
 
-Then, after every pin change:
-
-```sh
-cd build/web-sdk
-npm ci --ignore-scripts
-node copy-bundle.mjs
-```
-
-Building `Tiro.Health.FormFiller.WebView2` **fails hard** when the bundle is
-missing *or* staged from a different version than the pin — re-run
-`copy-bundle.mjs` after every pin change. Stale staging is self-consistent
-(bundle and manifest agree with each other), so nothing downstream can catch
-it. Under the no-opt-out embedding design a package without the right bundle is
-a broken control, so there is no silent skip.
-
-CI stages via `.github/actions/stage-web-sdk` using the ephemeral `GITHUB_TOKEN`
-(`permissions: packages: read`); the package must grant this repo Actions read
-access (GitHub Packages → package → *Manage Actions access*).
+The cost is ~6 MB of git history per pin bump, a few times a year.
 
 ## Bumping the pin
 
-Dependabot proposes bumps as PRs (`.github/dependabot.yml`; requires the
-`DEPENDABOT_GITHUB_PACKAGES_TOKEN` Dependabot secret — a PAT with
-`read:packages` — because Dependabot cannot use the workflows' ephemeral
-token). A bump PR is gated by:
+`copy-bundle.mjs` still exists, and this is the one time you run it:
 
-- the `bridge-contract` type-check, which runs against **this pin** (not `latest`),
-- the bridge behavioral suite (`tests/bridge`),
-- the e2e smoke once GH-26 lands.
+```sh
+# one-time, if you have never authenticated to GitHub Packages
+gh auth refresh -h github.com -s read:packages
+npm config set //npm.pkg.github.com/:_authToken "$(gh auth token)"
+```
 
-The nightly `@latest` run in `bridge-contract.yml` is an advisory heads-up for
-the *next* bump — a red nightly means the next bump needs bridge work, not that
-anything shipped is broken.
+```sh
+# edit package.json to the new version, then
+cd build/web-sdk
+npm ci --ignore-scripts
+node copy-bundle.mjs
+git add -A src/Tiro.Health.FormFiller.WebView2/WebAssets build/web-sdk
+```
+
+A **Dependabot** bump arrives red for exactly this reason: the bot edits the pin and nothing
+else, so the build fails on the mismatch until someone runs the above on its branch and pushes.
+That is the documented flow, not a fault — see the comment atop `.github/dependabot.yml`.
+
+**Commit the result.** Bumping `package.json` alone fails the build: the csproj compares the
+pin against the committed `web-sdk.version.json` and refuses a mismatch, because a stale bundle
+is self-consistent and nothing downstream would catch it.

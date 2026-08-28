@@ -6,7 +6,7 @@
  *   cd build/web-sdk && npm ci && node copy-bundle.mjs
  *
  * Copies the pinned bundle to src/.../WebAssets/tiro-web-sdk.iife.js and writes
- * WebAssets/web-sdk.version.json ({ version }) — both gitignored, both embedded as
+ * WebAssets/web-sdk.version.json ({ version, sha256 }) — both committed, both embedded as
  * resources at build time. The version is generated from the installed package, never
  * hand-written, so the version in the served URL provably describes the bytes shipped.
  *
@@ -15,6 +15,7 @@
  * ship an unvalidated pairing.
  */
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,9 +46,18 @@ const webAssets = join(here, "..", "..", "src", "Tiro.Health.FormFiller.WebView2
 mkdirSync(webAssets, { recursive: true });
 
 copyFileSync(bundleSrc, join(webAssets, "tiro-web-sdk.iife.js"));
+
+// The manifest records the bundle's hash as well as its version, and the csproj verifies it.
+// Both files are committed now rather than generated at build time, so they are two things a
+// commit can separate: taking the 19-byte manifest from one side of a conflict and the 6 MB
+// bundle from the other leaves a self-consistent lie — pin and manifest agree, and the harness
+// then serves stale bytes at a URL naming the new version. npm's package-lock integrity used
+// to make that impossible by construction; committing the file gave that away, and this is
+// what buys it back.
+const sha256 = createHash("sha256").update(readFileSync(bundleSrc)).digest("hex");
 writeFileSync(
     join(webAssets, "web-sdk.version.json"),
-    JSON.stringify({ version: pinnedVersion }) + "\n"
+    JSON.stringify({ version: pinnedVersion, sha256 }) + "\n"
 );
 
-console.log(`Staged @tiro-health/web-sdk ${pinnedVersion} into WebAssets/.`);
+console.log(`Staged @tiro-health/web-sdk ${pinnedVersion} (sha256 ${sha256.slice(0, 12)}…) into WebAssets/.`);

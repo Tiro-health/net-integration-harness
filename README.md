@@ -447,10 +447,19 @@ net-integration-harness/
 │   ├── Tiro.Health.FormFiller.WebView2.ExtractSample/  # Like Sample, but runs SDC $extract and shows the extracted Composition narrative (R5)
 │   └── Tiro.Health.FormFiller.WebView2.EhrShellSample/ # Dummy EHR shell — patient/encounter/template selection,
 │                                                       # tabbed viewer, in-memory QR persistence, custom index.html (R5)
-└── tests/
-    ├── Tiro.Health.SmartWebMessaging.Tests/        # MSTest, protocol/handler coverage
-    ├── Tiro.Health.FormFiller.WebView2.Tests/      # MSTest, viewer lifecycle + telemetry contracts + embedded assets
-    └── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract + the version gate, over a fake HttpMessageHandler
+├── tests/
+│   ├── Tiro.Health.SmartWebMessaging.Tests/        # MSTest, protocol/handler coverage
+│   ├── Tiro.Health.FormFiller.WebView2.Tests/      # MSTest, viewer lifecycle + telemetry contracts + embedded assets
+│   ├── Tiro.Health.FormSdk.Client.Tests/           # MSTest, SDC client $validate/$extract + the version gate, over a fake HttpMessageHandler
+│   ├── bridge/                                     # Node, bridge behaviour against a transcribed stub of the element
+│   └── e2e/                                        # The real element and the real harness against a real SDC server — see its README
+│       ├── browser/                                #   layer 1: Playwright, real <tiro-form-filler> + real bridge
+│       ├── WebView2Probe/                          #   layer 2: the harness binary in real WebView2 (Windows)
+│       └── fixtures/                               #   the pinned questionnaire + the template server that serves it
+└── build/
+    ├── web-sdk/                                    # The web-sdk pin; copy-bundle.mjs stages it when the pin moves
+    ├── bridge-contract/                            # tsc --checkJs of the bridge against the frontend's published types
+    └── release-notes/                              # Composes each release's notes from the pin and MinimumSdcVersion
 ```
 
 ### `Tiro.Health.SmartWebMessaging` (core)
@@ -687,7 +696,11 @@ End If
 <PackageReference Include="System.ComponentModel.Annotations" Version="4.4.1" />
 ```
 
-This is the last package whose embedded assembly is still 4.2.0.0, satisfying `Hl7.Fhir.Base` directly without a redirect. NuGet emits an `NU1605` downgrade warning — expected; ignore. In larger applications skip the pin: it downgrades Annotations graph-wide and can collide with other libraries that strong-name reference 4.2.1.0+.
+This is the last package whose embedded assembly is still 4.2.0.0, satisfying `Hl7.Fhir.Base` directly without a redirect. NuGet emits an `NU1605` downgrade warning — expected; ignore.
+
+**Unless your build escalates it.** With `TreatWarningsAsErrors` or `WarningsAsErrors=NU1605`, "ignore" is not available and the pin fails the build outright: `Hl7.Fhir.Base 5.13.2` requires `System.ComponentModel.Annotations >= 5.0.0`. Take Option B instead — it needs no pin, so there is no downgrade to escalate. The samples in this repo carry the pin, so a strict build of this solution reports it too; unload them if you only need the libraries.
+
+In larger applications skip the pin regardless: it downgrades Annotations graph-wide and can collide with other libraries that strong-name reference 4.2.1.0+.
 
 **Option B — instantiate the viewer programmatically** (any project size):
 
