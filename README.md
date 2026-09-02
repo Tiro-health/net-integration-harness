@@ -225,7 +225,7 @@ Only one thing is non-negotiable: a `<tiro-form-filler id="form-filler">` elemen
    </body>
    </html>
    ```
-   For fuller, checked-in examples, see the samples: `ExtractSample/WebContent/index.html` (a lightly-branded single page) and the EhrShell sample's `WebContent/Form/index.html`. Note you don't need a second page for read-only viewing — set the viewer's `ReadOnly` property instead (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host)).
+   For fuller, checked-in examples, see the samples: `ExtractSample/WebContent/index.html` (a lightly-branded page that also hosts the [Magic Clipboard](#ai-autofill-with-the-magic-clipboard) next to the form) and the EhrShell sample's `WebContent/Form/index.html`. Note you don't need a second page for read-only viewing — set the viewer's `ReadOnly` property instead (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host)).
 2. Save it into your project, e.g. `WebContent/index.html`, and tweak it — branding, status copy, etc. Endpoints are configured from the .NET host (see [Configuring FHIR endpoints from the host](#configuring-fhir-endpoints-from-the-host) below) — don't hardcode them in the page. If the page sets a Content-Security-Policy, `script-src` must allow the SDK's serving origin `https://tiro-sdk.example` (and `frame-src`/defaults per your policy).
 3. Mark the file(s) as content in your `.vbproj` / `.csproj` so they ship next to the executable:
    ```xml
@@ -568,7 +568,7 @@ net-integration-harness/
 │   └── Tiro.Health.FormSdk.Client.Fhir.R5/         # SDC client — FHIR R5 closed binding
 ├── samples/
 │   ├── Tiro.Health.FormFiller.WebView2.Sample/         # Single-form, single-patient demo — shows the response narrative (R5)
-│   ├── Tiro.Health.FormFiller.WebView2.ExtractSample/  # Like Sample, but runs SDC $extract and shows the extracted Composition narrative (R5)
+│   ├── Tiro.Health.FormFiller.WebView2.ExtractSample/  # Like Sample, but runs SDC $extract and shows the extracted Composition narrative (R5); page adds the Magic Clipboard
 │   └── Tiro.Health.FormFiller.WebView2.EhrShellSample/ # Dummy EHR shell — patient/encounter/template selection,
 │                                                       # tabbed viewer, in-memory QR persistence, custom index.html (R5)
 ├── tests/
@@ -706,7 +706,7 @@ Drain `_pending` on app exit (`Await Task.WhenAll(_pending)` with a timeout) so 
 WinForms demos.
 
 - **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
-- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows its narrative (`Composition.Text.Div`) in a `MessageBox`. Falls back to a Bundle summary if the questionnaire extracts non-Composition resources (e.g. definition-based `Observation`s).
+- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows its narrative (`Composition.Text.Div`) in a `MessageBox`. Falls back to a Bundle summary if the questionnaire extracts non-Composition resources (e.g. definition-based `Observation`s). Its `WebContent/index.html` also shows the **Magic Clipboard** — a `<tiro-magic-clipboard>` pane beside the form that autofills it from pasted clinical notes via SDC `$populate`, with no host-side wiring at all. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard).
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
   - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
@@ -752,11 +752,34 @@ The JS that owns the page side of the protocol (`tiro-swm-bridge.js`) ships embe
 Reference for integrators customizing their `index.html`. The auto-injected bridge exposes the following to the page:
 
 - **`<tiro-form-filler>`** (from the auto-injected `tiro-web-sdk`) — auto-wired by the bridge: questionnaires arrive via the `questionnaire` attribute, user submissions come back via the `tiro-submit` event, and the bridge takes care of marshalling them onto the protocol.
+- **`<tiro-magic-clipboard>`** (same bundle) — optional AI autofill pane, *not* wired by the bridge; the page owns it. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard).
 - **`window.tiro.cancel()`** — call from a Cancel button to send `ui.done` to the host.
 - **`document` `CustomEvent`s** for status hooks: `tiro-connected`, `tiro-disconnected`, `tiro-submitted`, `tiro-submit-error`, `tiro-cancelled`, plus `tiro-sdk-error`/`tiro-sdk-collision` for SDK-loading problems. Listen if you want a status bar; ignore if you don't.
 - **`window.SmartWebMessaging.{sendRequest, sendEvent, on}`** — lower-level API for advanced flows that don't fit the auto-wired form-filler model.
 
 The page carries **no** `tiro-web-sdk` script tag — the harness injects the SDK itself (next section).
+
+### AI autofill with the Magic Clipboard
+
+`<tiro-magic-clipboard>` is a second element out of the embedded `tiro-web-sdk`: a notes pane (rich-text editor, file attachments, optional voice dictation) that fills the form in for the user. On **Autofill** it runs SDC `$populate` over whatever was pasted, dictated, or attached, and writes the returned answers into the linked `<tiro-form-filler>` — the server marks AI-populated answers with a contained `Provenance`, so the clinician's own edits stay distinguishable. The user then reviews and submits as usual, and the populated `QuestionnaireResponse` comes back to the host through `FormSubmitted` like any other.
+
+Unlike `<tiro-form-filler>`, the bridge does **not** wire it: it's page-owned, so adding it is an `index.html` change and nothing else. Drop it next to the form filler and link the two by id:
+
+```html
+<tiro-magic-clipboard for="form-filler" placeholder="Paste the consultation notes here…">
+    <tiro-magic-clipboard-button>Autofill the form</tiro-magic-clipboard-button>
+</tiro-magic-clipboard>
+
+<tiro-form-filler id="form-filler"></tiro-form-filler>
+```
+
+- **A submit trigger is required.** The element renders the editor only; the pane has no button of its own. Slot in a `<tiro-magic-clipboard-button>` (or any `<button type="submit">`) — without one there is no way to start a population.
+- **No endpoint to configure.** At Autofill time the element reads the SDC client and the questionnaire off the linked form filler, so it always targets the server the host configured (`SdcEndpointAddress`) for the form actually on screen. Don't hardcode an endpoint in the page — same rule as everywhere else.
+- **`<tiro-magic-clipboard-button>` ships no styles** (no shadow DOM) and reflects the lifecycle on `data-state` (`idle` → `pending` → `success`/`error`, auto-resetting after 2s, or set `reset-delay="0"`). Style it with attribute selectors; see the Extract sample's page for a worked set.
+- **Optional attributes**: `dictation-endpoint` (a FHIR `Endpoint` relative reference, e.g. `Endpoint/dmsk` — enables the voice tool, provider auto-selected from the endpoint's identifier), `dictation-language` (e.g. `nl-BE`), `placeholder`, `hide-toolbar`, `initial-files` (JSON `DocumentReference`s to preload).
+- **Events** fire on the element, not on `document`: `tiro-populate-start`, `tiro-populate-complete` (`detail.response`), `tiro-populate-error` (`detail.error`), and `tiro-clipboard-change` (`detail.value`). `$populate` is a page-side round-trip to the SDC server, so none of this reaches the host.
+
+Worked example: `samples/Tiro.Health.FormFiller.WebView2.ExtractSample/WebContent/index.html` — the clipboard in the left pane, the form on the right, a status line driven by those events, and the host side (`Form1.vb`) untouched apart from a comment.
 
 ### Frontend version compatibility
 
