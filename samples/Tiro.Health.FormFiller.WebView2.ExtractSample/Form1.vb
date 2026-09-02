@@ -26,6 +26,12 @@ Public Class Form1
         ' viewer's built-in assets — the light-blue page makes it obvious the host is supplying
         ' the HTML. WebContentFolder is read at the first SetContextAsync (when the viewer
         ' navigates), so setting it here in Form_Load — before that call — takes effect.
+        '
+        ' That page also puts a <tiro-magic-clipboard> next to the form: paste clinical notes,
+        ' hit Autofill, and the SDK runs SDC $populate to fill the answers in. It needs no host
+        ' wiring — the element links to the <tiro-form-filler> by id and borrows its SDC client,
+        ' so it targets the SdcEndpoint set below like everything else. Submit is unchanged:
+        ' the populated response still comes back through FormSubmitted and gets $extract-ed.
         TiroFormViewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent")
 
         ' Point the viewer at the SDC server. Must be set BEFORE SetContextAsync (the bridge

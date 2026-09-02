@@ -4,18 +4,87 @@
     <meta charset="UTF-8">
     <title>Extract sample — embedded form</title>
     <!-- No SDK script tag: the harness embeds the validated tiro-web-sdk and the
-         bridge injects it (GH-60). Do not add one — the page is branding only. -->
+         bridge injects it (GH-60). Do not add one — the page is branding only.
+         <tiro-magic-clipboard> below comes out of that same embedded bundle. -->
     <style>
         /* Light blue background so it's obvious this page is served from the
            sample's WebContentFolder rather than the viewer's built-in assets. */
         html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; display: flex; flex-direction: column; background: #e0f2fe; }
         header { padding: 8px 16px; background: #bae6fd; border-bottom: 1px solid #7dd3fc; font-size: 0.85rem; color: #075985; }
         header code { background: #7dd3fc; padding: 1px 4px; border-radius: 3px; }
-        tiro-form-filler { display: block; flex: 1; }
+        main { flex: 1; display: flex; min-height: 0; }
+
+        /* Left pane: the Magic Clipboard. Right pane: the form it populates. */
+        .clipboard-pane { display: flex; flex-direction: column; gap: 10px; width: 340px; flex: none; padding: 12px 14px; box-sizing: border-box; overflow-y: auto; background: #f0f9ff; border-right: 1px solid #7dd3fc; }
+        .clipboard-pane h2 { margin: 0; font-size: 0.95rem; color: #075985; }
+        .clipboard-pane p { margin: 0; font-size: 0.8rem; line-height: 1.45; color: #0c4a6e; }
+        .clipboard-pane code { background: #bae6fd; padding: 1px 4px; border-radius: 3px; }
+        tiro-magic-clipboard { display: block; }
+
+        /* <tiro-magic-clipboard-button> renders no shadow DOM and ships no styles —
+           the page owns its look, and `data-state` reflects the population lifecycle
+           (idle → pending → success/error, auto-resetting after 2s). */
+        tiro-magic-clipboard-button { display: inline-block; margin-top: 8px; padding: 6px 14px; border: 1px solid #0284c7; border-radius: 4px; background: #0284c7; color: #fff; font-size: 0.85rem; cursor: pointer; user-select: none; }
+        tiro-magic-clipboard-button[data-state="pending"] { opacity: 0.6; cursor: wait; }
+        tiro-magic-clipboard-button[data-state="success"] { background: #059669; border-color: #059669; }
+        tiro-magic-clipboard-button[data-state="error"] { background: #dc2626; border-color: #dc2626; }
+
+        .status { font-size: 0.78rem; color: #075985; min-height: 1.2em; }
+        .status[data-kind="error"] { color: #b91c1c; }
+
+        tiro-form-filler { display: block; flex: 1; min-width: 0; }
     </style>
 </head>
 <body>
-    <header>Form page shipped by the Extract sample (<code>WebContent/</code>).</header>
-    <tiro-form-filler id="form-filler"></tiro-form-filler>
+    <header>Form page shipped by the Extract sample (<code>WebContent/</code>), with the Magic Clipboard alongside the form.</header>
+    <main>
+        <aside class="clipboard-pane">
+            <h2>Magic Clipboard</h2>
+            <p>Paste (or dictate) clinical notes, then hit <strong>Autofill the form</strong>: the clipboard runs SDC <code>$populate</code> over the notes and writes the answers into the form. Submitting still runs <code>$extract</code> host-side, in <code>Form1.vb</code>.</p>
+            <!-- <tiro-magic-clipboard> is NOT auto-wired by the bridge (only
+                 <tiro-form-filler> is). It links to the form by id through `for`,
+                 and at Autofill time reads the SDC client and the questionnaire
+                 off that element — so the endpoint stays host-owned (Form1.vb's
+                 SdcEndpointAddress) and nothing is hardcoded in this page.
+                 Add dictation-endpoint="Endpoint/<id>" (a FHIR Endpoint reference,
+                 provider auto-selected from its identifier) plus an optional
+                 dictation-language to enable the voice tool in the toolbar. -->
+            <tiro-magic-clipboard for="form-filler"
+                                  placeholder="Paste the consultation notes here…">
+                <tiro-magic-clipboard-button>Autofill the form</tiro-magic-clipboard-button>
+            </tiro-magic-clipboard>
+            <p class="status" id="populate-status" role="status">Waiting for notes.</p>
+        </aside>
+        <tiro-form-filler id="form-filler"></tiro-form-filler>
+    </main>
+    <script>
+        // Optional status hooks. The clipboard fires these on itself (they don't
+        // reach the host — $populate is a page-side round-trip to the SDC server).
+        // addEventListener works before the custom element upgrades, so it's safe
+        // to wire here even though the SDK script is injected after the page parses.
+        (function () {
+            const clipboard = document.querySelector("tiro-magic-clipboard");
+            const status = document.getElementById("populate-status");
+
+            function show(text, kind) {
+                status.textContent = text;
+                if (kind) status.setAttribute("data-kind", kind);
+                else status.removeAttribute("data-kind");
+            }
+
+            clipboard.addEventListener("tiro-populate-start", () => show("Populating the form from the notes…"));
+
+            // event.detail.response is the populated QuestionnaireResponse the SDK just
+            // wrote into the form — answers the server filled carry a contained Provenance
+            // marking them AI-generated, which is what the form paints the sparkle on.
+            clipboard.addEventListener("tiro-populate-complete", () => {
+                show("Form populated from the notes. Review the answers before submitting.");
+            });
+
+            clipboard.addEventListener("tiro-populate-error", event => {
+                show("Autofill failed: " + event.detail.error.message, "error");
+            });
+        })();
+    </script>
 </body>
 </html>
