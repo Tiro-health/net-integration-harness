@@ -40,16 +40,23 @@
     <main>
         <aside class="clipboard-pane">
             <h2>Magic Clipboard</h2>
-            <p>Paste (or dictate) clinical notes, then hit <strong>Autofill the form</strong>: the clipboard runs SDC <code>$populate</code> over the notes and writes the answers into the form. Submitting still runs <code>$extract</code> host-side, in <code>Form1.vb</code>.</p>
+            <p>Paste clinical notes, or dictate them with the microphone, then hit <strong>Autofill the form</strong>: the clipboard runs SDC <code>$populate</code> over the notes and writes the answers into the form. Submitting still runs <code>$extract</code> host-side, in <code>Form1.vb</code>.</p>
             <!-- <tiro-magic-clipboard> is NOT auto-wired by the bridge (only
                  <tiro-form-filler> is). It links to the form by id through `for`,
                  and at Autofill time reads the SDC client and the questionnaire
                  off that element — so the endpoint stays host-owned (Form1.vb's
                  SdcEndpointAddress) and nothing is hardcoded in this page.
-                 Add dictation-endpoint="Endpoint/<id>" (a FHIR Endpoint reference,
-                 provider auto-selected from its identifier) plus an optional
-                 dictation-language to enable the voice tool in the toolbar. -->
+
+                 dictation-endpoint turns on the microphone in the editor toolbar.
+                 It's a FHIR Endpoint reference resolved through that same SDC
+                 client, and the provider comes from the resource's
+                 dictation-provider identifier — "Endpoint/corti" here, the demo
+                 Corti endpoint; swap in your own for your own provider. Recording
+                 needs no host code: the harness auto-grants microphone permission
+                 to pages on its virtual host (WebView2EmbeddedBrowser). Language
+                 follows the form unless dictation-language overrides it. -->
             <tiro-magic-clipboard for="form-filler"
+                                  dictation-endpoint="Endpoint/corti"
                                   placeholder="Paste the consultation notes here…">
                 <tiro-magic-clipboard-button>Autofill the form</tiro-magic-clipboard-button>
             </tiro-magic-clipboard>
