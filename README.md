@@ -766,7 +766,7 @@ The page carries **no** `tiro-web-sdk` script tag — the harness injects the SD
 Unlike `<tiro-form-filler>`, the bridge does **not** wire it: it's page-owned, so adding it is an `index.html` change and nothing else. Drop it next to the form filler and link the two by id:
 
 ```html
-<tiro-magic-clipboard for="form-filler" placeholder="Paste the consultation notes here…">
+<tiro-magic-clipboard for="form-filler" dictation-endpoint="Endpoint/corti">
     <tiro-magic-clipboard-button>Autofill the form</tiro-magic-clipboard-button>
 </tiro-magic-clipboard>
 
@@ -776,10 +776,11 @@ Unlike `<tiro-form-filler>`, the bridge does **not** wire it: it's page-owned, s
 - **A submit trigger is required.** The element renders the editor only; the pane has no button of its own. Slot in a `<tiro-magic-clipboard-button>` (or any `<button type="submit">`) — without one there is no way to start a population.
 - **No endpoint to configure.** At Autofill time the element reads the SDC client and the questionnaire off the linked form filler, so it always targets the server the host configured (`SdcEndpointAddress`) for the form actually on screen. Don't hardcode an endpoint in the page — same rule as everywhere else.
 - **`<tiro-magic-clipboard-button>` ships no styles** (no shadow DOM) and reflects the lifecycle on `data-state` (`idle` → `pending` → `success`/`error`, auto-resetting after 2s, or set `reset-delay="0"`). Style it with attribute selectors; see the Extract sample's page for a worked set.
-- **Optional attributes**: `dictation-endpoint` (a FHIR `Endpoint` relative reference, e.g. `Endpoint/dmsk` — enables the voice tool, provider auto-selected from the endpoint's identifier), `dictation-language` (e.g. `nl-BE`), `placeholder`, `hide-toolbar`, `initial-files` (JSON `DocumentReference`s to preload).
+- **Dictation is one attribute.** `dictation-endpoint` puts a microphone in the editor toolbar: give it a FHIR `Endpoint` relative reference (`Endpoint/corti` on Tiro's SDC servers), which the element resolves through the linked form filler's SDC client and whose `dictation-provider` identifier selects the provider (Corti, DMSK, Squire). **No host code is needed** — `WebView2EmbeddedBrowser` auto-grants the microphone permission for pages served from the harness's virtual host, so recording just works in the WinForms shell (any other origin falls through to WebView2's default-deny). Dictated text lands in the notes and is populated from like anything else.
+- **Other optional attributes**: `dictation-language` (e.g. `nl-BE`; without it dictation follows the form's language), `placeholder`, `hide-toolbar`, `initial-files` (JSON `DocumentReference`s to preload).
 - **Events** fire on the element, not on `document`: `tiro-populate-start`, `tiro-populate-complete` (`detail.response`), `tiro-populate-error` (`detail.error`), and `tiro-clipboard-change` (`detail.value`). `$populate` is a page-side round-trip to the SDC server, so none of this reaches the host.
 
-Worked example: `samples/Tiro.Health.FormFiller.WebView2.ExtractSample/WebContent/index.html` — the clipboard in the left pane, the form on the right, a status line driven by those events, and the host side (`Form1.vb`) untouched apart from a comment.
+Worked example: `samples/Tiro.Health.FormFiller.WebView2.ExtractSample/WebContent/index.html` — the clipboard in the left pane (dictation on), the form on the right, a status line driven by those events, and the host side (`Form1.vb`) untouched apart from a comment.
 
 ### Frontend version compatibility
 
