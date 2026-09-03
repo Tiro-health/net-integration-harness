@@ -591,7 +591,7 @@ FHIR-version-agnostic implementation of the SMART Web Messaging protocol.
 
 - **Targets**: `netstandard2.0`, `net48`
 - **Key type**: `SmartMessageHandlerBase<TResource, TQuestionnaireResponse, TOperationOutcome>` — abstract generic handler covering protocol routing, request/response correlation via `Func<SmartMessageResponse, Task>` listeners, and `CancellationToken` plumbing across the entire async surface
-- **Handles**: `status.handshake`, `sdc.configure`, `sdc.configureContext`, `sdc.displayQuestionnaire`, `form.submitted`, `ui.form.requestSubmit`, `ui.form.persist`, `ui.done`, `ui.form.dirtyChanged`
+- **Handles**: `status.handshake`, `sdc.configure`, `sdc.configureContext`, `sdc.displayQuestionnaire`, `form.submitted`, `ui.form.requestSubmit`, `ui.form.insertText`, `ui.form.persist`, `ui.done`, `ui.form.dirtyChanged`
 - **Validation**: validates inbound `form.submitted` payloads via `Validator.ValidateObject` so subscribers never see null `Response`/`Outcome`
 
 ### `Tiro.Health.SmartWebMessaging.Fhir.R5` / `Tiro.Health.SmartWebMessaging.Fhir.R4`
@@ -617,6 +617,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
+  - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's data, resolved per click; see [Host items in the form's right-click menu](#host-items-in-the-forms-right-click-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
@@ -706,7 +707,7 @@ Drain `_pending` on app exit (`Await Task.WhenAll(_pending)` with a timeout) so 
 WinForms demos.
 
 - **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
-- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows its narrative (`Composition.Text.Div`) in a `MessageBox`. Falls back to a Bundle summary if the questionnaire extracts non-Composition resources (e.g. definition-based `Observation`s). Its `WebContent/index.html` also shows the **Magic Clipboard** — a `<tiro-magic-clipboard>` pane beside the form that autofills it from pasted clinical notes via SDC `$populate`, with no host-side wiring at all. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard).
+- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows its narrative (`Composition.Text.Div`) in a `MessageBox`. Falls back to a Bundle summary if the questionnaire extracts non-Composition resources (e.g. definition-based `Observation`s). Its `WebContent/index.html` also shows the **Magic Clipboard** — a `<tiro-magic-clipboard>` pane beside the form that autofills it from pasted clinical notes via SDC `$populate`, with no host-side wiring at all. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard). Alongside it, three **snippet buttons** in the WinForms shell demonstrate the host-side counterpart — `InsertTextAsync` typing a labelled phrase into whichever field holds the caret. See [Typing host text into the focused field](#typing-host-text-into-the-focused-field). `Form1_Load` also adds two **right-click menu items** (`ContextMenuItems`) that copy host data to the clipboard for the clinician to paste with Ctrl+V — see [Host items in the form's right-click menu](#host-items-in-the-forms-right-click-menu).
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
   - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
@@ -754,7 +755,7 @@ Reference for integrators customizing their `index.html`. The auto-injected brid
 - **`<tiro-form-filler>`** (from the auto-injected `tiro-web-sdk`) — auto-wired by the bridge: questionnaires arrive via the `questionnaire` attribute, user submissions come back via the `tiro-submit` event, and the bridge takes care of marshalling them onto the protocol.
 - **`<tiro-magic-clipboard>`** (same bundle) — optional AI autofill pane, *not* wired by the bridge; the page owns it. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard).
 - **`window.tiro.cancel()`** — call from a Cancel button to send `ui.done` to the host.
-- **`document` `CustomEvent`s** for status hooks: `tiro-connected`, `tiro-disconnected`, `tiro-submitted`, `tiro-submit-error`, `tiro-cancelled`, plus `tiro-sdk-error`/`tiro-sdk-collision` for SDK-loading problems. Listen if you want a status bar; ignore if you don't.
+- **`document` `CustomEvent`s** for status hooks: `tiro-connected`, `tiro-disconnected`, `tiro-submitted`, `tiro-submit-error`, `tiro-cancelled`, `tiro-text-inserted` (`detail.text`, `detail.inserted`), plus `tiro-sdk-error`/`tiro-sdk-collision` for SDK-loading problems. Listen if you want a status bar; ignore if you don't.
 - **`window.SmartWebMessaging.{sendRequest, sendEvent, on}`** — lower-level API for advanced flows that don't fit the auto-wired form-filler model.
 
 The page carries **no** `tiro-web-sdk` script tag — the harness injects the SDK itself (next section).
@@ -781,6 +782,129 @@ Unlike `<tiro-form-filler>`, the bridge does **not** wire it: it's page-owned, s
 - **Events** fire on the element, not on `document`: `tiro-populate-start`, `tiro-populate-complete` (`detail.response`), `tiro-populate-error` (`detail.error`), and `tiro-clipboard-change` (`detail.value`). `$populate` is a page-side round-trip to the SDC server, so none of this reaches the host.
 
 Worked example: `samples/Tiro.Health.FormFiller.WebView2.ExtractSample/WebContent/index.html` — the clipboard in the left pane (dictation on), the form on the right, a status line driven by those events, and the host side (`Form1.vb`) untouched apart from a comment.
+
+### Typing host text into the focused field
+
+The Magic Clipboard lives in the page. When the labelled text lives in the **host** instead — a
+snippet list, a phrase menu, a departmental macro palette in the EHR's own UI —
+`InsertTextAsync` types it into the form field the user is standing in:
+
+```vb
+' A snippet button in the shell. Its Tag carries the text; the label is the host's business.
+Private Async Sub SnippetButton_Click(sender As Object, e As EventArgs) _
+    Handles NormalExamButton.Click, NoAllergiesButton.Click
+
+    Dim snippet As String = TryCast(CType(sender, Button).Tag, String)
+    Dim inserted As Boolean = Await TiroFormViewer.InsertTextAsync(snippet)
+
+    SnippetStatusLabel.Text = If(inserted, "Inserted at the caret.", "Click in a text field first.")
+End Sub
+```
+
+- **The caret is the target.** There is no `linkId` parameter and no `QuestionnaireResponse` in
+  play: the text goes in at the caret through the input events a keystroke produces, so the
+  renderer stays the only writer of answers and validation, dirty-state, provenance and the
+  form's own undo all keep working. The host needs to know nothing about the questionnaire's
+  structure — which also means it cannot choose the question. If you need to fill a *named*
+  answer, that's a different job: prefill it with `SetContextAsync(initialResponse:=...)` at
+  launch, or let the Magic Clipboard's `$populate` decide where prose belongs.
+- **The bool is the whole point.** `False` means there was nothing to type into — the user
+  hasn't clicked into a field yet, or is standing in one that doesn't take free text (a
+  checkbox, a date picker). Surface it; a snippet button that silently does nothing reads as
+  broken. `Nothing`/`""` also returns `False`, without sending anything.
+- **Focus is handled.** Clicking a `Button` takes keyboard focus off the WebView2.
+  `InsertTextAsync` gives it back to the browser control, and the bridge re-focuses the field
+  the caret was in (tracking it across shadow boundaries, where the SDK's fields live), so the
+  text lands there and the next keystroke continues after it. That's why this works from a
+  plain focusable `Button`, not just from a `ToolStrip`.
+- **It replaces the selection**, like typing does. Insert a trailing space in the snippet if you
+  want the next word separated. Newlines only survive in a field that accepts them.
+- **Requires a displayed form.** Before `SetContextAsync` there are no fields, so the call
+  throws `InvalidOperationException` rather than blocking on a handshake that can't arrive —
+  same guard as `SendFormRequestSubmitAsync`.
+- Pages can follow along: the bridge fires a `tiro-text-inserted` `CustomEvent` on `document`
+  with `detail.text` and `detail.inserted`.
+
+Under the hood this is one protocol message, `ui.form.insertText`, with a
+`FormInsertText` payload (`{ text }`) — `MessageHandler.SendFormInsertTextAsync` if you want to
+send it yourself. The page answers with `inserted` on the ack, which is what the `Boolean`
+carries back. Insertion goes through `document.execCommand("insertText")`, deliberately: it is
+the only insertion Chromium routes through `beforeinput`/`input` as if it had been typed, and
+therefore the only one a React-controlled field keeps. Writing `.value` looks right until the
+next render reverts it, with the text never reaching the `QuestionnaireResponse`.
+
+Worked example: the Extract sample's three snippet buttons (`Form1.vb` →
+`SnippetButton_Click`), beside the same form its in-page Magic Clipboard autofills.
+
+### Host items in the form's right-click menu
+
+The clipboard route: the EHR offers labelled entries in the form's context menu, each one
+copying host data, and the clinician pastes it where they want with **Ctrl+V**. Pasting itself
+needs nothing from the harness — WebView2 handles Ctrl+V as real typed input, so the answer
+reaches the `QuestionnaireResponse` exactly as if it had been typed. What the harness supplies
+is the menu:
+
+```vb
+' In Form_Load, or wherever the EHR knows its data. Read at menu time, not now.
+TiroFormViewer.ContextMenuItems.Add(
+    TiroContextMenuItem.CopyToClipboard("Copy patient name", Function() patient.Name(0).Text))
+
+Dim copyConclusion As TiroContextMenuItem =
+    TiroContextMenuItem.CopyToClipboard("Copy conclusion", Function() currentConclusion)
+copyConclusion.IsVisible = Function(context) context.IsEditable   ' only over typeable fields
+TiroFormViewer.ContextMenuItems.Add(copyConclusion)
+```
+
+Right-click inside the form and the items appear below WebView2's own entries, separated from
+them.
+
+**Configuring from the EHR.** `ContextMenuItems` is a plain `IList` you fill in code, and the
+harness reads it *on every right-click* — so nothing is baked in at startup:
+
+- Build it from the EHR's own configuration (a settings table, a per-department list, a user's
+  saved phrases) with an ordinary loop; the harness never parses config of its own.
+- Add, remove or relabel items whenever you like — when the patient changes, when a report
+  reaches a state that makes a snippet meaningful.
+- The **text** is resolved at click time too. `CopyToClipboard` takes a `Func(Of String)`, not a
+  string, so a lambda closing over the EHR's current state always copies what's current — no
+  refresh step, no stale conclusion.
+- `IsVisible` decides per click, from a `TiroContextMenuContext` carrying `IsEditable` (was the
+  click in something typeable?) and `SelectionText` (what the user had selected — useful for a
+  "look up this term" item, and clinical content, so treat it accordingly).
+
+For anything other than copying, construct the item directly: `New TiroContextMenuItem(label,
+action)`, where the action is `Action` or `Action(Of TiroContextMenuContext)`. It could equally
+call [`InsertTextAsync`](#typing-host-text-into-the-focused-field) and put the text straight in
+at the caret, skipping the clipboard and the paste.
+
+**Details worth knowing:**
+
+- **The menu is Chromium's, extended — not a `ContextMenuStrip`.** A WinForms menu can't appear
+  over web content at all, and suppressing the browser's menu to show one would move focus out
+  of the WebView2 and lose the caret the user just right-clicked into. Extending the native menu
+  keeps focus in the page, which is exactly what makes the following Ctrl+V land where they
+  expect.
+- **The label is the item's identity.** WebView2 caps the number of live custom menu items per
+  environment and asks that they be reused, so the harness creates one per label and reuses it
+  across menus. Two items sharing a label collapse into one.
+- **`CopyToClipboard` handles the awkward parts**: it skips a null/empty result (the clipboard
+  API rejects it, and clearing the clinician's clipboard is worse than doing nothing), and goes
+  through the retrying `Clipboard.SetDataObject(value, copy:=True, retryTimes:=5, retryDelay:=50)`
+  because the clipboard is a machine-wide single-owner resource another process can be holding.
+  `copy:=True` means a copy made just before the form closes still pastes afterwards.
+- **What you copy leaves the application.** The Windows clipboard is readable by every process
+  on the machine, and clipboard managers, Remote Desktop redirection and Windows Cloud Clipboard
+  may persist or sync it. Unremarkable for a name the clinician is about to paste; worth a
+  deliberate decision before wiring a whole report to it.
+- **A throwing item costs itself, nothing else.** Actions and `IsVisible` tests run inside the
+  browser's menu dispatch, where an escaping exception would land unhandled on the message pump.
+  They're captured to telemetry instead — and deliberately *without* the label or the copied
+  value, both of which are host-authored and can carry patient data.
+- Needs an `IEmbeddedBrowser` implementing `IContextMenuCapableBrowser` (the WebView2 one does).
+  With any other browser the items are simply never shown.
+
+Worked example: the Extract sample's two items in `Form1_Load` — one always shown, one filtered
+to editable targets.
 
 ### Frontend version compatibility
 

@@ -362,6 +362,20 @@ namespace Tiro.Health.SmartWebMessaging
             return SendMessageAsync("ui.form.requestSubmit", payload, responseHandler, cancellationToken);
         }
 
+        /// <summary>
+        /// Sends <c>ui.form.insertText</c>: types <paramref name="text"/> into whichever form
+        /// field currently holds the caret, as if the user had typed it. Carries no target —
+        /// see <see cref="FormInsertText"/>. The page answers with <c>inserted</c> on the ack
+        /// payload's extension fields, false when nothing was focused to insert into.
+        /// </summary>
+        public Task SendFormInsertTextAsync(
+            string text,
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
+        {
+            return SendMessageAsync("ui.form.insertText", new FormInsertText(text), responseHandler, cancellationToken);
+        }
+
         [Obsolete("ui.form.persist is a no-op in every bridge. Use SendFormRequestSubmitAsync(intent: \"save-draft\") to persist a draft through the form's submit pipeline.")]
         public Task SendFormPersistAsync(
             Func<SmartMessageResponse, Task> responseHandler = null,

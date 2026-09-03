@@ -91,6 +91,16 @@
             clipboard.addEventListener("tiro-populate-error", event => {
                 show("Autofill failed: " + event.detail.error.message, "error");
             });
+
+            // The host's snippet buttons (Form1.vb) type into whichever field holds the
+            // caret via ui.form.insertText. The bridge reports each one on `document`, so a
+            // page can follow along without the host telling it anything.
+            document.addEventListener("tiro-text-inserted", event => {
+                show(event.detail.inserted
+                    ? "Snippet inserted at the caret."
+                    : "No field was focused — click into one, then pick a snippet.",
+                    event.detail.inserted ? null : "error");
+            });
         })();
     </script>
 </body>

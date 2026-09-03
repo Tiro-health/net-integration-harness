@@ -40,5 +40,9 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         /// <summary>Awaits with the tests' standard 5s deadline.</summary>
         public static Task Within5s(this Task task)
             => task.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+        /// <summary>Awaits a result-bearing task with the tests' standard 5s deadline.</summary>
+        public static Task<T> Within5s<T>(this Task<T> task)
+            => task.WaitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
     }
 }

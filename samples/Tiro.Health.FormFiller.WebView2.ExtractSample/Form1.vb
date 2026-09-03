@@ -4,6 +4,7 @@ Imports Tiro.Health.SmartWebMessaging.Events
 Imports Tiro.Health.SmartWebMessaging.Message.Payload
 Imports Tiro.Health.FormSdk.Client
 Imports Tiro.Health.FormSdk.Client.Fhir.R5
+Imports Tiro.Health.FormFiller.WebView2
 
 Public Class Form1
 
@@ -56,6 +57,24 @@ Public Class Form1
             }
         }
 
+        ' The right-click menu, host-side. The harness appends these to the embedded browser's
+        ' own context menu; picking one puts text on the Windows clipboard and the clinician
+        ' pastes it into whichever field they want with Ctrl+V. A real EHR would build this list
+        ' from its own configuration — it's read fresh on every right-click, so items can be
+        ' added, removed or relabelled per patient, and their text is resolved at click time
+        ' (these close over `patient` and `conclusion`, not over a copy made now).
+        Dim conclusion As String = "No evidence of atrial fibrillation on today's tracing."
+
+        TiroFormViewer.ContextMenuItems.Add(
+            TiroContextMenuItem.CopyToClipboard("Copy patient name", Function() patient.Name(0).Text))
+
+        ' IsVisible filters per click: offering a conclusion over a read-only score or a
+        ' checkbox is a dead end, so this one only shows over something typeable.
+        Dim copyConclusion As TiroContextMenuItem =
+            TiroContextMenuItem.CopyToClipboard("Copy conclusion", Function() conclusion)
+        copyConclusion.IsVisible = Function(context) context.IsEditable
+        TiroFormViewer.ContextMenuItems.Add(copyConclusion)
+
         ' Showcases passing an arbitrary named resource as launch context, alongside the
         ' well-known patient/encounter/author shorthand — here a Specimen, via the
         ' launchContext parameter. Purely illustrative: this sample form doesn't reference
@@ -76,6 +95,32 @@ Public Class Form1
 
     Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click
         Await TiroFormViewer.SendFormRequestSubmitAsync()
+    End Sub
+
+    ' The labelled clipboard, host-side: three snippets the shell offers, each carrying its
+    ' text in the button's Tag (set in the designer). InsertTextAsync types the text into
+    ' whichever form field holds the caret, so nothing here knows a thing about the
+    ' questionnaire — no linkIds, no QuestionnaireResponse. The form stays the only writer of
+    ' answers, which is what keeps validation, dirty-state and its own undo intact.
+    '
+    ' Clicking a Button takes keyboard focus off the WebView2. InsertTextAsync hands it back
+    ' and the page re-focuses the field the caret was in, so the snippet lands there and the
+    ' clinician's next keystroke continues after it — which is also why this works from a
+    ' plain focusable Button and not just from a ToolStrip.
+    Private Async Sub SnippetButton_Click(sender As Object, e As EventArgs) _
+        Handles NormalExamButton.Click, NoAllergiesButton.Click, ConclusionButton.Click
+
+        Dim snippet As String = TryCast(CType(sender, Button).Tag, String)
+        If String.IsNullOrEmpty(snippet) Then Return
+
+        ' False means there was nothing to type into: the clinician hasn't clicked into a
+        ' field, or is standing in one that doesn't take free text (a checkbox, a date). Worth
+        ' saying out loud — otherwise the button looks broken.
+        Dim inserted As Boolean = Await TiroFormViewer.InsertTextAsync(snippet)
+
+        SnippetStatusLabel.Text = If(inserted,
+                                     "Inserted at the caret.",
+                                     "Click in a text field first, then pick a snippet.")
     End Sub
 
     Private Async Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))

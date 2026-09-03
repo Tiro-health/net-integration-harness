@@ -87,6 +87,17 @@ immediately rather than after the 30s retry window.
 on, and `client.version` (the element's static version, `null` when absent), which it records
 for diagnostics only.
 
+`insert-text.test.mjs` pins `ui.form.insertText` — the host typing a snippet into the focused
+field. Two things there are invisible to the type-check and to any static reading. First,
+insertion must go through `document.execCommand("insertText")`: it is the only insertion
+Chromium routes through `beforeinput`/`input` as if typed, and therefore the only one a
+React-controlled field keeps — assigning `.value` passes every check and then loses the text on
+the next render. Second, focus: the host-side click that triggers an insert takes OS focus out
+of the WebView2, so the tests drive `focusin`/`focusout` (with `composedPath`, as a shadow
+boundary retargets them) and assert the tracked field is re-focused before the insert. Also
+covers which fields are legitimate targets, the `inserted` outcome riding back on the ack, and
+the `.value`-splice fallback writing through the prototype's setter.
+
 `launch-context.test.mjs` is the regression suite for **GH-48**: launch context was
 dropped whenever the host's `SdcEndpointAddress` differed from the tiro-web-sdk's
 built-in default, so `$populate` went out with no `context` parameters and every
