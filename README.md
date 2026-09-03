@@ -618,7 +618,6 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's data, resolved per click; see [Host items in the form's right-click menu](#host-items-in-the-forms-right-click-menu)
-  - Multi-format clipboard support via `TiroClipboard` / `TiroClipboardContent` — HTML (CF_HTML envelope built for you, byte offsets and all), plain text and RTF on the clipboard together, so the form's rich-text answers, a plain field and Word each take what they understand; see [Copying formatted content](#copying-formatted-content)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
@@ -882,12 +881,18 @@ harness reads it *on every right-click* — so nothing is baked in at startup:
   click in something typeable?) and `SelectionText` (what the user had selected — useful for a
   "look up this term" item, and clinical content, so treat it accordingly).
 
+`CopyToClipboard` carries **plain text** — which is what a form answer stores anyway. There is
+no rich-text flavour: HTML on the Windows clipboard needs a CF_HTML envelope with byte offsets,
+and RTF never reaches the page at all (Chromium doesn't read that flavour), so neither earns its
+place here. If you need formatted content in a field, the route is a converter on your side plus
+the insert path below, not the clipboard.
+
 **Items that paste for you.** For anything other than copying, construct the item directly:
 `New TiroContextMenuItem(label, action)`, where the action is `Action`,
 `Action(Of TiroContextMenuContext)`, or a `Func(Of TiroContextMenuContext, Task)` for async
-work. That last one is how a snippet skips the clipboard entirely — right-click, "Paste
-conclusion", and [`InsertTextAsync`](#typing-host-text-into-the-focused-field) puts it at the
-caret:
+work. That last one skips the clipboard entirely — right-click, "Paste conclusion", and
+[`InsertTextAsync`](#typing-host-text-into-the-focused-field) puts it at the caret, leaving
+whatever the clinician had copied untouched:
 
 ```vb
 Dim pasteConclusion As New TiroContextMenuItem(
@@ -928,64 +933,8 @@ paste for text that belongs in this form.
 - Needs an `IEmbeddedBrowser` implementing `IContextMenuCapableBrowser` (the WebView2 one does).
   With any other browser the items are simply never shown.
 
-#### Copying formatted content
-
-The form's rich-text answers store HTML (`{html, text}`), and the embedded editor accepts
-`text/html` on paste — so HTML is the format that carries formatting into a form field, not
-RTF. Chromium never reads the Windows `CF_RTF` flavour.
-
-`CopyRichTextToClipboard` puts every format you give it on the clipboard at once, and each
-paste target takes the richest one it understands:
-
-| flavour | who reads it |
-|---|---|
-| `Html` | the form's rich-text answers (via `text/html`) |
-| `PlainText` | plain-string answers, `InsertTextAsync`, Notepad |
-| `Rtf` | Word, Outlook — full fidelity outside the form |
-
-```vb
-TiroFormViewer.ContextMenuItems.Add(
-    TiroContextMenuItem.CopyRichTextToClipboard(
-        "Copy conclusion",
-        Function() New TiroClipboardContent With {
-            .Html = RtfPipe.Rtf.ToHtml(conclusionRtf),                        ' your converter
-            .PlainText = New RichTextBox() With {.Rtf = conclusionRtf}.Text,  ' better than any tag strip
-            .Rtf = conclusionRtf                                              ' free; for Word
-        }))
-```
-
-- **The harness converts nothing.** RTF→HTML needs a real library and a dependency the harness
-  won't take on your behalf ([RtfPipe](https://github.com/erdomke/RtfPipe) is the usual pick on
-  `net48`). What the harness owns is the part that is shared and easy to get wrong: the CF_HTML
-  envelope and putting several flavours on the clipboard atomically.
-- **Use a converter that emits semantic tags or inline styles.** A clipboard HTML flavour is a
-  *fragment*, so a converter that emits CSS classes plus a stylesheet loses the stylesheet and
-  every rule with it — underline, colour and fonts silently vanish while bold and italic
-  survive, which is a confusing way to find out. (macOS `textutil` has exactly this problem;
-  RtfPipe does not.)
-- **`Html` is a fragment**, body-level markup with no `<html>` or `<head>` wrapper.
-  `TiroClipboard.ToCfHtml` adds the `Version:0.9` header, its four offsets and the marker
-  comments. Those offsets are **byte** offsets into the UTF-8 encoding: with ASCII-only content
-  bytes and characters coincide, so a character-counting implementation looks correct until the
-  first `°C` or `µmol` truncates the fragment mid-markup. It's public and idempotent if you want
-  to frame HTML for a clipboard of your own.
-- **Supply `PlainText`.** Without it the harness derives one by a crude tag strip, which is
-  worse than what you can produce — and some targets read nothing else, so a copy that omits it
-  can paste as nothing at all.
-- **What survives the paste is bounded by the editor**, not by your HTML: constructs whose
-  Lexical nodes aren't registered in that field (tables, perhaps lists) flatten to paragraphs
-  and text. Worth testing before investing in conversion fidelity you can't keep — paste a
-  fragment containing lists, a table and inline colour, and see where the line falls.
-- Same clipboard caveat as everywhere: what you copy is readable by every process on the
-  machine, and clipboard managers, RDP redirection and Cloud Clipboard may persist or sync it.
-
-If you'd rather not involve the clipboard at all,
-[`InsertTextAsync`](#typing-host-text-into-the-focused-field) puts text straight at the caret —
-plain text only, but it never touches what the clinician had copied.
-
 Worked example: the Extract sample's four items in `Form1_Load` — two **Paste ...** snippets
-filtered to editable targets, **Copy patient name** as plain text, and **Copy conclusion
-(formatted)** carrying HTML plus a plain-text fallback.
+filtered to editable targets, and two **Add ... to clipboard** items shown everywhere.
 
 ### Frontend version compatibility
 

@@ -85,31 +85,17 @@ Public Class Form1
         pasteNoAllergies.IsVisible = Function(context) context.IsEditable
         TiroFormViewer.ContextMenuItems.Add(pasteNoAllergies)
 
-        ' Clipboard items, for content the clinician may also want outside this form: they copy,
-        ' and the user pastes with Ctrl+V wherever they like — here, or in another application.
-        ' Always shown, since a copy makes sense whatever was clicked.
+        ' Clipboard items: each copies a configured value, and the clinician then pastes it
+        ' with Ctrl+V into whichever field they want — exactly like any other copy. Plain text,
+        ' which is all a form answer stores. Shown everywhere, since a copy makes sense whatever
+        ' was right-clicked.
         TiroFormViewer.ContextMenuItems.Add(
-            TiroContextMenuItem.CopyToClipboard("Copy patient name", Function() patient.Name(0).Text))
+            TiroContextMenuItem.CopyToClipboard(
+                "Add patient name to clipboard", Function() patient.Name(0).Text))
 
-        ' Formatted content goes on the clipboard in several formats at once, and each paste
-        ' target takes the richest one it understands: the form's rich-text answers read the
-        ' HTML, a plain field or Notepad takes the text, Word and Outlook prefer the RTF.
-        '
-        ' A real EHR holds RTF and converts it here — RtfPipe's Rtf.ToHtml(rtf) or similar,
-        ' at click time so the conversion follows the EHR's current state. Use a converter
-        ' that emits semantic tags or inline styles: a clipboard HTML flavour is a fragment,
-        ' so class-based styling loses its stylesheet and every rule with it. Supply PlainText
-        ' too where you can — from RTF, New RichTextBox() With {.Rtf = rtf}.Text beats any
-        ' tag strip the harness could do for you.
         TiroFormViewer.ContextMenuItems.Add(
-            TiroContextMenuItem.CopyRichTextToClipboard(
-                "Copy conclusion (formatted)",
-                Function() New TiroClipboardContent With {
-                    .Html = "<p><b>Assessment.</b> Findings consistent with the clinical " &
-                            "picture; <i>no further imaging indicated</i>.</p>",
-                    .PlainText = "Assessment. Findings consistent with the clinical " &
-                                 "picture; no further imaging indicated."
-                }))
+            TiroContextMenuItem.CopyToClipboard(
+                "Add conclusion to clipboard", Function() conclusion))
 
         ' Showcases passing an arbitrary named resource as launch context, alongside the
         ' well-known patient/encounter/author shorthand — here a Specimen, via the
