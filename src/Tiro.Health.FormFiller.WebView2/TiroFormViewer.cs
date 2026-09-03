@@ -290,26 +290,6 @@ namespace Tiro.Health.FormFiller.WebView2
             }
         }
 
-        /// <summary>Fast-path guard for <see cref="InsertTextAsync"/>.</summary>
-        private void GuardCanInsertText()
-        {
-            switch (State)
-            {
-                case TiroFormViewerState.Disposed:
-                    throw new ObjectDisposedException(GetType().Name);
-                case TiroFormViewerState.Submitted:
-                    throw new InvalidOperationException("The form has already been submitted.");
-                case TiroFormViewerState.Initializing:
-                case TiroFormViewerState.Ready:
-                    // Same reasoning as GuardCanSendFormRequest: no questionnaire is displayed,
-                    // so there are no fields to type into, and waiting would block on a
-                    // handshake that can't arrive until SetContextAsync navigates.
-                    throw new InvalidOperationException(
-                        "Cannot insert text before a form is displayed. Call SetContextAsync first.");
-                    // Only ContextSet is valid.
-            }
-        }
-
         // Cancelled in Dispose; linked into every async operation so in-flight waits
         // observe control teardown and fail fast with OperationCanceledException.
         private readonly CancellationTokenSource _lifetimeCts = new CancellationTokenSource();
@@ -1093,133 +1073,6 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
-        /// Types <paramref name="text"/> into the form field that currently holds the caret,
-        /// at the caret, as if the user had typed it — the host-side half of a snippet menu,
-        /// a labelled clipboard, or a macro list living in the shell's own UI.
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// No <c>QuestionnaireResponse</c> is touched: the text goes in through the input
-        /// events a keystroke produces, so the renderer stays the only writer of answers and
-        /// validation, dirty-state, provenance and the form's own undo keep working. That also
-        /// means the caret is the only target — there is no linkId to address, and the host
-        /// needs no knowledge of the questionnaire's structure.
-        /// </para>
-        /// <para>
-        /// Focus is handed back to the embedded browser before the text is sent, because the
-        /// click that got here (a button, a menu item) took it away; without that the text
-        /// would land correctly but the user's next keystroke would go to the button.
-        /// </para>
-        /// </remarks>
-        /// <param name="text">Text to insert. Empty or null is a no-op that returns false.</param>
-        /// <param name="cancellationToken">Cancels the wait for the page's acknowledgement.</param>
-        /// <returns>
-        /// true when the text landed in a field. false when there was nothing to type into —
-        /// the user hasn't clicked into a field yet, or is standing in one that doesn't accept
-        /// free text (a checkbox, a date picker). Worth surfacing: "click in a field first" is
-        /// the only thing that makes the button work. A page-side failure also reads as false,
-        /// after raising <see cref="PageError"/>.
-        /// </returns>
-        public async Task<bool> InsertTextAsync(string text, CancellationToken cancellationToken = default)
-        {
-            GuardCanInsertText();
-            if (string.IsNullOrEmpty(text)) return false;
-
-            FocusBrowser();
-
-            var span = _session?.StartTransaction("ui.form.insertText", "swm.send");
-            span?.SetTag("messageType", "ui.form.insertText");
-            // Length, never the text. The moment a real integration uses this, the payload is
-            // clinical content — same reason OnBrowserMessageReceived doesn't attach messages.
-            span?.SetTag("text_length", text.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-            var inserted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
-            {
-                linkedCts.CancelAfter(HandshakeTimeoutMs);
-                try
-                {
-                    await _initializationTask.WaitAsync(linkedCts.Token);
-                    await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
-                        timeoutMessage: "Handshake timeout during text insertion.");
-
-                    var wrappedHandler = WrapForRoundTrip("ui.form.insertText", span, cancellationToken,
-                        originalHandler: response =>
-                        {
-                            inserted.TrySetResult(ReadInsertedFlag(response));
-                            return Task.CompletedTask;
-                        });
-
-                    await _smartWebMessageHandler.SendFormInsertTextAsync(text, wrappedHandler, linkedCts.Token);
-
-                    // Unlike the other sends, this one awaits the ack: the page reports whether
-                    // there was a field to type into on the response payload, and that answer is
-                    // the whole point of the bool. An error ack (the page threw) reaches the same
-                    // handler — WrapForRoundTrip raises PageError first, then hands it on, and it
-                    // reads as false, so a rejection answers rather than hanging to the deadline.
-                    return await inserted.Task.WaitAsync(linkedCts.Token);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
-                {
-                    span?.Finish(TelemetrySpanStatus.Cancelled);
-                    throw;
-                }
-                catch (OperationCanceledException)
-                {
-                    // Neither the caller nor teardown cancelled, so this is the linked source's
-                    // own 30s deadline: the page never answered. Translated, like the handshake
-                    // wait does, so the caller sees a timeout rather than a cancellation it
-                    // didn't ask for.
-                    var timeout = new TimeoutException(
-                        "The page did not acknowledge ui.form.insertText within 30s.");
-                    span?.Finish(TelemetrySpanStatus.DeadlineExceeded);
-                    _telemetry.CaptureException(timeout);
-                    throw timeout;
-                }
-                catch (Exception ex)
-                {
-                    span?.Finish(ex);
-                    _telemetry.CaptureException(ex);
-                    throw;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Reads the bridge's <c>inserted</c> flag off an ack. Absent (an older bridge, or an
-        /// error payload) reads as false: "we can't show it landed" is the safe answer for a
-        /// caller deciding whether to prompt the user.
-        /// </summary>
-        private static bool ReadInsertedFlag(SmartMessageResponse response)
-        {
-            var extras = response?.Payload?.ExtraFields;
-            if (extras == null) return false;
-            return extras.TryGetValue("inserted", out var value)
-                && value.ValueKind == System.Text.Json.JsonValueKind.True;
-        }
-
-        /// <summary>
-        /// Puts keyboard focus back on the embedded browser, marshalling to the UI thread.
-        /// Best-effort: a viewer whose handle is gone, or that is being torn down under a
-        /// WinForms dispose race, must not fail the send that asked for the focus.
-        /// </summary>
-        private void FocusBrowser()
-        {
-            try
-            {
-                var control = _browser?.Control;
-                if (control == null || control.IsDisposed || !control.IsHandleCreated) return;
-                if (control.InvokeRequired)
-                    control.BeginInvoke((Action)(() => { if (!control.IsDisposed) control.Focus(); }));
-                else
-                    control.Focus();
-            }
-            catch (ObjectDisposedException) { /* lost the race with Dispose */ }
-            catch (InvalidOperationException) { /* handle went away between the check and the call */ }
-        }
-
-        /// <summary>
         /// Resolves <see cref="ContextMenuItems"/> for one right-click: applies each item's
         /// visibility test and reduces it to a label plus a guarded invocation. Runs on the UI
         /// thread, inside the browser's context-menu event, so it does no I/O and never throws
@@ -1255,7 +1108,7 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
-        /// Runs a host menu item's action. Failures are captured and swallowed: this is called
+        /// Runs a host menu item's action. Exceptions are captured and swallowed: this is called
         /// from the browser's own menu dispatch, where a throw would surface as an unhandled
         /// exception in a WinForms message-pump callback with no caller to report to. Nothing
         /// about the item — not the label, not the copied value — is added to telemetry: both
@@ -1263,33 +1116,16 @@ namespace Tiro.Health.FormFiller.WebView2
         /// clipboard payload that IS the conclusion), and the exception alone is enough to
         /// locate a broken handler.
         /// </summary>
-        /// <remarks>
-        /// An item that does async work (the natural shape for <see cref="InsertTextAsync"/>)
-        /// returns a task that finishes long after the menu is gone, so the returned task is
-        /// observed rather than dropped: without this, a faulted insert would be an unobserved
-        /// task exception with no route to telemetry at all.
-        /// </remarks>
         private void InvokeContextMenuItem(TiroContextMenuItem item, TiroContextMenuContext context)
         {
-            Task started;
             try
             {
-                started = item.Invoke(context);
+                item.Invoke(context);
             }
             catch (Exception ex)
             {
-                // Threw before returning a task — a synchronous item, or an async one that
-                // failed its argument checks.
                 _telemetry.CaptureException(ex);
-                return;
             }
-            if (started == null) return;
-
-            started.ContinueWith(
-                finished => _telemetry.CaptureException(finished.Exception),
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
         }
 
         /// <summary>

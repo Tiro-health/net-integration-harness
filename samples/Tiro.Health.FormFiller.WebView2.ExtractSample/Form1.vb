@@ -58,32 +58,13 @@ Public Class Form1
         }
 
         ' The right-click menu, host-side. The harness appends these to the embedded browser's
-        ' own context menu, so the click never leaves the page — the caret stays exactly where
-        ' the user right-clicked, which is what both kinds of item below depend on.
+        ' own context menu, below its native entries.
         '
         ' A real EHR would build this list from its own configuration: it's read fresh on every
-        ' right-click, and each item's text is resolved when it's picked (these close over
-        ' `patient` and the snippet strings rather than over a copy made now), so items can be
-        ' added, removed or relabelled per patient without touching the harness.
+        ' right-click, and each item's value is resolved when it's picked (these close over
+        ' `patient` and `conclusion` rather than over a copy made now), so items can be added,
+        ' removed or relabelled per patient without touching the harness.
         Dim conclusion As String = "Findings consistent with the clinical picture; no further imaging indicated."
-        Dim noAllergies As String = "No known drug allergies."
-
-        ' "Paste ..." items type their text straight into the field that was right-clicked, at
-        ' the caret, without going near the clipboard. IsVisible keeps them out of the menu
-        ' where there is nothing to type into — over a read-only score or a checkbox they would
-        ' be a dead end. The lambda hands back the InsertTextAsync task, which the harness
-        ' observes, so a failure is reported instead of lost in an async void.
-        Dim pasteConclusion As New TiroContextMenuItem(
-            "Paste conclusion",
-            Function(context) TiroFormViewer.InsertTextAsync(conclusion))
-        pasteConclusion.IsVisible = Function(context) context.IsEditable
-        TiroFormViewer.ContextMenuItems.Add(pasteConclusion)
-
-        Dim pasteNoAllergies As New TiroContextMenuItem(
-            "Paste ""no known drug allergies""",
-            Function(context) TiroFormViewer.InsertTextAsync(noAllergies))
-        pasteNoAllergies.IsVisible = Function(context) context.IsEditable
-        TiroFormViewer.ContextMenuItems.Add(pasteNoAllergies)
 
         ' Clipboard items: each copies a configured value, and the clinician then pastes it
         ' with Ctrl+V into whichever field they want — exactly like any other copy. Plain text,

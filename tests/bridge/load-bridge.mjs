@@ -73,28 +73,9 @@ export async function loadBridge(formFillers, {
     // (tiro-connected, tiro-submitted, tiro-submit-error, tiro-cancelled, ...).
     const documentEvents = [];
 
-    // document-level listeners the bridge installed, by type. The text-insertion
-    // section tracks focus through them, so tests need to drive focusin/focusout.
-    const documentListeners = new Map();
-
-    // document.execCommand("insertText", ...) calls, in order, and what it returns.
-    // Chromium's real one inserts; here the call itself is the observable — the bridge's
-    // job is to make it with the right text, on the right element, having focused it.
-    const execCommands = [];
-    let execCommandResult = true;
-
     const document = {
         readyState: "complete", // bootstrap() runs immediately rather than waiting on DOMContentLoaded
-        activeElement: null,
-        addEventListener(type, listener) {
-            const forType = documentListeners.get(type) || [];
-            forType.push(listener);
-            documentListeners.set(type, forType);
-        },
-        execCommand(name, showUi, value) {
-            execCommands.push({ name, showUi, value });
-            return execCommandResult;
-        },
+        addEventListener() {},
         dispatchEvent(event) { documentEvents.push(event); return true; },
         querySelectorAll(selector) {
             return selector === "tiro-form-filler" ? formFillers : [];
@@ -160,10 +141,6 @@ export async function loadBridge(formFillers, {
         CustomEvent: class CustomEvent {
             constructor(type, init) { this.type = type; this.detail = init?.detail; }
         },
-        // Dispatched by the insertion fallback (spliceValue) when execCommand refuses.
-        Event: class Event {
-            constructor(type, init) { this.type = type; this.bubbles = !!init?.bubbles; }
-        },
         // unref'd so the bridge's handshake retry / timeout timers can never keep the
         // test process alive after the assertions are done.
         setTimeout: (fn, ms, ...args) => {
@@ -203,25 +180,6 @@ export async function loadBridge(formFillers, {
         responses: () => outbound.filter(m => m.responseToMessageId),
         /** document CustomEvents of one type, newest last. */
         fired: type => documentEvents.filter(e => e.type === type),
-        /** document.execCommand calls the bridge made, newest last. */
-        execCommands,
-        /** Make the next document.execCommand refuse, as a field that rejects the insert does. */
-        failExecCommand: () => { execCommandResult = false; },
-        /**
-         * Simulate focus moving to `el`. Events crossing a shadow boundary are retargeted, so
-         * the bridge reads composedPath()[0] — modelled here rather than passing `el` as target.
-         */
-        focus: el => {
-            document.activeElement = el;
-            (documentListeners.get("focusin") || []).forEach(fn =>
-                fn({ target: el, composedPath: () => [el] }));
-        },
-        /** Simulate focus leaving `el` (a host-side menu click takes it out of the WebView2). */
-        blur: (el, activeAfter = null) => {
-            (documentListeners.get("focusout") || []).forEach(fn =>
-                fn({ target: el, composedPath: () => [el] }));
-            document.activeElement = activeAfter;
-        },
         /** Simulate a host -> page envelope arriving over the transport. */
         receive: message => {
             if (!hostMessageListener) throw new Error("no host transport installed (pass { host: true })");
