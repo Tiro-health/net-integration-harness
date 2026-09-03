@@ -1,4 +1,5 @@
 Imports System.IO
+Imports System.Threading.Tasks
 Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
 Imports Tiro.Health.SmartWebMessaging.Message.Payload
@@ -98,6 +99,32 @@ Public Class Form1
                 Function() ConvertRtfToHtml(ConclusionRtf),
                 Function() RtfToPlainText(ConclusionRtf)))
 
+        ' ONE-CLICK insertion. These skip the clipboard entirely: the content goes straight into
+        ' the field that was right-clicked, at the caret. IsVisible hides them where there is
+        ' nothing to type into, so they can't be picked over a checkbox or a read-only score.
+        '
+        ' InsertContentAsync returns what the page managed to do, which is the interesting part
+        ' of this experiment:
+        '   Inserted = False        nothing was focused
+        '   Mode = Text             plain text went in
+        '   Mode = Html             the formatting survived
+        '
+        ' Passing html is optional. The page offers it to the field first and falls back to the
+        ' plain text when the field won't take it — so Mode tells you what that field can
+        ' actually store, which no amount of conversion quality can change.
+        Dim insertPlain As New TiroContextMenuItem(
+            "Insert conclusion at cursor (plain)",
+            Function(context) ShowInsertResult(TiroFormViewer.InsertContentAsync(RtfToPlainText(ConclusionRtf))))
+        insertPlain.IsVisible = Function(context) context.IsEditable
+        TiroFormViewer.ContextMenuItems.Add(insertPlain)
+
+        Dim insertFormatted As New TiroContextMenuItem(
+            "Insert conclusion at cursor (formatted)",
+            Function(context) ShowInsertResult(TiroFormViewer.InsertContentAsync(
+                RtfToPlainText(ConclusionRtf), ConvertRtfToHtml(ConclusionRtf))))
+        insertFormatted.IsVisible = Function(context) context.IsEditable
+        TiroFormViewer.ContextMenuItems.Add(insertFormatted)
+
         ' Showcases passing an arbitrary named resource as launch context, alongside the
         ' well-known patient/encounter/author shorthand — here a Specimen, via the
         ' launchContext parameter. Purely illustrative: this sample form doesn't reference
@@ -115,6 +142,24 @@ Public Class Form1
                 New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
             })
     End Sub
+
+    ''' <summary>
+    ''' Awaits an insert and puts the outcome in the window title, so this experiment's result
+    ''' is visible without a debugger. A real integration would show nothing on success and
+    ''' "click in a field first" when nothing was focused.
+    ''' </summary>
+    Private Async Function ShowInsertResult(pending As Task(Of TextInsertResult)) As Task
+        Dim result As TextInsertResult = Await pending
+        Dim summary As String
+        If Not result.Inserted Then
+            summary = "nothing inserted — click in a text field first"
+        ElseIf result.KeptFormatting Then
+            summary = "inserted WITH formatting (mode=Html)"
+        Else
+            summary = "inserted as plain text (mode=Text) — the field would not take the HTML"
+        End If
+        Me.Text = "Extract sample — " & summary
+    End Function
 
     ''' <summary>
     ''' The conclusion as the EHR holds it: RTF. Real integrations get this from their own

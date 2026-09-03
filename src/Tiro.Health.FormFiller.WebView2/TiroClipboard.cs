@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Windows.Forms;
 
@@ -98,6 +99,13 @@ namespace Tiro.Health.FormFiller.WebView2
         /// are.
         /// </para>
         /// </remarks>
+        /// <summary>
+        /// Copies plain text, with the same privacy hints and ownership tracking as
+        /// <see cref="SetHtml"/>. Empty or null is a no-op.
+        /// </summary>
+        /// <returns>True when something was placed on the clipboard.</returns>
+        public static bool SetText(string text) => SetHtml(null, text);
+
         /// <returns>True when something was placed on the clipboard.</returns>
         public static bool SetHtml(string html, string plainText)
         {
@@ -111,8 +119,91 @@ namespace Tiro.Health.FormFiller.WebView2
             if (!string.IsNullOrEmpty(cfHtml)) data.SetData(DataFormats.Html, cfHtml);
             if (!string.IsNullOrEmpty(plainText)) data.SetData(DataFormats.UnicodeText, plainText);
 
+            AddPrivacyFormats(data);
+
             Clipboard.SetDataObject(data, copy: true, retryTimes: 5, retryDelay: 50);
+            // Remembered so ClearIfOurs can tell our own copy from one the clinician made
+            // afterwards, and clear only the former.
+            _lastCopiedText = string.IsNullOrEmpty(plainText) ? null : plainText;
             return true;
+        }
+
+        // The plain-text rendition of whatever this class last put on the clipboard, or null.
+        // Only ever compared, never shown, so it holds no more than the clipboard already does.
+        private static string _lastCopiedText;
+
+        /// <summary>
+        /// Marks the content as not to be kept: excluded from Windows clipboard history, from
+        /// Cloud Clipboard sync across the user's devices, and from clipboard-monitor tools that
+        /// honour the exclusion.
+        /// </summary>
+        /// <remarks>
+        /// This is the half of the privacy story that actually works, because it stops the data
+        /// being retained in the first place — unlike <see cref="ClearIfOurs"/>, which can only
+        /// tidy up afterwards and cannot recall a copy already synced.
+        /// <para>
+        /// The two DWORD formats want four raw bytes, so they go through a
+        /// <see cref="MemoryStream"/>: WinForms writes a stream's bytes to the clipboard
+        /// verbatim, where an <see cref="int"/> would be serialised as a .NET object and ignored.
+        /// Best-effort throughout — these formats are Windows 10 1809 and later, and an older
+        /// build simply carries three formats nothing reads.
+        /// </para>
+        /// </remarks>
+        private static void AddPrivacyFormats(DataObject data)
+        {
+            try
+            {
+                // Presence alone is the signal for this one.
+                data.SetData("ExcludeClipboardContentFromMonitorProcessing", new MemoryStream(new byte[4]));
+                // DWORD 0 = "no".
+                data.SetData("CanIncludeInClipboardHistory", new MemoryStream(new byte[4]));
+                data.SetData("CanUploadToCloudClipboard", new MemoryStream(new byte[4]));
+            }
+            catch (Exception)
+            {
+                // A clipboard copy must not fail because a privacy hint could not be attached.
+            }
+        }
+
+        /// <summary>
+        /// Clears the clipboard, but only when it still holds what this class last put there.
+        /// </summary>
+        /// <remarks>
+        /// The ownership check is the point. A blind <see cref="Clipboard.Clear"/> would throw
+        /// away whatever the clinician copied since — a URL, a password out of a manager, a
+        /// paragraph they were moving between applications — which is a worse outcome than
+        /// leaving a phrase behind. Comparing against the text we set means we only ever discard
+        /// our own copy.
+        /// <para>
+        /// Best-effort, and worth being honest about its limits: it shortens the window during
+        /// which patient text sits on a machine-wide clipboard, but it cannot recall what a
+        /// clipboard manager, Cloud Clipboard or Remote Desktop redirection already took. That
+        /// is what <see cref="AddPrivacyFormats"/> is for, and why the two belong together.
+        /// </para>
+        /// </remarks>
+        /// <returns>True when the clipboard was cleared.</returns>
+        public static bool ClearIfOurs()
+        {
+            var ours = _lastCopiedText;
+            if (string.IsNullOrEmpty(ours)) return false;
+
+            try
+            {
+                // Not ours any more — someone copied over it, and their content stays.
+                if (!Clipboard.ContainsText() || !string.Equals(Clipboard.GetText(), ours, StringComparison.Ordinal))
+                    return false;
+
+                Clipboard.Clear();
+                _lastCopiedText = null;
+                return true;
+            }
+            catch (Exception)
+            {
+                // Another process holding the clipboard open, or no clipboard at all (a service,
+                // a test host). Nothing here is worth failing a caller over — least of all
+                // Dispose, which is where this is called from.
+                return false;
+            }
         }
     }
 }

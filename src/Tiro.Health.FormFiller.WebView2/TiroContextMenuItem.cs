@@ -1,5 +1,5 @@
 using System;
-using System.Windows.Forms;
+using System.Threading.Tasks;
 
 namespace Tiro.Health.FormFiller.WebView2
 {
@@ -18,12 +18,43 @@ namespace Tiro.Health.FormFiller.WebView2
     /// </remarks>
     public sealed class TiroContextMenuItem
     {
-        public TiroContextMenuItem(string label, Action<TiroContextMenuContext> action)
+        /// <summary>
+        /// An item whose work is asynchronous — the shape
+        /// <see cref="TiroFormViewer{TResource,TQR,TOO}.InsertContentAsync"/> needs. The returned
+        /// task is observed, so a failure lands in telemetry instead of on the
+        /// <see cref="System.Threading.SynchronizationContext"/> as an unhandled async-void
+        /// exception, which is what an <c>Async Sub</c> lambda would have produced.
+        /// </summary>
+        public TiroContextMenuItem(string label, Func<TiroContextMenuContext, Task> action)
         {
             if (string.IsNullOrEmpty(label)) throw new ArgumentException("A menu item needs a label.", nameof(label));
+            if (action == null) throw new ArgumentNullException(nameof(action));
             Label = label;
-            Invoke = action ?? throw new ArgumentNullException(nameof(action));
+            Invoke = action;
         }
+
+        public TiroContextMenuItem(string label, Action<TiroContextMenuContext> action)
+            : this(label, Wrap(action))
+        {
+        }
+
+        /// <summary>
+        /// Lifts a synchronous action into the async shape the item stores. Null stays null so
+        /// the async ctor raises <see cref="ArgumentNullException"/> for the right argument
+        /// rather than this throwing before the label has been checked.
+        /// </summary>
+        private static Func<TiroContextMenuContext, Task> Wrap(Action<TiroContextMenuContext> action)
+        {
+            if (action == null) return null;
+            return context =>
+            {
+                action(context);
+                return CompletedTask;
+            };
+        }
+
+        // net48 has no Task.CompletedTask.
+        private static readonly Task CompletedTask = Task.FromResult(true);
 
         /// <summary>Convenience ctor for an action that doesn't care what was clicked.</summary>
         public TiroContextMenuItem(string label, Action action)
@@ -39,11 +70,12 @@ namespace Tiro.Health.FormFiller.WebView2
         public string Label { get; }
 
         /// <summary>
-        /// What to do when the user picks the item. Runs on the UI thread. An exception here is
-        /// captured to telemetry and swallowed — a failing menu item must not take down the
-        /// browser's context-menu event, and there is no user-facing place to report it.
+        /// What to do when the user picks the item. Starts on the UI thread; a synchronous
+        /// action is lifted into a completed task. Failures — thrown or faulted — are captured
+        /// to telemetry and swallowed: a failing menu item must not take down the browser's
+        /// context-menu event, and there is no user-facing place to report it.
         /// </summary>
-        public Action<TiroContextMenuContext> Invoke { get; }
+        public Func<TiroContextMenuContext, Task> Invoke { get; }
 
         /// <summary>
         /// Optional per-click filter. Return false to leave the item out of this menu — e.g.
@@ -76,11 +108,7 @@ namespace Tiro.Health.FormFiller.WebView2
         {
             if (text == null) throw new ArgumentNullException(nameof(text));
             return new TiroContextMenuItem(label, (Action<TiroContextMenuContext>)(_ =>
-            {
-                var value = text();
-                if (string.IsNullOrEmpty(value)) return;
-                Clipboard.SetDataObject(value, copy: true, retryTimes: 5, retryDelay: 50);
-            }));
+                TiroClipboard.SetText(text())));
         }
 
         /// <summary>
