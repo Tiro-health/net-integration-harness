@@ -617,6 +617,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
+  - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled) plus `TiroRtf.ToPlainText` for the plain rendition of an RTF document
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's data, resolved per click; see [Host items in the form's right-click menu](#host-items-in-the-forms-right-click-menu)
   - Clipboard hygiene — copies are marked to stay out of Windows clipboard history and Cloud Clipboard, and the clipboard is cleared on dispose when it still holds one of ours (`ClearClipboardOnDispose`); see [Keeping copied content off the machine](#keeping-copied-content-off-the-machine)
   - Formatted clipboard content via `TiroClipboard` — HTML (CF_HTML envelope built for you, byte offsets and all) plus a plain-text rendition, so a copy pastes into the form's rich-text answers with its formatting intact; conversion stays the consumer's, see [Copying formatted content](#copying-formatted-content)
@@ -905,6 +906,38 @@ than the clearing, and why both are on by default.
 If you set the clipboard yourself rather than through a menu item, `TiroClipboard.SetText` and
 `TiroClipboard.SetHtml` apply the same hints and tracking; a hand-rolled `Clipboard.SetText`
 gets neither.
+
+**`AddInsertItem` does the wiring for you.** An insert item always needs the same three things,
+two of which are easy to get wrong, so there is a shorthand:
+
+```vb
+TiroFormViewer.AddInsertItem(
+    "Insert conclusion",
+    Function() TiroRtf.ToPlainText(conclusionRtf),   ' plain rendition, required
+    Function() YourConverter(conclusionRtf),         ' optional HTML, for formatting
+    onResult:=Sub(r) If Not r.Inserted Then StatusLabel.Text = "Click in a field first")
+```
+
+It builds the item, sets `IsVisible` to editable targets only, and adds it to
+`ContextMenuItems` — returning the item, so you can widen the visibility test if you want it
+everywhere.
+
+- **The visibility default is the point.** An insert item over a checkbox or a read-only score
+  has nowhere to put its content, so without the test it appears in the menu and silently does
+  nothing.
+- **`onResult` is optional but worth passing**, at least to catch `Inserted = False` — nothing
+  was focused, and the item otherwise looks broken. It runs on the UI thread, so it can touch
+  controls directly.
+- Both providers run when the item is picked, not when it is added.
+
+**`TiroRtf.ToPlainText`** gives you the plain rendition from RTF using the parser WinForms
+already contains — no library needed for that direction. It is in the harness because the
+correct implementation has a trap in it: `RichTextBox` owns a Win32 handle and must be disposed,
+and a menu item runs once per click, so the obvious one-liner leaks a handle every time. Malformed
+RTF throws rather than returning the raw markup, which would be worse in a clinical field.
+
+RTF to *HTML* stays yours — that direction needs a real parser, and the choice belongs to whoever
+may already license a better engine than any open-source one.
 
 Worked example: the Extract sample's three **Add ... to clipboard** items in `Form1_Load` —
 two plain, one formatted.

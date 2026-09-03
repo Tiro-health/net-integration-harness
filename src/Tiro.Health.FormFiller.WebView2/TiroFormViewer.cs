@@ -114,6 +114,65 @@ namespace Tiro.Health.FormFiller.WebView2
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public IList<TiroContextMenuItem> ContextMenuItems { get; } = new List<TiroContextMenuItem>();
+        /// <summary>
+        /// Adds a right-click item that inserts content at the caret, and returns it.
+        /// </summary>
+        /// <remarks>
+        /// Shorthand for the three things such an item always needs: an action that calls
+        /// <see cref="InsertContentAsync"/> and hands back its task, a visibility test limiting
+        /// it to fields the user can type into, and adding it to <see cref="ContextMenuItems"/>.
+        /// <para>
+        /// The visibility test is the part worth having by default. An insert item over a
+        /// checkbox or a read-only score has nowhere to put its content, so without the test it
+        /// appears in the menu and silently does nothing. Assign
+        /// <see cref="TiroContextMenuItem.IsVisible"/> on the returned item to widen or narrow
+        /// it.
+        /// </para>
+        /// <para>
+        /// Both providers run when the item is picked, not when it is added, so they reflect the
+        /// EHR's state at that moment.
+        /// </para>
+        /// </remarks>
+        /// <param name="label">The menu text.</param>
+        /// <param name="text">
+        /// Plain-text rendition, required. It is what a string-typed answer receives, and the
+        /// fallback for a field that declines the HTML.
+        /// </param>
+        /// <param name="html">
+        /// Optional body-level HTML fragment, for content whose formatting matters. From RTF,
+        /// convert with your own library; <see cref="TiroRtf.ToPlainText"/> covers the plain
+        /// rendition.
+        /// </param>
+        /// <param name="onResult">
+        /// Optional. Called with what the page managed, on the UI thread, so it can update a
+        /// status label directly. Worth supplying at least for
+        /// <see cref="TextInsertResult.Inserted"/> being false — nothing was focused, and the
+        /// item otherwise looks broken. Omit it to insert silently.
+        /// </param>
+        public TiroContextMenuItem AddInsertItem(
+            string label,
+            Func<string> text,
+            Func<string> html = null,
+            Action<TextInsertResult> onResult = null)
+        {
+            if (text == null) throw new ArgumentNullException(nameof(text));
+
+            // An async lambda, so the task it returns is the one TiroContextMenuItem stores and
+            // InvokeContextMenuItem observes: a failed insert reaches telemetry instead of
+            // becoming an unhandled async-void exception on the SynchronizationContext.
+            var item = new TiroContextMenuItem(label, async context =>
+            {
+                var result = await InsertContentAsync(text(), html == null ? null : html());
+                // Resumes on the captured context — the UI thread, since menu dispatch runs
+                // there — so a subscriber may touch controls without marshalling.
+                if (onResult != null) onResult(result);
+            });
+            item.IsVisible = context => context.IsEditable;
+
+            ContextMenuItems.Add(item);
+            return item;
+        }
+
 
         /// <summary>
         /// The telemetry sink the viewer uses for instrumentation. Resolved at construction

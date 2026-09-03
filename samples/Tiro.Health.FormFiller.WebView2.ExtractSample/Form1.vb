@@ -74,25 +74,27 @@ Public Class Form1
         '
         ' IsVisible = IsEditable on every item: over a checkbox or a read-only score there is
         ' nothing to insert into, so the item stays out of the menu rather than doing nothing.
-        AddInsertItem("Insert patient name",
-                      Function() patient.Name(0).Text)
+        TiroFormViewer.AddInsertItem("Insert patient name",
+                                     Function() patient.Name(0).Text,
+                                     onResult:=AddressOf ShowInsertResult)
 
-        AddInsertItem("Insert ""no known drug allergies""",
-                      Function() "No known drug allergies.")
+        TiroFormViewer.AddInsertItem("Insert ""no known drug allergies""",
+                                     Function() "No known drug allergies.",
+                                     onResult:=AddressOf ShowInsertResult)
 
-        ' The conclusion the EHR holds as RTF, flattened to plain text by WinForms' own RTF
-        ' parser. Goes into any field; formatting dropped.
-        AddInsertItem("Insert conclusion (plain text)",
-                      Function() RtfToPlainText(ConclusionRtf))
+        ' The conclusion the EHR holds as RTF, flattened by the RTF parser WinForms already
+        ' contains. Goes into any field; formatting dropped.
+        TiroFormViewer.AddInsertItem("Insert conclusion (plain text)",
+                                     Function() TiroRtf.ToPlainText(ConclusionRtf),
+                                     onResult:=AddressOf ShowInsertResult)
 
-        ' The same conclusion, keeping its formatting. This is the item to watch: the page
-        ' offers the HTML to the field first and falls back to the plain text if the field
-        ' won't take it, and the window title says which happened. Mode=Html means a rich-text
-        ' answer kept the bold and italic; Mode=Text means that field can only hold plain text,
-        ' which no amount of conversion quality would change.
-        AddInsertItem("Insert conclusion (formatted)",
-                      Function() RtfToPlainText(ConclusionRtf),
-                      Function() ConvertRtfToHtml(ConclusionRtf))
+        ' The same conclusion, keeping its formatting. The page offers the HTML to the field
+        ' first and falls back to the plain text if the field won't take it; onResult says which
+        ' happened, so what a given field can actually store is visible.
+        TiroFormViewer.AddInsertItem("Insert conclusion (formatted)",
+                                     Function() TiroRtf.ToPlainText(ConclusionRtf),
+                                     Function() ConvertRtfToHtml(ConclusionRtf),
+                                     onResult:=AddressOf ShowInsertResult)
 
         ' Showcases passing an arbitrary named resource as launch context, alongside the
         ' well-known patient/encounter/author shorthand — here a Specimen, via the
@@ -113,39 +115,10 @@ Public Class Form1
     End Sub
 
     ''' <summary>
-    ''' Adds a right-click item that inserts content at the caret. Wraps the three lines every
-    ''' such item needs — build it, hide it where there is nothing to type into, add it — so the
-    ''' menu above reads as a list of snippets rather than as plumbing.
+    ''' Shows what the page managed, in the window title, so the outcome is visible without a
+    ''' debugger. The harness calls this on the UI thread, so touching controls is safe.
     ''' </summary>
-    ''' <param name="label">The menu text.</param>
-    ''' <param name="text">Plain-text rendition, resolved at click time. Always required.</param>
-    ''' <param name="html">
-    ''' Optional body-level HTML fragment. Supplied only for content whose formatting matters;
-    ''' the page falls back to <paramref name="text"/> when the field cannot take it.
-    ''' </param>
-    Private Sub AddInsertItem(label As String,
-                              text As Func(Of String),
-                              Optional html As Func(Of String) = Nothing)
-        Dim item As New TiroContextMenuItem(
-            label,
-            Function(context) ShowInsertResult(
-                TiroFormViewer.InsertContentAsync(text(), If(html Is Nothing, Nothing, html()))))
-        item.IsVisible = Function(context) context.IsEditable
-        TiroFormViewer.ContextMenuItems.Add(item)
-    End Sub
-
-    ''' <summary>
-    ''' Awaits an insert and puts the outcome in the window title, so this experiment's result
-    ''' is visible without a debugger. A real integration would show nothing on success and
-    ''' "click in a field first" when nothing was focused.
-    ''' </summary>
-    ' Task is fully qualified on purpose: Hl7.Fhir.Model, imported above, also defines a Task
-    ' (the FHIR resource), so the unqualified name is ambiguous here. The C# projects solve the
-    ' same clash with a `using Task = System.Threading.Tasks.Task` alias, which VB can't apply
-    ' to the generic Task(Of T).
-    Private Async Function ShowInsertResult(
-        pending As System.Threading.Tasks.Task(Of TextInsertResult)) As System.Threading.Tasks.Task
-        Dim result As TextInsertResult = Await pending
+    Private Sub ShowInsertResult(result As TextInsertResult)
         Dim summary As String
         If Not result.Inserted Then
             summary = "nothing inserted — click in a text field first"
@@ -155,7 +128,7 @@ Public Class Form1
             summary = "inserted as plain text (mode=Text) — the field would not take the HTML"
         End If
         Me.Text = "Extract sample — " & summary
-    End Function
+    End Sub
 
     ''' <summary>
     ''' The conclusion as the EHR holds it: RTF. Real integrations read this from their own
@@ -166,19 +139,6 @@ Public Class Form1
         "{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Calibri;}}\f0\fs22" &
         "{\b Assessment.} Findings consistent with the clinical picture; " &
         "{\i no further imaging indicated}.\par}"
-
-    ''' <summary>
-    ''' Plain text out of RTF, using WinForms' own RTF parser — no library needed. A named
-    ''' helper rather than an inline lambda because RichTextBox owns a Win32 handle: it has to
-    ''' be disposed, and a menu item invoked once per click would otherwise leak one each time.
-    ''' </summary>
-    Private Shared Function RtfToPlainText(rtf As String) As String
-        If String.IsNullOrEmpty(rtf) Then Return String.Empty
-        Using box As New RichTextBox()
-            box.Rtf = rtf
-            Return box.Text
-        End Using
-    End Function
 
     ''' <summary>
     ''' RTF to HTML. A STAND-IN: it returns a fixed fragment matching <see cref="ConclusionRtf"/>
