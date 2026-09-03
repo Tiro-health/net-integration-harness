@@ -618,6 +618,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's data, resolved per click; see [Host items in the form's right-click menu](#host-items-in-the-forms-right-click-menu)
+  - Clipboard hygiene — copies are marked to stay out of Windows clipboard history and Cloud Clipboard, and the clipboard is cleared on dispose when it still holds one of ours (`ClearClipboardOnDispose`); see [Keeping copied content off the machine](#keeping-copied-content-off-the-machine)
   - Formatted clipboard content via `TiroClipboard` — HTML (CF_HTML envelope built for you, byte offsets and all) plus a plain-text rendition, so a copy pastes into the form's rich-text answers with its formatting intact; conversion stays the consumer's, see [Copying formatted content](#copying-formatted-content)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
@@ -876,6 +877,34 @@ End Function
   behaviour, not a bug. Worth establishing where that line falls before investing in conversion
   fidelity you cannot keep: paste a fragment containing bold, a list, a table and inline colour,
   and see what comes through.
+
+#### Keeping copied content off the machine
+
+A copy leaves the application: the Windows clipboard is readable by every process on the
+machine. Two mechanisms narrow that, and they do different jobs.
+
+**Copies are marked not to be retained.** Every copy the harness makes carries the three
+Windows privacy formats — `ExcludeClipboardContentFromMonitorProcessing`,
+`CanIncludeInClipboardHistory` and `CanUploadToCloudClipboard` — so Windows keeps it out of
+clipboard history (Win+V) and out of Cloud Clipboard sync to the user's other devices, and
+clipboard managers that honour the exclusion leave it alone. This is the half that actually
+protects, because it stops the content being retained in the first place. Windows 10 1809 and
+later; on an older build the formats are simply ignored.
+
+**The clipboard is cleared when the viewer is disposed**, unless you set
+`ClearClipboardOnDispose = False`. It clears only when the clipboard still holds what a menu
+item put there, so a copy the clinician made afterwards — a URL, a password out of a manager —
+is never discarded. Best-effort: a clipboard held open by another process just means nothing is
+cleared.
+
+Worth being clear about the limit. Clearing shortens the window during which patient text sits
+on a shared clipboard; it cannot recall a copy that a clipboard manager, Cloud Clipboard or
+Remote Desktop redirection already took. That is precisely why the exclusion formats matter more
+than the clearing, and why both are on by default.
+
+If you set the clipboard yourself rather than through a menu item, `TiroClipboard.SetText` and
+`TiroClipboard.SetHtml` apply the same hints and tracking; a hand-rolled `Clipboard.SetText`
+gets neither.
 
 Worked example: the Extract sample's three **Add ... to clipboard** items in `Form1_Load` —
 two plain, one formatted.
