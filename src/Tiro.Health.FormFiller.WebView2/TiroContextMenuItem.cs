@@ -1,6 +1,5 @@
 using System;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace Tiro.Health.FormFiller.WebView2
 {
@@ -86,34 +85,39 @@ namespace Tiro.Health.FormFiller.WebView2
         public Func<TiroContextMenuContext, bool> IsVisible { get; set; }
 
         /// <summary>
-        /// An item that puts <paramref name="text"/>'s result on the Windows clipboard, for the
-        /// user to paste with Ctrl+V wherever they want it. The provider runs at click time, so
-        /// it reflects the EHR's state then, not when the menu was configured.
+        /// An item that puts <paramref name="text"/>'s result on the Windows clipboard as plain
+        /// text, for the user to paste with Ctrl+V wherever they want it. The provider runs at
+        /// click time, so it reflects the EHR's state then, not when the menu was configured.
         /// </summary>
         /// <remarks>
-        /// The clipboard is a machine-wide, single-owner resource: another process can hold it
-        /// open, which is why this goes through the retrying
-        /// <see cref="Clipboard.SetDataObject(object, bool, int, int)"/> overload rather than
-        /// <c>Clipboard.SetText</c>. <c>copy: true</c> leaves the data on the clipboard after
-        /// the application exits, so a copy the clinician makes before closing the form still
-        /// pastes afterwards. An empty or null result is a no-op (the clipboard API rejects it,
-        /// and clearing the user's clipboard is worse than doing nothing).
-        /// <para>
-        /// Whatever is copied leaves the application: the Windows clipboard is readable by every
-        /// process on the machine, and clipboard managers, Remote Desktop redirection and
-        /// Windows Cloud Clipboard may persist or sync it. Fine for a name the clinician is
-        /// about to paste; worth a thought before wiring a whole report to it.
-        /// </para>
+        /// An empty or null result is a no-op. See <see cref="TiroClipboard"/> for the clipboard
+        /// mechanics and for what copying implies about where the data can travel.
         /// </remarks>
         public static TiroContextMenuItem CopyToClipboard(string label, Func<string> text)
         {
             if (text == null) throw new ArgumentNullException(nameof(text));
             return new TiroContextMenuItem(label, (Action<TiroContextMenuContext>)(_ =>
-            {
-                var value = text();
-                if (string.IsNullOrEmpty(value)) return;
-                Clipboard.SetDataObject(value, copy: true, retryTimes: 5, retryDelay: 50);
-            }));
+                TiroClipboard.SetContent(new TiroClipboardContent { PlainText = text() })));
+        }
+
+        /// <summary>
+        /// An item that copies formatted content — HTML for the form's rich-text fields, with a
+        /// plain-text fallback and optionally RTF for Word and Outlook. Every format the
+        /// returned <see cref="TiroClipboardContent"/> carries goes on the clipboard together,
+        /// and each paste target picks the richest one it understands.
+        /// </summary>
+        /// <remarks>
+        /// The provider runs at click time, so an EHR can convert its RTF then rather than
+        /// up front. The harness does no conversion of its own — see
+        /// <see cref="TiroClipboardContent"/> for why, and for the class-versus-inline-styles
+        /// trap that decides whether a converter's output survives the clipboard at all.
+        /// </remarks>
+        public static TiroContextMenuItem CopyRichTextToClipboard(
+            string label, Func<TiroClipboardContent> content)
+        {
+            if (content == null) throw new ArgumentNullException(nameof(content));
+            return new TiroContextMenuItem(label, (Action<TiroContextMenuContext>)(_ =>
+                TiroClipboard.SetContent(content())));
         }
     }
 }
