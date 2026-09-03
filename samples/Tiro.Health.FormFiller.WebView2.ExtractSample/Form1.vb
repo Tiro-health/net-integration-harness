@@ -158,9 +158,9 @@ Public Class Form1
     End Function
 
     ''' <summary>
-    ''' The conclusion as the EHR holds it: RTF. Real integrations get this from their own
-    ''' store — this constant stands in for that, so the clipboard items below show the shape a
-    ''' real one takes rather than starting from HTML nobody would have.
+    ''' The conclusion as the EHR holds it: RTF. Real integrations read this from their own
+    ''' store — the constant stands in for that, so the menu items show the shape a real
+    ''' integration takes rather than starting from HTML nobody would have.
     ''' </summary>
     Private Const ConclusionRtf As String =
         "{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Calibri;}}\f0\fs22" &
@@ -170,7 +170,7 @@ Public Class Form1
     ''' <summary>
     ''' Plain text out of RTF, using WinForms' own RTF parser — no library needed. A named
     ''' helper rather than an inline lambda because RichTextBox owns a Win32 handle: it has to
-    ''' be disposed, and one clipboard item per click would otherwise leak one each time.
+    ''' be disposed, and a menu item invoked once per click would otherwise leak one each time.
     ''' </summary>
     Private Shared Function RtfToPlainText(rtf As String) As String
         If String.IsNullOrEmpty(rtf) Then Return String.Empty
