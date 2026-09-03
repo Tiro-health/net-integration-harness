@@ -84,10 +84,11 @@ Public Class Form1
         '
         ' A real EHR holds RTF and converts it here — RtfPipe's Rtf.ToHtml(rtf) or whichever
         ' library it already trusts — at click time, so the conversion follows the EHR's current
-        ' state. Two rules for the converter: it must emit semantic tags or inline styles (a
-        ' clipboard HTML fragment has no stylesheet, so class-based styling loses underline and
-        ' colour while bold survives), and the plain text is better taken from the RTF with
-        ' New RichTextBox() With {.Rtf = rtf}.Text than stripped out of the HTML.
+        ' state. One rule for the converter: it must emit semantic tags or inline styles, because
+        ' a clipboard HTML fragment carries no stylesheet, so class-based styling loses underline
+        ' and colour while bold survives.
+        '
+        ' For the plain text, RtfToPlainText below beats stripping tags out of the HTML.
         '
         ' Hardcoded here because the sample has no RTF to convert.
         TiroFormViewer.ContextMenuItems.Add(
@@ -115,6 +116,19 @@ Public Class Form1
                 New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
             })
     End Sub
+
+    ''' <summary>
+    ''' Plain text out of RTF, using WinForms' own RTF parser — no library needed. A named
+    ''' helper rather than an inline lambda because RichTextBox owns a Win32 handle: it has to
+    ''' be disposed, and one clipboard item per click would otherwise leak one each time.
+    ''' </summary>
+    Private Shared Function RtfToPlainText(rtf As String) As String
+        If String.IsNullOrEmpty(rtf) Then Return String.Empty
+        Using box As New RichTextBox()
+            box.Rtf = rtf
+            Return box.Text
+        End Using
+    End Function
 
     Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click
         Await TiroFormViewer.SendFormRequestSubmitAsync()

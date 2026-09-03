@@ -835,8 +835,22 @@ the clipboard along with a plain-text rendition, and each answer type takes the 
 TiroFormViewer.ContextMenuItems.Add(
     TiroContextMenuItem.CopyHtmlToClipboard(
         "Add conclusion to clipboard",
-        Function() RtfPipe.Rtf.ToHtml(conclusionRtf),                     ' your converter
-        Function() New RichTextBox() With {.Rtf = conclusionRtf}.Text))   ' better than a tag strip
+        Function() RtfPipe.Rtf.ToHtml(conclusionRtf),   ' your converter
+        Function() RtfToPlainText(conclusionRtf)))      ' better than a tag strip
+```
+
+WinForms already contains an RTF parser, so the plain-text rendition needs no library either.
+Note the `Using`: `RichTextBox` owns a Win32 handle, and a clipboard item invoked once per click
+would otherwise leak one every time.
+
+```vb
+Private Shared Function RtfToPlainText(rtf As String) As String
+    If String.IsNullOrEmpty(rtf) Then Return String.Empty
+    Using box As New RichTextBox()
+        box.Rtf = rtf
+        Return box.Text
+    End Using
+End Function
 ```
 
 - **RTF is deliberately not put on the clipboard.** Chromium never reads the Windows RTF
@@ -851,8 +865,8 @@ TiroFormViewer.ContextMenuItems.Add(
   vanish. Partial survival is a confusing thing to debug, so it is worth checking before you
   commit to a converter. (macOS `textutil` behaves this way; RtfPipe does not.)
 - **Both arguments are required, and neither is derived.** Stripping tags out of HTML gives a
-  poor rendition, and from RTF you get a much better one for free. A copy that silently pastes
-  nothing into a plain-string answer is worse still.
+  poor rendition, and from RTF you get a much better one for free (above). A copy that silently
+  pastes nothing into a plain-string answer is worse still.
 - **`TiroClipboard.ToCfHtml` is public** if you want to frame HTML for a clipboard write of your
   own. Its four offsets are **byte** offsets into UTF-8: with ASCII-only content bytes and
   characters coincide, so a character-counting version looks correct until the first `°C` or
