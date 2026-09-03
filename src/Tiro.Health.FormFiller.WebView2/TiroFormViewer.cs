@@ -1255,7 +1255,7 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
-        /// Runs a host menu item's action. Exceptions are captured and swallowed: this is called
+        /// Runs a host menu item's action. Failures are captured and swallowed: this is called
         /// from the browser's own menu dispatch, where a throw would surface as an unhandled
         /// exception in a WinForms message-pump callback with no caller to report to. Nothing
         /// about the item — not the label, not the copied value — is added to telemetry: both
@@ -1263,16 +1263,33 @@ namespace Tiro.Health.FormFiller.WebView2
         /// clipboard payload that IS the conclusion), and the exception alone is enough to
         /// locate a broken handler.
         /// </summary>
+        /// <remarks>
+        /// An item that does async work (the natural shape for <see cref="InsertTextAsync"/>)
+        /// returns a task that finishes long after the menu is gone, so the returned task is
+        /// observed rather than dropped: without this, a faulted insert would be an unobserved
+        /// task exception with no route to telemetry at all.
+        /// </remarks>
         private void InvokeContextMenuItem(TiroContextMenuItem item, TiroContextMenuContext context)
         {
+            Task started;
             try
             {
-                item.Action(context);
+                started = item.Invoke(context);
             }
             catch (Exception ex)
             {
+                // Threw before returning a task — a synchronous item, or an async one that
+                // failed its argument checks.
                 _telemetry.CaptureException(ex);
+                return;
             }
+            if (started == null) return;
+
+            started.ContinueWith(
+                finished => _telemetry.CaptureException(finished.Exception),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
 
         /// <summary>

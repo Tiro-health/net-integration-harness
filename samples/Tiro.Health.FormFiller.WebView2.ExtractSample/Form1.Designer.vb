@@ -25,11 +25,6 @@ Partial Class Form1
         TiroFormViewer = New Tiro.Health.FormFiller.WebView2.Fhir.R5.TiroFormViewerR5()
         BottomPanel = New Panel()
         SubmitButton = New Button()
-        SnippetLabel = New Label()
-        NormalExamButton = New Button()
-        NoAllergiesButton = New Button()
-        ConclusionButton = New Button()
-        SnippetStatusLabel = New Label()
         BottomPanel.SuspendLayout()
         SuspendLayout()
         '
@@ -52,61 +47,8 @@ Partial Class Form1
         SubmitButton.Text = "Submit"
         SubmitButton.UseVisualStyleBackColor = True
         '
-        ' SnippetLabel
-        '
-        SnippetLabel.AutoSize = True
-        SnippetLabel.Location = New Point(8, 16)
-        SnippetLabel.Name = "SnippetLabel"
-        SnippetLabel.Size = New Size(62, 15)
-        SnippetLabel.TabIndex = 1
-        SnippetLabel.Text = "Snippets:"
-        '
-        ' NormalExamButton
-        '
-        NormalExamButton.Location = New Point(76, 8)
-        NormalExamButton.Name = "NormalExamButton"
-        NormalExamButton.Size = New Size(104, 30)
-        NormalExamButton.TabIndex = 2
-        NormalExamButton.Tag = "No abnormalities on inspection or palpation. "
-        NormalExamButton.Text = "Normal exam"
-        NormalExamButton.UseVisualStyleBackColor = True
-        '
-        ' NoAllergiesButton
-        '
-        NoAllergiesButton.Location = New Point(186, 8)
-        NoAllergiesButton.Name = "NoAllergiesButton"
-        NoAllergiesButton.Size = New Size(104, 30)
-        NoAllergiesButton.TabIndex = 3
-        NoAllergiesButton.Tag = "No known drug allergies. "
-        NoAllergiesButton.Text = "No allergies"
-        NoAllergiesButton.UseVisualStyleBackColor = True
-        '
-        ' ConclusionButton
-        '
-        ConclusionButton.Location = New Point(296, 8)
-        ConclusionButton.Name = "ConclusionButton"
-        ConclusionButton.Size = New Size(104, 30)
-        ConclusionButton.TabIndex = 4
-        ConclusionButton.Tag = "Findings consistent with the clinical picture; no further imaging indicated. "
-        ConclusionButton.Text = "Conclusion"
-        ConclusionButton.UseVisualStyleBackColor = True
-        '
-        ' SnippetStatusLabel
-        '
-        SnippetStatusLabel.AutoSize = False
-        SnippetStatusLabel.Location = New Point(406, 16)
-        SnippetStatusLabel.Name = "SnippetStatusLabel"
-        SnippetStatusLabel.Size = New Size(290, 22)
-        SnippetStatusLabel.TabIndex = 5
-        SnippetStatusLabel.Text = ""
-        '
         ' BottomPanel
         '
-        BottomPanel.Controls.Add(SnippetLabel)
-        BottomPanel.Controls.Add(NormalExamButton)
-        BottomPanel.Controls.Add(NoAllergiesButton)
-        BottomPanel.Controls.Add(ConclusionButton)
-        BottomPanel.Controls.Add(SnippetStatusLabel)
         BottomPanel.Controls.Add(SubmitButton)
         BottomPanel.Dock = DockStyle.Bottom
         BottomPanel.Location = New Point(0, 404)
@@ -130,10 +72,5 @@ Partial Class Form1
     Friend WithEvents TiroFormViewer As Tiro.Health.FormFiller.WebView2.Fhir.R5.TiroFormViewerR5
     Friend WithEvents BottomPanel As Panel
     Friend WithEvents SubmitButton As Button
-    Friend WithEvents SnippetLabel As Label
-    Friend WithEvents NormalExamButton As Button
-    Friend WithEvents NoAllergiesButton As Button
-    Friend WithEvents ConclusionButton As Button
-    Friend WithEvents SnippetStatusLabel As Label
 
 End Class

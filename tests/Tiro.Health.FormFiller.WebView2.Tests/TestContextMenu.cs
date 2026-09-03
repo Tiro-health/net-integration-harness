@@ -155,11 +155,42 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         [TestMethod]
+        public async Task AFaultedAsyncActionIsCaptured_NotLeftUnobserved()
+        {
+            // The shape an InsertTextAsync item has: the task outlives the menu, so dropping it
+            // would leave a failure with no route to telemetry at all.
+            await Initialized();
+            var insert = new TaskCompletionSource<bool>();
+            _viewer.ContextMenuItems.Add(new TiroContextMenuItem("Paste conclusion", _ => insert.Task));
+
+            _browser.RequestContextMenu()[0].Invoke();
+            Assert.AreEqual(0, _sink.CapturedExceptions.Count, "nothing has failed yet");
+
+            insert.SetException(new InvalidOperationException("the page never answered"));
+
+            await PollFor(() => _sink.CapturedExceptions.Count == 1, TimeSpan.FromSeconds(5));
+        }
+
+        [TestMethod]
+        public async Task ASucceedingAsyncActionCapturesNothing()
+        {
+            await Initialized();
+            _viewer.ContextMenuItems.Add(
+                new TiroContextMenuItem("Paste conclusion", _ => Task.FromResult(true)));
+
+            _browser.RequestContextMenu()[0].Invoke();
+
+            Assert.AreEqual(0, _sink.CapturedExceptions.Count);
+        }
+
+        [TestMethod]
         public void AnItemRequiresALabelAndAnAction()
         {
             Assert.ThrowsException<ArgumentException>(() => new TiroContextMenuItem("", () => { }));
             Assert.ThrowsException<ArgumentNullException>(
                 () => new TiroContextMenuItem("Copy", (Action)null));
+            Assert.ThrowsException<ArgumentNullException>(
+                () => new TiroContextMenuItem("Paste", (Func<TiroContextMenuContext, Task>)null));
             Assert.ThrowsException<ArgumentNullException>(
                 () => TiroContextMenuItem.CopyToClipboard("Copy", null));
         }
