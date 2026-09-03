@@ -150,10 +150,10 @@ Public Class Form1
     ''' commercial engine if you already license one. Two things to require of whichever you pick:
     ''' <list type="bullet">
     ''' <item><description>
-    ''' It must emit semantic tags (<c>&lt;b&gt;</c>, <c>&lt;i&gt;</c>) or inline styles. A
-    ''' clipboard HTML flavour is a fragment, so a converter that emits CSS classes plus a
-    ''' stylesheet loses the stylesheet and every rule with it — underline and colour vanish
-    ''' while bold and italic survive, which is a confusing way to discover the problem.
+    ''' It must emit semantic tags (<c>&lt;b&gt;</c>, <c>&lt;i&gt;</c>) or inline styles. What
+    ''' is handed over is a body-level fragment with no stylesheet, so a converter that emits
+    ''' CSS classes loses every rule with it — underline and colour vanish while bold and italic
+    ''' survive, which is a confusing way to discover the problem.
     ''' </description></item>
     ''' <item><description>
     ''' Fidelity beyond what the field can store is wasted. The rich-text answers keep inline

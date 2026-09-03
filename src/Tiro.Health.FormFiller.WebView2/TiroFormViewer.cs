@@ -83,22 +83,6 @@ namespace Tiro.Health.FormFiller.WebView2
         public bool ReadOnly { get; set; }
 
         /// <summary>
-        /// When true (the default), disposing the viewer clears the clipboard — but only if it
-        /// still holds what a <see cref="TiroContextMenuItem"/> put there, so a copy the
-        /// clinician made afterwards is never discarded.
-        /// </summary>
-        /// <remarks>
-        /// Shortens the window during which patient text sits on a machine-wide clipboard. It
-        /// cannot recall what a clipboard manager, Cloud Clipboard or Remote Desktop redirection
-        /// already took — the copies themselves are marked to be excluded from history and cloud
-        /// sync for that, and the two work together. Set false if your workflow depends on the
-        /// clinician pasting into another application after closing the form.
-        /// </remarks>
-        [Browsable(false)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public bool ClearClipboardOnDispose { get; set; } = true;
-
-        /// <summary>
         /// Host-supplied entries for the form's right-click menu, appended below the embedded
         /// browser's own. Populate at any time — the list is read each time a menu is requested,
         /// so items can come from the EHR's configuration, change with the patient, or resolve

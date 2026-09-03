@@ -11,8 +11,8 @@ namespace Tiro.Health.FormFiller.WebView2
     /// </summary>
     /// <remarks>
     /// The label is the host's, and so is the data: nothing is resolved until the item is
-    /// clicked, so <see cref="CopyToClipboard(string, Func{string})"/>'s provider sees the
-    /// EHR's current patient, current conclusion, current everything. The collection itself is
+    /// clicked, so an action closing over EHR state sees the current patient, the current
+    /// conclusion, the current everything. The collection itself is
     /// read at menu time too, so items can be added, removed or relabelled at any point —
     /// including from the EHR's own configuration, read at startup or per patient.
     /// </remarks>
@@ -84,57 +84,5 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         public Func<TiroContextMenuContext, bool> IsVisible { get; set; }
 
-        /// <summary>
-        /// An item that copies <paramref name="text"/>'s result to the Windows clipboard, for
-        /// the user to paste with Ctrl+V into whichever field they want — the same as any other
-        /// copy they make. The provider runs at click time, so the value follows the EHR's
-        /// current state rather than whatever it held when the menu was configured.
-        /// </summary>
-        /// <remarks>
-        /// An empty or null result is a no-op: the clipboard API rejects it, and clearing the
-        /// clinician's clipboard is worse than doing nothing. Uses the retrying
-        /// <see cref="Clipboard.SetDataObject(object, bool, int, int)"/> overload because the
-        /// clipboard is a machine-wide single-owner resource another process can be holding
-        /// open. <c>copy: true</c> leaves the value there after this application exits, so a
-        /// copy made just before the form closes still pastes afterwards.
-        /// <para>
-        /// Plain text only. What is copied also leaves the application: the Windows clipboard is
-        /// readable by every process on the machine, and clipboard managers, Remote Desktop
-        /// redirection and Windows Cloud Clipboard may persist or sync it. Ordinary for a phrase
-        /// the clinician is about to paste; worth a deliberate decision for a whole report.
-        /// </para>
-        /// </remarks>
-        public static TiroContextMenuItem CopyToClipboard(string label, Func<string> text)
-        {
-            if (text == null) throw new ArgumentNullException(nameof(text));
-            return new TiroContextMenuItem(label, (Action<TiroContextMenuContext>)(_ =>
-                TiroClipboard.SetText(text())));
-        }
-
-        /// <summary>
-        /// An item that copies formatted content, so it pastes into the form's rich-text
-        /// answers with its formatting intact. Both providers run at click time, so an EHR can
-        /// convert its RTF then rather than up front.
-        /// </summary>
-        /// <remarks>
-        /// The HTML is what a rich-text answer reads; the plain text is what a plain-string
-        /// answer reads, so both are needed and neither is derived from the other. The harness
-        /// does no conversion — see <see cref="TiroClipboard"/> for what to require of a
-        /// converter, and for why RTF itself is not put on the clipboard.
-        /// </remarks>
-        /// <param name="label">The menu text.</param>
-        /// <param name="html">Body-level HTML fragment; the CF_HTML envelope is added for you.</param>
-        /// <param name="plainText">
-        /// The plain-text rendition. From RTF, <c>New RichTextBox() With {.Rtf = rtf}.Text</c>
-        /// beats anything derivable from the HTML.
-        /// </param>
-        public static TiroContextMenuItem CopyHtmlToClipboard(
-            string label, Func<string> html, Func<string> plainText)
-        {
-            if (html == null) throw new ArgumentNullException(nameof(html));
-            if (plainText == null) throw new ArgumentNullException(nameof(plainText));
-            return new TiroContextMenuItem(label, (Action<TiroContextMenuContext>)(_ =>
-                TiroClipboard.SetHtml(html(), plainText())));
-        }
     }
 }

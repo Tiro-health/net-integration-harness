@@ -160,8 +160,6 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.ThrowsException<ArgumentException>(() => new TiroContextMenuItem("", () => { }));
             Assert.ThrowsException<ArgumentNullException>(
                 () => new TiroContextMenuItem("Copy", (Action)null));
-            Assert.ThrowsException<ArgumentNullException>(
-                () => TiroContextMenuItem.CopyToClipboard("Copy", null));
         }
     }
 }

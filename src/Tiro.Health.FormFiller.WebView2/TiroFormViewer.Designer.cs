@@ -17,23 +17,13 @@ namespace Tiro.Health.FormFiller.WebView2
                     MarkDisposed();
                     try { _lifetimeCts.Cancel(); } catch { /* best-effort */ }
 
-                    // 2. Clear the clipboard if it still holds one of our own copies, before
-                    //    anything else is torn down — patient text on a machine-wide clipboard
-                    //    outlives this control otherwise. Ownership-checked inside, so a copy
-                    //    the clinician made since is left alone, and best-effort, so a
-                    //    clipboard held open by another process cannot break Dispose.
-                    if (ClearClipboardOnDispose)
-                    {
-                        try { TiroClipboard.ClearIfOurs(); } catch { /* best-effort */ }
-                    }
-
-                    // 3. Unhook browser event
+                    // 2. Unhook browser event
                     if (_browser != null)
                     {
                         _browser.MessageReceived -= OnBrowserMessageReceived;
                     }
 
-                    // 4. Unhook Message Handler events (CRITICAL for memory management)
+                    // 3. Unhook Message Handler events (CRITICAL for memory management)
                     if (_smartWebMessageHandler != null)
                     {
                         _smartWebMessageHandler.FormSubmitted -= OnFormSubmitted;
@@ -49,24 +39,24 @@ namespace Tiro.Health.FormFiller.WebView2
                         _smartWebMessageHandler.ClearAllResponseListeners();
                     }
 
-                    // 5. Close the telemetry session (final breadcrumb + flush pending events)
+                    // 4. Close the telemetry session (final breadcrumb + flush pending events)
                     EndTelemetrySession();
 
-                    // 6. Dispose browser adapter (non-Control state); the Control
+                    // 5. Dispose browser adapter (non-Control state); the Control
                     //    itself is disposed via the Controls-collection ownership chain.
                     if (_browser != null)
                     {
                         try { _browser.Dispose(); } catch { /* best-effort */ }
                     }
 
-                    // 7. Dispose telemetry sink only if we created it (DI-supplied sinks
+                    // 6. Dispose telemetry sink only if we created it (DI-supplied sinks
                     //    are owned by the caller).
                     if (_ownsTelemetrySink && _telemetry != null)
                     {
                         try { _telemetry.Dispose(); } catch { /* best-effort */ }
                     }
 
-                    // 8. Dispose child components
+                    // 7. Dispose child components
                     if (components != null)
                         components.Dispose();
 

@@ -617,10 +617,8 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
-  - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled) plus `TiroRtf.ToPlainText` for the plain rendition of an RTF document
-  - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's data, resolved per click; see [Host items in the form's right-click menu](#host-items-in-the-forms-right-click-menu)
-  - Clipboard hygiene — copies are marked to stay out of Windows clipboard history and Cloud Clipboard, and the clipboard is cleared on dispose when it still holds one of ours (`ClearClipboardOnDispose`); see [Keeping copied content off the machine](#keeping-copied-content-off-the-machine)
-  - Formatted clipboard content via `TiroClipboard` — HTML (CF_HTML envelope built for you, byte offsets and all) plus a plain-text rendition, so a copy pastes into the form's rich-text answers with its formatting intact; conversion stays the consumer's, see [Copying formatted content](#copying-formatted-content)
+  - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` for the plain rendition of an RTF document
+  - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's content, resolved per click, inserted at the caret; see [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
@@ -710,7 +708,7 @@ Drain `_pending` on app exit (`Await Task.WhenAll(_pending)` with a timeout) so 
 WinForms demos.
 
 - **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
-- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows its narrative (`Composition.Text.Div`) in a `MessageBox`. Falls back to a Bundle summary if the questionnaire extracts non-Composition resources (e.g. definition-based `Observation`s). Its `WebContent/index.html` also shows the **Magic Clipboard** — a `<tiro-magic-clipboard>` pane beside the form that autofills it from pasted clinical notes via SDC `$populate`, with no host-side wiring at all. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard). `Form1_Load` adds the host-side counterpart: two **right-click menu items** (`ContextMenuItems`) that copy a configured value to the clipboard, for the clinician to paste with Ctrl+V. See [Host items in the form's right-click menu](#host-items-in-the-forms-right-click-menu).
+- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows its narrative (`Composition.Text.Div`) in a `MessageBox`. Falls back to a Bundle summary if the questionnaire extracts non-Composition resources (e.g. definition-based `Observation`s). Its `WebContent/index.html` also shows the **Magic Clipboard** — a `<tiro-magic-clipboard>` pane beside the form that autofills it from pasted clinical notes via SDC `$populate`, with no host-side wiring at all. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard). `Form1_Load` adds the host-side counterpart: four **right-click menu items** that insert a configured snippet at the caret — one of them starting from RTF, as a real EHR would. See [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu).
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
   - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
@@ -786,27 +784,56 @@ Unlike `<tiro-form-filler>`, the bridge does **not** wire it: it's page-owned, s
 
 Worked example: `samples/Tiro.Health.FormFiller.WebView2.ExtractSample/WebContent/index.html` — the clipboard in the left pane (dictation on), the form on the right, a status line driven by those events, and the host side (`Form1.vb`) untouched apart from a comment.
 
-### Host items in the form's right-click menu
+### Host snippets in the form's right-click menu
 
-The clipboard route: the EHR offers labelled entries in the form's context menu, each one
-copying host data, and the clinician pastes it where they want with **Ctrl+V**. Pasting itself
-needs nothing from the harness — WebView2 handles Ctrl+V as real typed input, so the answer
-reaches the `QuestionnaireResponse` exactly as if it had been typed. What the harness supplies
-is the menu:
+The EHR offers labelled entries in the form's context menu. Clicking one puts its content into
+the field the clinician right-clicked, at the caret — one action, and nothing goes near the
+Windows clipboard:
 
 ```vb
-' In Form_Load, or wherever the EHR knows its data. Read at menu time, not now.
-TiroFormViewer.ContextMenuItems.Add(
-    TiroContextMenuItem.CopyToClipboard("Copy patient name", Function() patient.Name(0).Text))
+' In Form_Load, or wherever the EHR knows its data.
+TiroFormViewer.AddInsertItem("Insert patient name",
+                             Function() patient.Name(0).Text)
 
-Dim copyConclusion As TiroContextMenuItem =
-    TiroContextMenuItem.CopyToClipboard("Copy conclusion", Function() currentConclusion)
-copyConclusion.IsVisible = Function(context) context.IsEditable   ' only over typeable fields
-TiroFormViewer.ContextMenuItems.Add(copyConclusion)
+TiroFormViewer.AddInsertItem("Insert conclusion",
+                             Function() TiroRtf.ToPlainText(conclusionRtf),   ' required
+                             Function() YourConverter(conclusionRtf),         ' optional HTML
+                             onResult:=Sub(r) If Not r.Inserted Then StatusLabel.Text = "Click in a field first")
 ```
 
 Right-click inside the form and the items appear below WebView2's own entries, separated from
 them.
+
+**How the content gets in.** Two mechanisms, picked per click:
+
+| | |
+|---|---|
+| HTML supplied, and the field takes it | a paste event synthesized in the page, which the rich-text editor handles through its own paste pipeline |
+| otherwise | `document.execCommand("insertText")` |
+
+The HTML is tried first and the plain text is the fallback, so one item serves a rich-text
+answer and a string-typed one. The `DataTransfer` behind that paste is an in-memory JavaScript
+object — the Windows clipboard is never involved, so the clinician's own copy is untouched and
+no patient text reaches a machine-wide surface.
+
+**No `QuestionnaireResponse` is written.** Content arrives as the input events a keystroke or a
+paste produces, so the renderer stays the only writer of answers and validation, dirty-state,
+provenance and the form's own undo all keep working. That also means the caret is the only
+target: there is no linkId to address, and the host needs no knowledge of the questionnaire's
+structure.
+
+**The outcome is measured, not assumed.** The editor calls `preventDefault()` on a paste it
+handles, so the page can tell whether the HTML actually landed. `onResult` receives a
+`TextInsertResult`:
+
+| | |
+|---|---|
+| `Inserted = False` | nothing was focused, or the field takes no free text |
+| `KeptFormatting = True` (`mode=Html`) | the formatting survived |
+| `KeptFormatting = False` (`mode=Text`) | that field can only hold plain text |
+
+The last one is worth acting on: it says the field cannot store formatting, so no better
+converter would change the result.
 
 **Configuring from the EHR.** `ContextMenuItems` is a plain `IList` you fill in code, and the
 harness reads it *on every right-click* — so nothing is baked in at startup:
@@ -815,97 +842,17 @@ harness reads it *on every right-click* — so nothing is baked in at startup:
   saved phrases) with an ordinary loop; the harness never parses config of its own.
 - Add, remove or relabel items whenever you like — when the patient changes, when a report
   reaches a state that makes a snippet meaningful.
-- The **text** is resolved at click time too. `CopyToClipboard` takes a `Func(Of String)`, not a
-  string, so a lambda closing over the EHR's current state always copies what's current — no
-  refresh step, no stale conclusion.
+- The **content** is resolved at click time. Both parameters are `Func(Of String)`, not strings,
+  so a lambda closing over the EHR's current state always inserts what is current.
 - `IsVisible` decides per click, from a `TiroContextMenuContext` carrying `IsEditable` (was the
   click in something typeable?) and `SelectionText` (what the user had selected — useful for a
   "look up this term" item, and clinical content, so treat it accordingly).
 
-`CopyToClipboard` carries **plain text** — which is what a form answer stores anyway. There is
-no rich-text flavour: HTML on the Windows clipboard needs a CF_HTML envelope with byte offsets,
-and RTF never reaches the page at all (Chromium doesn't read that flavour), so neither earns its
-place here.
-
-#### Copying formatted content
-
-The form's rich-text answers store HTML, and the embedded editor reads `text/html` on paste. So
-HTML is the format that carries formatting into a form field. `CopyHtmlToClipboard` puts it on
-the clipboard along with a plain-text rendition, and each answer type takes the one it reads:
-
-```vb
-TiroFormViewer.ContextMenuItems.Add(
-    TiroContextMenuItem.CopyHtmlToClipboard(
-        "Add conclusion to clipboard",
-        Function() RtfPipe.Rtf.ToHtml(conclusionRtf),   ' your converter
-        Function() RtfToPlainText(conclusionRtf)))      ' better than a tag strip
-```
-
-WinForms already contains an RTF parser, so the plain-text rendition needs no library either.
-Note the `Using`: `RichTextBox` owns a Win32 handle, and a clipboard item invoked once per click
-would otherwise leak one every time.
-
-```vb
-Private Shared Function RtfToPlainText(rtf As String) As String
-    If String.IsNullOrEmpty(rtf) Then Return String.Empty
-    Using box As New RichTextBox()
-        box.Rtf = rtf
-        Return box.Text
-    End Using
-End Function
-```
-
-- **RTF is deliberately not put on the clipboard.** Chromium never reads the Windows RTF
-  flavour, so it would do nothing for a paste into the form. Only HTML gets there.
-- **The harness converts nothing.** RTF→HTML needs a real library, and the choice is yours —
-  [RtfPipe](https://github.com/erdomke/RtfPipe) on `net48`, or a commercial engine you already
-  license. What the harness owns is the part that is shared and easy to get wrong: the CF_HTML
-  envelope.
-- **Require semantic tags or inline styles from your converter.** A clipboard HTML flavour is a
-  *fragment*, so a converter emitting CSS classes plus a stylesheet loses the stylesheet and
-  every rule with it: bold and italic survive as tags while underline, colour and fonts quietly
-  vanish. Partial survival is a confusing thing to debug, so it is worth checking before you
-  commit to a converter. (macOS `textutil` behaves this way; RtfPipe does not.)
-- **Both arguments are required, and neither is derived.** Stripping tags out of HTML gives a
-  poor rendition, and from RTF you get a much better one for free (above). A copy that silently
-  pastes nothing into a plain-string answer is worse still.
-- **`TiroClipboard.ToCfHtml` is public** if you want to frame HTML for a clipboard write of your
-  own. Its four offsets are **byte** offsets into UTF-8: with ASCII-only content bytes and
-  characters coincide, so a character-counting version looks correct until the first `°C` or
-  `µmol` truncates the fragment mid-markup. It is idempotent, so framing twice is harmless.
-- **What survives the paste is bounded by the editor**, not by your HTML. Constructs whose
-  editor nodes aren't registered in that field flatten to paragraphs and text — expected
-  behaviour, not a bug. Worth establishing where that line falls before investing in conversion
-  fidelity you cannot keep: paste a fragment containing bold, a list, a table and inline colour,
-  and see what comes through.
-
-#### Keeping copied content off the machine
-
-A copy leaves the application: the Windows clipboard is readable by every process on the
-machine. Two mechanisms narrow that, and they do different jobs.
-
-**Copies are marked not to be retained.** Every copy the harness makes carries the three
-Windows privacy formats — `ExcludeClipboardContentFromMonitorProcessing`,
-`CanIncludeInClipboardHistory` and `CanUploadToCloudClipboard` — so Windows keeps it out of
-clipboard history (Win+V) and out of Cloud Clipboard sync to the user's other devices, and
-clipboard managers that honour the exclusion leave it alone. This is the half that actually
-protects, because it stops the content being retained in the first place. Windows 10 1809 and
-later; on an older build the formats are simply ignored.
-
-**The clipboard is cleared when the viewer is disposed**, unless you set
-`ClearClipboardOnDispose = False`. It clears only when the clipboard still holds what a menu
-item put there, so a copy the clinician made afterwards — a URL, a password out of a manager —
-is never discarded. Best-effort: a clipboard held open by another process just means nothing is
-cleared.
-
-Worth being clear about the limit. Clearing shortens the window during which patient text sits
-on a shared clipboard; it cannot recall a copy that a clipboard manager, Cloud Clipboard or
-Remote Desktop redirection already took. That is precisely why the exclusion formats matter more
-than the clearing, and why both are on by default.
-
-If you set the clipboard yourself rather than through a menu item, `TiroClipboard.SetText` and
-`TiroClipboard.SetHtml` apply the same hints and tracking; a hand-rolled `Clipboard.SetText`
-gets neither.
+For anything other than inserting, construct the item directly: `New TiroContextMenuItem(label,
+action)`, where the action is `Action`, `Action(Of TiroContextMenuContext)`, or a
+`Func(Of TiroContextMenuContext, Task)` for async work — hand back the task rather than writing
+an `Async Sub` lambda, so the harness can observe a failure instead of it escaping as an
+unhandled async-void exception.
 
 **`AddInsertItem` does the wiring for you.** An insert item always needs the same three things,
 two of which are easy to get wrong, so there is a shorthand:
@@ -939,8 +886,8 @@ RTF throws rather than returning the raw markup, which would be worse in a clini
 RTF to *HTML* stays yours — that direction needs a real parser, and the choice belongs to whoever
 may already license a better engine than any open-source one.
 
-Worked example: the Extract sample's three **Add ... to clipboard** items in `Form1_Load` —
-two plain, one formatted.
+Worked example: the Extract sample's four **Insert ...** items in `Form1_Load` — two plain
+snippets, and two derived from an RTF constant (one flattened to text, one converted to HTML).
 
 ### Frontend version compatibility
 
