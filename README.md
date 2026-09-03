@@ -617,7 +617,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
-  - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` for the plain rendition of an RTF document
+  - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` and `TiroRtf.ToHtml` for both renditions of an RTF document
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's content, resolved per click, inserted at the caret; see [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
@@ -877,17 +877,42 @@ everywhere.
   controls directly.
 - Both providers run when the item is picked, not when it is added.
 
-**`TiroRtf.ToPlainText`** gives you the plain rendition from RTF using the parser WinForms
-already contains — no library needed for that direction. It is in the harness because the
-correct implementation has a trap in it: `RichTextBox` owns a Win32 handle and must be disposed,
-and a menu item runs once per click, so the obvious one-liner leaks a handle every time. Malformed
-RTF throws rather than returning the raw markup, which would be worse in a clinical field.
+**RTF helpers.** Most WinForms EHRs hold their content as RTF, so both renditions are available
+without writing a converter:
 
-RTF to *HTML* stays yours — that direction needs a real parser, and the choice belongs to whoever
-may already license a better engine than any open-source one.
+```vb
+TiroFormViewer.AddInsertItem("Insert conclusion",
+                             Function() TiroRtf.ToPlainText(conclusionRtf),
+                             Function() TiroRtf.ToHtml(conclusionRtf))
+```
+
+- **`TiroRtf.ToPlainText`** uses the RTF parser WinForms already contains, so that direction
+  needs no parsing code at all. It is in the harness because the correct version has a `Using`
+  in it: `RichTextBox` owns a Win32 handle, and a menu item runs once per click. Malformed RTF
+  throws rather than returning raw markup, which would be worse in a clinical field.
+- **`TiroRtf.ToHtml`** is a convenience converter, scoped on purpose to what the field can store:
+  - **Kept** — bold, italic and underline as semantic tags, paragraphs from `\par`, breaks from
+    `\line`, a hyperlink's visible text, and the punctuation RTF spells as control words
+    (`\ldblquote`, `\endash`, `\bullet` …), which Word emits constantly.
+  - **Flattened** — tables, lists, images, colours, fonts, embedded objects. The text survives,
+    the structure does not, because the editor has no node for any of it. A flattened table
+    still separates its cells and breaks its rows, so it reads rather than running together.
+  - **Handled properly** — character encoding. `\'hh` is decoded through the codepage the
+    document declares, consecutive escapes together so double-byte codepages work, and `\uN`
+    with exactly its `\ucN` fallback characters skipped. This is what decides whether an `é` or
+    a `µ` survives, and the usual reason a hand-rolled converter produces mojibake.
+  - Malformed RTF does not throw — a partial result beats a menu item that fails on a stray
+    brace.
+
+  It emits semantic tags rather than CSS classes deliberately: what is handed over is a fragment
+  with no stylesheet, so class-based styling would lose every rule with it.
+
+For RTF from arbitrary sources — Word imports, embedded logos, tracked changes — a dedicated
+library such as [RtfPipe](https://github.com/erdomke/RtfPipe) will do better. Pass its output as
+the `html` provider instead; nothing about `TiroRtf.ToHtml` is mandatory.
 
 Worked example: the Extract sample's four **Insert ...** items in `Form1_Load` — two plain
-snippets, and two derived from an RTF constant (one flattened to text, one converted to HTML).
+snippets, and two derived from an RTF constant through `TiroRtf`.
 
 ### Frontend version compatibility
 

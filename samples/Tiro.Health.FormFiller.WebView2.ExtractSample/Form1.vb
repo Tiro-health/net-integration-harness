@@ -88,12 +88,18 @@ Public Class Form1
                                      Function() TiroRtf.ToPlainText(ConclusionRtf),
                                      onResult:=AddressOf ShowInsertResult)
 
-        ' The same conclusion, keeping its formatting. The page offers the HTML to the field
-        ' first and falls back to the plain text if the field won't take it; onResult says which
-        ' happened, so what a given field can actually store is visible.
+        ' The same conclusion, keeping its formatting. Both renditions come from the harness:
+        ' ToPlainText uses the RTF parser WinForms already has, ToHtml is the harness's own
+        ' converter. The page offers the HTML to the field first and falls back to the plain text
+        ' if the field won't take it; onResult says which happened, so what a given field can
+        ' actually store is visible.
+        '
+        ' ToHtml is a convenience, not a full-fidelity converter — it keeps what the field can
+        ' store (emphasis, paragraphs) and flattens the rest. For RTF from arbitrary sources,
+        ' pass your own converter's output here instead; nothing about it is mandatory.
         TiroFormViewer.AddInsertItem("Insert conclusion (formatted)",
                                      Function() TiroRtf.ToPlainText(ConclusionRtf),
-                                     Function() ConvertRtfToHtml(ConclusionRtf),
+                                     Function() TiroRtf.ToHtml(ConclusionRtf),
                                      onResult:=AddressOf ShowInsertResult)
 
         ' Showcases passing an arbitrary named resource as launch context, alongside the
@@ -139,40 +145,6 @@ Public Class Form1
         "{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Calibri;}}\f0\fs22" &
         "{\b Assessment.} Findings consistent with the clinical picture; " &
         "{\i no further imaging indicated}.\par}"
-
-    ''' <summary>
-    ''' RTF to HTML. A STAND-IN: it returns a fixed fragment matching <see cref="ConclusionRtf"/>
-    ''' instead of parsing anything, so the sample can show the whole flow without taking a
-    ''' dependency the other samples don't have.
-    ''' </summary>
-    ''' <remarks>
-    ''' Replace the body with a real converter — <c>RtfPipe.Rtf.ToHtml(rtf)</c> on net48, or a
-    ''' commercial engine if you already license one. Two things to require of whichever you pick:
-    ''' <list type="bullet">
-    ''' <item><description>
-    ''' It must emit semantic tags (<c>&lt;b&gt;</c>, <c>&lt;i&gt;</c>) or inline styles. What
-    ''' is handed over is a body-level fragment with no stylesheet, so a converter that emits
-    ''' CSS classes loses every rule with it — underline and colour vanish while bold and italic
-    ''' survive, which is a confusing way to discover the problem.
-    ''' </description></item>
-    ''' <item><description>
-    ''' Fidelity beyond what the field can store is wasted. The rich-text answers keep inline
-    ''' formatting and links; constructs whose editor nodes aren't registered there (tables,
-    ''' possibly lists) flatten to paragraphs however good the conversion was.
-    ''' </description></item>
-    ''' </list>
-    ''' Returns a body-level fragment: no &lt;html&gt; or &lt;head&gt; wrapper. The harness adds
-    ''' the CF_HTML envelope.
-    ''' </remarks>
-    Private Shared Function ConvertRtfToHtml(rtf As String) As String
-        If String.IsNullOrEmpty(rtf) Then Return String.Empty
-        Return "<p><b>Assessment.</b> Findings consistent with the clinical picture; " &
-               "<i>no further imaging indicated</i>.</p>"
-    End Function
-
-    Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click
-        Await TiroFormViewer.SendFormRequestSubmitAsync()
-    End Sub
 
     Private Async Sub HandleFormSubmitted(sender As Object, e As FormSubmittedEventArgs(Of QuestionnaireResponse, OperationOutcome))
         If e.Outcome IsNot Nothing AndAlso e.Outcome.Success = False Then
