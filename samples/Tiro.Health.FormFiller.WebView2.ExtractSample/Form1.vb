@@ -62,42 +62,41 @@ Public Class Form1
         '
         ' A real EHR would build this list from its own configuration: it's read fresh on every
         ' right-click, and each item's value is resolved when it's picked (these close over
-        ' `patient` and `conclusion` rather than over a copy made now), so items can be added,
-        ' removed or relabelled per patient without touching the harness.
-        Dim conclusion As String = "Findings consistent with the clinical picture; no further imaging indicated."
+        ' `patient` and the constants above rather than over a copy made now), so items can be
+        ' added, removed or relabelled per patient without touching the harness.
 
-        ' Clipboard items: each copies a configured value, and the clinician then pastes it
-        ' with Ctrl+V into whichever field they want — exactly like any other copy. Plain text,
-        ' which is all a form answer stores. Shown everywhere, since a copy makes sense whatever
-        ' was right-clicked.
+        ' Plain text: the value is copied as-is, and the clinician pastes it with Ctrl+V into
+        ' whichever field they want — exactly like any other copy. Plain text is all a
+        ' string-typed answer stores, so for most fields this is the whole story. Shown
+        ' everywhere, since a copy makes sense whatever was right-clicked.
         TiroFormViewer.ContextMenuItems.Add(
             TiroContextMenuItem.CopyToClipboard(
                 "Add patient name to clipboard", Function() patient.Name(0).Text))
 
+        ' The same conclusion the EHR holds as RTF (ConclusionRtf), but flattened to plain text
+        ' through WinForms' own RTF parser. Pastes into any field, formatting dropped.
         TiroFormViewer.ContextMenuItems.Add(
             TiroContextMenuItem.CopyToClipboard(
-                "Add conclusion to clipboard", Function() conclusion))
+                "Add conclusion to clipboard (plain text)",
+                Function() RtfToPlainText(ConclusionRtf)))
 
-        ' Formatted content, for the form's rich-text answers. HTML is what those fields read on
-        ' paste and what they store; the plain text is what a plain-string answer reads, so both
-        ' go on the clipboard together.
+        ' The same conclusion again, this time keeping its formatting. Both renditions go on the
+        ' clipboard together and the paste target picks: a rich-text answer reads the HTML, a
+        ' string-typed answer reads the plain text. So one item covers both kinds of field.
         '
-        ' A real EHR holds RTF and converts it here — RtfPipe's Rtf.ToHtml(rtf) or whichever
-        ' library it already trusts — at click time, so the conversion follows the EHR's current
-        ' state. One rule for the converter: it must emit semantic tags or inline styles, because
-        ' a clipboard HTML fragment carries no stylesheet, so class-based styling loses underline
-        ' and colour while bold survives.
+        ' This is the shape a real integration takes. The EHR holds RTF; at click time it
+        ' converts to HTML for the clipboard, and to plain text for the fallback. Nothing is
+        ' converted up front, so both follow the EHR's current state.
         '
-        ' For the plain text, RtfToPlainText below beats stripping tags out of the HTML.
-        '
-        ' Hardcoded here because the sample has no RTF to convert.
+        ' Note what the harness does and does not do here. It builds the CF_HTML envelope
+        ' Windows needs — the header whose four offsets count BYTES, not characters — and puts
+        ' both renditions on the clipboard. It converts nothing: the RTF-to-HTML step is
+        ' ConvertRtfToHtml below, which is yours to choose.
         TiroFormViewer.ContextMenuItems.Add(
             TiroContextMenuItem.CopyHtmlToClipboard(
-                "Add formatted conclusion to clipboard",
-                Function() "<p><b>Assessment.</b> Findings consistent with the clinical " &
-                           "picture; <i>no further imaging indicated</i>.</p>",
-                Function() "Assessment. Findings consistent with the clinical picture; " &
-                           "no further imaging indicated."))
+                "Add conclusion to clipboard (formatted)",
+                Function() ConvertRtfToHtml(ConclusionRtf),
+                Function() RtfToPlainText(ConclusionRtf)))
 
         ' Showcases passing an arbitrary named resource as launch context, alongside the
         ' well-known patient/encounter/author shorthand — here a Specimen, via the
@@ -118,6 +117,16 @@ Public Class Form1
     End Sub
 
     ''' <summary>
+    ''' The conclusion as the EHR holds it: RTF. Real integrations get this from their own
+    ''' store — this constant stands in for that, so the clipboard items below show the shape a
+    ''' real one takes rather than starting from HTML nobody would have.
+    ''' </summary>
+    Private Const ConclusionRtf As String =
+        "{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Calibri;}}\f0\fs22" &
+        "{\b Assessment.} Findings consistent with the clinical picture; " &
+        "{\i no further imaging indicated}.\par}"
+
+    ''' <summary>
     ''' Plain text out of RTF, using WinForms' own RTF parser — no library needed. A named
     ''' helper rather than an inline lambda because RichTextBox owns a Win32 handle: it has to
     ''' be disposed, and one clipboard item per click would otherwise leak one each time.
@@ -128,6 +137,36 @@ Public Class Form1
             box.Rtf = rtf
             Return box.Text
         End Using
+    End Function
+
+    ''' <summary>
+    ''' RTF to HTML. A STAND-IN: it returns a fixed fragment matching <see cref="ConclusionRtf"/>
+    ''' instead of parsing anything, so the sample can show the whole flow without taking a
+    ''' dependency the other samples don't have.
+    ''' </summary>
+    ''' <remarks>
+    ''' Replace the body with a real converter — <c>RtfPipe.Rtf.ToHtml(rtf)</c> on net48, or a
+    ''' commercial engine if you already license one. Two things to require of whichever you pick:
+    ''' <list type="bullet">
+    ''' <item><description>
+    ''' It must emit semantic tags (<c>&lt;b&gt;</c>, <c>&lt;i&gt;</c>) or inline styles. A
+    ''' clipboard HTML flavour is a fragment, so a converter that emits CSS classes plus a
+    ''' stylesheet loses the stylesheet and every rule with it — underline and colour vanish
+    ''' while bold and italic survive, which is a confusing way to discover the problem.
+    ''' </description></item>
+    ''' <item><description>
+    ''' Fidelity beyond what the field can store is wasted. The rich-text answers keep inline
+    ''' formatting and links; constructs whose editor nodes aren't registered there (tables,
+    ''' possibly lists) flatten to paragraphs however good the conversion was.
+    ''' </description></item>
+    ''' </list>
+    ''' Returns a body-level fragment: no &lt;html&gt; or &lt;head&gt; wrapper. The harness adds
+    ''' the CF_HTML envelope.
+    ''' </remarks>
+    Private Shared Function ConvertRtfToHtml(rtf As String) As String
+        If String.IsNullOrEmpty(rtf) Then Return String.Empty
+        Return "<p><b>Assessment.</b> Findings consistent with the clinical picture; " &
+               "<i>no further imaging indicated</i>.</p>"
     End Function
 
     Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click
