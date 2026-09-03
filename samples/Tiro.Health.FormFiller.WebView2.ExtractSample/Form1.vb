@@ -58,71 +58,41 @@ Public Class Form1
         }
 
         ' The right-click menu, host-side. The harness appends these to the embedded browser's
-        ' own context menu, below its native entries.
+        ' own context menu, below its native entries. Because it is the browser's own menu, the
+        ' click never leaves the page: the caret stays exactly where the clinician
+        ' right-clicked, which is what lets these insert there.
         '
         ' A real EHR would build this list from its own configuration: it's read fresh on every
         ' right-click, and each item's value is resolved when it's picked (these close over
-        ' `patient` and the constants above rather than over a copy made now), so items can be
+        ' `patient` and the constants below rather than over a copy made now), so items can be
         ' added, removed or relabelled per patient without touching the harness.
-
-        ' Plain text: the value is copied as-is, and the clinician pastes it with Ctrl+V into
-        ' whichever field they want — exactly like any other copy. Plain text is all a
-        ' string-typed answer stores, so for most fields this is the whole story. Shown
-        ' everywhere, since a copy makes sense whatever was right-clicked.
-        TiroFormViewer.ContextMenuItems.Add(
-            TiroContextMenuItem.CopyToClipboard(
-                "Add patient name to clipboard", Function() patient.Name(0).Text))
-
-        ' The same conclusion the EHR holds as RTF (ConclusionRtf), but flattened to plain text
-        ' through WinForms' own RTF parser. Pastes into any field, formatting dropped.
-        TiroFormViewer.ContextMenuItems.Add(
-            TiroContextMenuItem.CopyToClipboard(
-                "Add conclusion to clipboard (plain text)",
-                Function() RtfToPlainText(ConclusionRtf)))
-
-        ' The same conclusion again, this time keeping its formatting. Both renditions go on the
-        ' clipboard together and the paste target picks: a rich-text answer reads the HTML, a
-        ' string-typed answer reads the plain text. So one item covers both kinds of field.
         '
-        ' This is the shape a real integration takes. The EHR holds RTF; at click time it
-        ' converts to HTML for the clipboard, and to plain text for the fallback. Nothing is
-        ' converted up front, so both follow the EHR's current state.
+        ' Nothing here touches the Windows clipboard. The content goes straight into the field
+        ' that was right-clicked, so the clinician needs one click instead of a copy and a
+        ' Ctrl+V, whatever they had copied is left alone, and no patient text is ever put on a
+        ' machine-wide surface.
         '
-        ' Note what the harness does and does not do here. It builds the CF_HTML envelope
-        ' Windows needs — the header whose four offsets count BYTES, not characters — and puts
-        ' both renditions on the clipboard. It converts nothing: the RTF-to-HTML step is
-        ' ConvertRtfToHtml below, which is yours to choose.
-        TiroFormViewer.ContextMenuItems.Add(
-            TiroContextMenuItem.CopyHtmlToClipboard(
-                "Add conclusion to clipboard (formatted)",
-                Function() ConvertRtfToHtml(ConclusionRtf),
-                Function() RtfToPlainText(ConclusionRtf)))
+        ' IsVisible = IsEditable on every item: over a checkbox or a read-only score there is
+        ' nothing to insert into, so the item stays out of the menu rather than doing nothing.
+        AddInsertItem("Insert patient name",
+                      Function() patient.Name(0).Text)
 
-        ' ONE-CLICK insertion. These skip the clipboard entirely: the content goes straight into
-        ' the field that was right-clicked, at the caret. IsVisible hides them where there is
-        ' nothing to type into, so they can't be picked over a checkbox or a read-only score.
-        '
-        ' InsertContentAsync returns what the page managed to do, which is the interesting part
-        ' of this experiment:
-        '   Inserted = False        nothing was focused
-        '   Mode = Text             plain text went in
-        '   Mode = Html             the formatting survived
-        '
-        ' Passing html is optional. The page offers it to the field first and falls back to the
-        ' plain text when the field won't take it — so Mode tells you what that field can
-        ' actually store, which no amount of conversion quality can change.
-        Dim insertPlain As New TiroContextMenuItem(
-            "Insert conclusion at cursor (plain)",
-            Function(context) ShowInsertResult(TiroFormViewer.InsertContentAsync(RtfToPlainText(ConclusionRtf))))
-        insertPlain.IsVisible = Function(context) context.IsEditable
-        TiroFormViewer.ContextMenuItems.Add(insertPlain)
+        AddInsertItem("Insert ""no known drug allergies""",
+                      Function() "No known drug allergies.")
 
-        Dim insertFormatted As New TiroContextMenuItem(
-            "Insert conclusion at cursor (formatted)",
-            Function(context) ShowInsertResult(TiroFormViewer.InsertContentAsync(
-                RtfToPlainText(ConclusionRtf), ConvertRtfToHtml(ConclusionRtf))))
-        insertFormatted.IsVisible = Function(context) context.IsEditable
-        TiroFormViewer.ContextMenuItems.Add(insertFormatted)
+        ' The conclusion the EHR holds as RTF, flattened to plain text by WinForms' own RTF
+        ' parser. Goes into any field; formatting dropped.
+        AddInsertItem("Insert conclusion (plain text)",
+                      Function() RtfToPlainText(ConclusionRtf))
+
+        ' The same conclusion, keeping its formatting. This is the item to watch: the page
+        ' offers the HTML to the field first and falls back to the plain text if the field
+        ' won't take it, and the window title says which happened. Mode=Html means a rich-text
+        ' answer kept the bold and italic; Mode=Text means that field can only hold plain text,
+        ' which no amount of conversion quality would change.
+        AddInsertItem("Insert conclusion (formatted)",
+                      Function() RtfToPlainText(ConclusionRtf),
+                      Function() ConvertRtfToHtml(ConclusionRtf))
 
         ' Showcases passing an arbitrary named resource as launch context, alongside the
         ' well-known patient/encounter/author shorthand — here a Specimen, via the
@@ -140,6 +110,28 @@ Public Class Form1
             launchContext:=New List(Of LaunchContext(Of Resource)) From {
                 New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
             })
+    End Sub
+
+    ''' <summary>
+    ''' Adds a right-click item that inserts content at the caret. Wraps the three lines every
+    ''' such item needs — build it, hide it where there is nothing to type into, add it — so the
+    ''' menu above reads as a list of snippets rather than as plumbing.
+    ''' </summary>
+    ''' <param name="label">The menu text.</param>
+    ''' <param name="text">Plain-text rendition, resolved at click time. Always required.</param>
+    ''' <param name="html">
+    ''' Optional body-level HTML fragment. Supplied only for content whose formatting matters;
+    ''' the page falls back to <paramref name="text"/> when the field cannot take it.
+    ''' </param>
+    Private Sub AddInsertItem(label As String,
+                              text As Func(Of String),
+                              Optional html As Func(Of String) = Nothing)
+        Dim item As New TiroContextMenuItem(
+            label,
+            Function(context) ShowInsertResult(
+                TiroFormViewer.InsertContentAsync(text(), If(html Is Nothing, Nothing, html()))))
+        item.IsVisible = Function(context) context.IsEditable
+        TiroFormViewer.ContextMenuItems.Add(item)
     End Sub
 
     ''' <summary>
