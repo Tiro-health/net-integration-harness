@@ -1,5 +1,4 @@
 Imports System.IO
-Imports System.Threading.Tasks
 Imports Hl7.Fhir.Model
 Imports Tiro.Health.SmartWebMessaging.Events
 Imports Tiro.Health.SmartWebMessaging.Message.Payload
@@ -148,7 +147,12 @@ Public Class Form1
     ''' is visible without a debugger. A real integration would show nothing on success and
     ''' "click in a field first" when nothing was focused.
     ''' </summary>
-    Private Async Function ShowInsertResult(pending As Task(Of TextInsertResult)) As Task
+    ' Task is fully qualified on purpose: Hl7.Fhir.Model, imported above, also defines a Task
+    ' (the FHIR resource), so the unqualified name is ambiguous here. The C# projects solve the
+    ' same clash with a `using Task = System.Threading.Tasks.Task` alias, which VB can't apply
+    ' to the generic Task(Of T).
+    Private Async Function ShowInsertResult(
+        pending As System.Threading.Tasks.Task(Of TextInsertResult)) As System.Threading.Tasks.Task
         Dim result As TextInsertResult = Await pending
         Dim summary As String
         If Not result.Inserted Then
