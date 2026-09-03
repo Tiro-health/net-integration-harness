@@ -82,5 +82,31 @@ namespace Tiro.Health.FormFiller.WebView2
                 Clipboard.SetDataObject(value, copy: true, retryTimes: 5, retryDelay: 50);
             }));
         }
+
+        /// <summary>
+        /// An item that copies formatted content, so it pastes into the form's rich-text
+        /// answers with its formatting intact. Both providers run at click time, so an EHR can
+        /// convert its RTF then rather than up front.
+        /// </summary>
+        /// <remarks>
+        /// The HTML is what a rich-text answer reads; the plain text is what a plain-string
+        /// answer reads, so both are needed and neither is derived from the other. The harness
+        /// does no conversion — see <see cref="TiroClipboard"/> for what to require of a
+        /// converter, and for why RTF itself is not put on the clipboard.
+        /// </remarks>
+        /// <param name="label">The menu text.</param>
+        /// <param name="html">Body-level HTML fragment; the CF_HTML envelope is added for you.</param>
+        /// <param name="plainText">
+        /// The plain-text rendition. From RTF, <c>New RichTextBox() With {.Rtf = rtf}.Text</c>
+        /// beats anything derivable from the HTML.
+        /// </param>
+        public static TiroContextMenuItem CopyHtmlToClipboard(
+            string label, Func<string> html, Func<string> plainText)
+        {
+            if (html == null) throw new ArgumentNullException(nameof(html));
+            if (plainText == null) throw new ArgumentNullException(nameof(plainText));
+            return new TiroContextMenuItem(label, (Action<TiroContextMenuContext>)(_ =>
+                TiroClipboard.SetHtml(html(), plainText())));
+        }
     }
 }

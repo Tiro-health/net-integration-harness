@@ -618,6 +618,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's data, resolved per click; see [Host items in the form's right-click menu](#host-items-in-the-forms-right-click-menu)
+  - Formatted clipboard content via `TiroClipboard` — HTML (CF_HTML envelope built for you, byte offsets and all) plus a plain-text rendition, so a copy pastes into the form's rich-text answers with its formatting intact; conversion stays the consumer's, see [Copying formatted content](#copying-formatted-content)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
@@ -824,7 +825,46 @@ no rich-text flavour: HTML on the Windows clipboard needs a CF_HTML envelope wit
 and RTF never reaches the page at all (Chromium doesn't read that flavour), so neither earns its
 place here.
 
-Worked example: the Extract sample's two **Add ... to clipboard** items in `Form1_Load`.
+#### Copying formatted content
+
+The form's rich-text answers store HTML, and the embedded editor reads `text/html` on paste. So
+HTML is the format that carries formatting into a form field. `CopyHtmlToClipboard` puts it on
+the clipboard along with a plain-text rendition, and each answer type takes the one it reads:
+
+```vb
+TiroFormViewer.ContextMenuItems.Add(
+    TiroContextMenuItem.CopyHtmlToClipboard(
+        "Add conclusion to clipboard",
+        Function() RtfPipe.Rtf.ToHtml(conclusionRtf),                     ' your converter
+        Function() New RichTextBox() With {.Rtf = conclusionRtf}.Text))   ' better than a tag strip
+```
+
+- **RTF is deliberately not put on the clipboard.** Chromium never reads the Windows RTF
+  flavour, so it would do nothing for a paste into the form. Only HTML gets there.
+- **The harness converts nothing.** RTF→HTML needs a real library, and the choice is yours —
+  [RtfPipe](https://github.com/erdomke/RtfPipe) on `net48`, or a commercial engine you already
+  license. What the harness owns is the part that is shared and easy to get wrong: the CF_HTML
+  envelope.
+- **Require semantic tags or inline styles from your converter.** A clipboard HTML flavour is a
+  *fragment*, so a converter emitting CSS classes plus a stylesheet loses the stylesheet and
+  every rule with it: bold and italic survive as tags while underline, colour and fonts quietly
+  vanish. Partial survival is a confusing thing to debug, so it is worth checking before you
+  commit to a converter. (macOS `textutil` behaves this way; RtfPipe does not.)
+- **Both arguments are required, and neither is derived.** Stripping tags out of HTML gives a
+  poor rendition, and from RTF you get a much better one for free. A copy that silently pastes
+  nothing into a plain-string answer is worse still.
+- **`TiroClipboard.ToCfHtml` is public** if you want to frame HTML for a clipboard write of your
+  own. Its four offsets are **byte** offsets into UTF-8: with ASCII-only content bytes and
+  characters coincide, so a character-counting version looks correct until the first `°C` or
+  `µmol` truncates the fragment mid-markup. It is idempotent, so framing twice is harmless.
+- **What survives the paste is bounded by the editor**, not by your HTML. Constructs whose
+  editor nodes aren't registered in that field flatten to paragraphs and text — expected
+  behaviour, not a bug. Worth establishing where that line falls before investing in conversion
+  fidelity you cannot keep: paste a fragment containing bold, a list, a table and inline colour,
+  and see what comes through.
+
+Worked example: the Extract sample's three **Add ... to clipboard** items in `Form1_Load` —
+two plain, one formatted.
 
 ### Frontend version compatibility
 

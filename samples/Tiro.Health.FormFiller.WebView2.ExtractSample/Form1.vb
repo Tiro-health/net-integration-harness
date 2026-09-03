@@ -78,6 +78,26 @@ Public Class Form1
             TiroContextMenuItem.CopyToClipboard(
                 "Add conclusion to clipboard", Function() conclusion))
 
+        ' Formatted content, for the form's rich-text answers. HTML is what those fields read on
+        ' paste and what they store; the plain text is what a plain-string answer reads, so both
+        ' go on the clipboard together.
+        '
+        ' A real EHR holds RTF and converts it here — RtfPipe's Rtf.ToHtml(rtf) or whichever
+        ' library it already trusts — at click time, so the conversion follows the EHR's current
+        ' state. Two rules for the converter: it must emit semantic tags or inline styles (a
+        ' clipboard HTML fragment has no stylesheet, so class-based styling loses underline and
+        ' colour while bold survives), and the plain text is better taken from the RTF with
+        ' New RichTextBox() With {.Rtf = rtf}.Text than stripped out of the HTML.
+        '
+        ' Hardcoded here because the sample has no RTF to convert.
+        TiroFormViewer.ContextMenuItems.Add(
+            TiroContextMenuItem.CopyHtmlToClipboard(
+                "Add formatted conclusion to clipboard",
+                Function() "<p><b>Assessment.</b> Findings consistent with the clinical " &
+                           "picture; <i>no further imaging indicated</i>.</p>",
+                Function() "Assessment. Findings consistent with the clinical picture; " &
+                           "no further imaging indicated."))
+
         ' Showcases passing an arbitrary named resource as launch context, alongside the
         ' well-known patient/encounter/author shorthand — here a Specimen, via the
         ' launchContext parameter. Purely illustrative: this sample form doesn't reference
