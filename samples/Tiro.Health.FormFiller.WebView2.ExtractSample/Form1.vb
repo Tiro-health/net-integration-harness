@@ -12,7 +12,7 @@ Public Class Form1
     ' $populate / $validate / $generate-narrative for the form) and the $extract client, so
     ' they always target the same server. Point this at your own SDC server for production;
     ' https://sdc.tiro.health/fhir/r5 is the shared demo instance (also the viewer's default).
-    Private Const SdcEndpoint As String = "https://sdc-dev.tiro.health/fhir/r5"
+    Private Const SdcEndpoint As String = "https://sdc.tiro.health/fhir/r5"
 
     ' Set right before a program-initiated Me.Close() (from HandleFormSubmitted /
     ' HandleCloseApplication) so Form1_FormClosing's unsaved-changes prompt doesn't
