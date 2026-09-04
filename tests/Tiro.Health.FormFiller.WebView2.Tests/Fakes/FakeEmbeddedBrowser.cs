@@ -10,7 +10,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
     /// (posted messages, init scripts, virtual host mappings, navigations) and exposes
     /// <see cref="RaiseMessageReceived"/> so tests can simulate inbound page→host messages.
     /// </summary>
-    public sealed class FakeEmbeddedBrowser : IEmbeddedBrowser
+    public sealed class FakeEmbeddedBrowser : IEmbeddedBrowser, IContextMenuCapableBrowser
     {
         private readonly Control _control = new Control();
 
@@ -24,6 +24,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public Control Control => _control;
 
         public event EventHandler<string> MessageReceived;
+
+        /// <summary>
+        /// Set by the viewer at init. Tests call it to model a right-click, since the real menu
+        /// is Chromium's and never appears in a unit test.
+        /// </summary>
+        public Func<TiroContextMenuContext, IReadOnlyList<EmbeddedBrowserMenuItem>> ContextMenuItemsProvider { get; set; }
+
+        /// <summary>The items a right-click on the given target would show.</summary>
+        public IReadOnlyList<EmbeddedBrowserMenuItem> RequestContextMenu(bool isEditable = true, string selectionText = null)
+            => ContextMenuItemsProvider?.Invoke(new TiroContextMenuContext(isEditable, selectionText));
 
         public Task InitializeAsync()
         {

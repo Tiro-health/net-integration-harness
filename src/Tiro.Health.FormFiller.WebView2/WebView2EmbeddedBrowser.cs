@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -13,7 +14,7 @@ namespace Tiro.Health.FormFiller.WebView2
     /// served from <see cref="TrustedMicrophoneOriginHost"/>; other origins fall through
     /// to WebView2's default-deny behaviour.
     /// </summary>
-    public sealed class WebView2EmbeddedBrowser : IEmbeddedBrowser
+    public sealed class WebView2EmbeddedBrowser : IEmbeddedBrowser, IContextMenuCapableBrowser
     {
         // Must match TiroFormViewer.VirtualHostName — that's the host the viewer maps to
         // its content folder and navigates to. Hardcoded both sides because there is one
@@ -23,6 +24,21 @@ namespace Tiro.Health.FormFiller.WebView2
         private readonly WebView2Control _webView2;
         private bool _coreSubscribed;
         private bool _disposed;
+
+        // Custom context-menu items are created against the WebView2 environment, which caps
+        // the number of live ones (1000) and whose docs ask for reuse across events. A menu
+        // requested on every right-click would otherwise mint a new item each time, so they're
+        // cached by label — the label being the identity the user sees anyway — and only the
+        // action behind one is swapped before the menu is shown.
+        private readonly Dictionary<string, CachedMenuItem> _menuItemCache =
+            new Dictionary<string, CachedMenuItem>(StringComparer.Ordinal);
+        private CoreWebView2ContextMenuItem _menuSeparator;
+
+        private sealed class CachedMenuItem
+        {
+            public CoreWebView2ContextMenuItem Native;
+            public Action Action;
+        }
 
         public WebView2EmbeddedBrowser()
             : this(new WebView2Control())
@@ -46,6 +62,7 @@ namespace Tiro.Health.FormFiller.WebView2
             if (_coreSubscribed) return;
             _webView2.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
             _webView2.CoreWebView2.PermissionRequested += OnPermissionRequested;
+            _webView2.CoreWebView2.ContextMenuRequested += OnContextMenuRequested;
             _coreSubscribed = true;
         }
 
@@ -115,6 +132,76 @@ namespace Tiro.Health.FormFiller.WebView2
             await _webView2.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(script);
         }
 
+        /// <inheritdoc />
+        public Func<TiroContextMenuContext, IReadOnlyList<EmbeddedBrowserMenuItem>> ContextMenuItemsProvider { get; set; }
+
+        /// <summary>
+        /// Appends the host's items to the browser's own context menu. <c>Handled</c> is left
+        /// false on purpose: WebView2 then shows its native menu *including* what was added
+        /// here, so the click never leaves the page — the caret stays where the user
+        /// right-clicked and Ctrl+V still pastes there. Suppressing the menu to show a WinForms
+        /// one instead would take focus out of the browser and lose that.
+        /// </summary>
+        private void OnContextMenuRequested(object sender, CoreWebView2ContextMenuRequestedEventArgs e)
+        {
+            if (_disposed) return;
+            var provider = ContextMenuItemsProvider;
+            if (provider == null) return;
+
+            IReadOnlyList<EmbeddedBrowserMenuItem> items;
+            try
+            {
+                var target = e.ContextMenuTarget;
+                var context = new TiroContextMenuContext(
+                    target != null && target.IsEditable,
+                    target != null && target.HasSelection ? target.SelectionText : null);
+                items = provider(context);
+            }
+            catch (Exception ex)
+            {
+                // The provider is the viewer's, which already guards the host's delegates. If
+                // one still escapes, the menu appears without host items rather than the
+                // WebView2 event faulting mid-dispatch.
+                Debug.Fail("Context menu provider threw: " + ex.Message);
+                return;
+            }
+            if (items == null || items.Count == 0) return;
+
+            var environment = _webView2.CoreWebView2?.Environment;
+            if (environment == null) return;
+
+            // A separator only earns its place if there's something above it to separate from.
+            if (e.MenuItems.Count > 0) e.MenuItems.Add(Separator(environment));
+
+            foreach (var item in items)
+            {
+                if (item == null) continue;
+                var cached = CachedItem(environment, item.Label);
+                if (cached == null) continue;
+                cached.Action = item.Invoke;
+                e.MenuItems.Add(cached.Native);
+            }
+        }
+
+        private CoreWebView2ContextMenuItem Separator(CoreWebView2Environment environment)
+            => _menuSeparator ?? (_menuSeparator = environment.CreateContextMenuItem(
+                null, null, CoreWebView2ContextMenuItemKind.Separator));
+
+        private CachedMenuItem CachedItem(CoreWebView2Environment environment, string label)
+        {
+            if (_menuItemCache.TryGetValue(label, out var existing)) return existing;
+
+            var created = new CachedMenuItem
+            {
+                Native = environment.CreateContextMenuItem(label, null, CoreWebView2ContextMenuItemKind.Command),
+            };
+            // Subscribed once for the lifetime of the cached item; the handler reads whichever
+            // action was attached for the menu currently on screen.
+            created.Native.CustomItemSelected += (_, __) => created.Action?.Invoke();
+            _menuItemCache[label] = created;
+            return created;
+        }
+
         private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             if (_disposed) return;
@@ -146,7 +233,11 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 _webView2.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
                 _webView2.CoreWebView2.PermissionRequested -= OnPermissionRequested;
+                _webView2.CoreWebView2.ContextMenuRequested -= OnContextMenuRequested;
             }
+            ContextMenuItemsProvider = null;
+            _menuItemCache.Clear();
+            _menuSeparator = null;
             // The WebView2 control itself is disposed by its parent UserControl
             // via the WinForms Controls-collection ownership chain.
         }

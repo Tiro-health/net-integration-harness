@@ -13,10 +13,12 @@
  *   - window.tiro.cancel()                  — fires ui.done (user closed without submit)
  *   - <tiro-form-filler> auto-wired         — bridge sets questionnaire on display,
  *                                              forwards user submissions to host
+ *   - host content insertion                — ui.form.insertContent puts host-supplied text
+ *                                              or HTML into the focused field at the caret
  *   - document CustomEvents (status hooks)  — tiro-connected, tiro-submitted,
  *                                              tiro-submit-error, tiro-cancelled,
  *                                              tiro-disconnected, tiro-sdk-error,
- *                                              tiro-sdk-collision
+ *                                              tiro-sdk-collision, tiro-content-inserted
  *   - window.SmartWebMessaging              — lower-level API for advanced consumers
  *                                              (sendRequest/sendEvent/on); the documented
  *                                              path is the hooks above.
@@ -196,8 +198,15 @@
         handleHostMessage(message) {
             const handler = this.listeners[message.messageType];
             if (handler) {
+                let extras;
                 try {
-                    handler(message.payload);
+                    // A handler that returns a plain object has its fields merged into the ack,
+                    // which is how the host learns an outcome the message itself can't carry —
+                    // ui.form.insertContent reporting whether anything was inserted and which
+                    // path ran. Not an error (nothing failed), so it must not take the error
+                    // branch; the .NET side reads it off the response payload's extension
+                    // fields. Handlers that return nothing ack exactly as before.
+                    extras = handler(message.payload);
                 } catch (err) {
                     console.error("[SWM] handler error for " + message.messageType, err);
                     this.sendResponse(message.messageId, {
@@ -207,7 +216,12 @@
                     });
                     return;
                 }
-                this.sendResponse(message.messageId, { $type: "base" });
+                // $type is written FIRST and re-asserted last: System.Text.Json wants the
+                // polymorphic discriminator ahead of the payload's own fields, and Object.assign
+                // overwrites a value without moving the key, so a handler can't displace it.
+                const ack = { $type: "base" };
+                if (extras && typeof extras === "object") Object.assign(ack, extras, { $type: "base" });
+                this.sendResponse(message.messageId, ack);
             } else {
                 this.sendResponse(message.messageId, {
                     $type: "error",
@@ -428,7 +442,284 @@
     }
 
     // ============================================================
-    // 5. Sentry boot from window.__tiroSentryConfig
+    // 5. Host-driven content insertion (ui.form.insertContent)
+    // ============================================================
+
+    // The host owns UI the page can't see — a snippet list, a labelled clipboard, a
+    // macro menu in the EHR. `ui.form.insertContent` lets that UI put content into the
+    // field the clinician is standing in, at the caret, WITHOUT touching the
+    // QuestionnaireResponse: it goes in through the same input events a keystroke or a
+    // paste produces, so the renderer stays the only writer of answers and validation,
+    // dirty-state, provenance and the form's own undo all keep working. Nothing here
+    // knows what a linkId is.
+    //
+    // The payload carries `text` always and `html` optionally. With html present the
+    // rich path is tried first (a synthesized paste, which the SDK's editor handles
+    // through its own paste pipeline); it falls back to plain text when the field turns
+    // out not to accept rich content. The ack reports which path ran, so the host can
+    // tell "formatted" from "plain, because the field wouldn't take it".
+    //
+    // Types are deliberately loose (`any`) in this section: it handles whatever field the
+    // page or the SDK happens to render, which is outside the frontend contract that
+    // build/bridge-contract checks. Casting each access would add noise without checking
+    // anything real.
+
+    /**
+     * The page's last-focused text field. Kept because the host-side click that triggers
+     * an insert moves OS focus out of the WebView2 — by the time the message arrives,
+     * `document.activeElement` may be the body.
+     * @type {any}
+     */
+    let lastEditable = null;
+
+    /**
+     * Caret/selection inside that field, snapshotted on the way out. Only needed for
+     * contenteditable: Chromium restores an <input>/<textarea>'s selection itself when the
+     * element regains focus, but a contenteditable comes back with the caret collapsed to
+     * the start, which would drop host text at the top of a paragraph the clinician was
+     * typing at the end of.
+     * @type {any}
+     */
+    let lastRange = null;
+
+    // <input> types that accept typed text and are sane targets for a host snippet.
+    // password is excluded on purpose (a host menu has no business filling one), as are
+    // number/date/color/checkbox and friends, whose value grammar an arbitrary snippet
+    // would violate — insertText into them either no-ops or produces an invalid value.
+    const INSERTABLE_INPUT_TYPES = ["text", "search", "url", "tel", "email"];
+
+    /** @param {any} node */
+    function isTextEditable(node) {
+        if (!node || node.nodeType !== 1) return false;
+        if (node.isContentEditable) return true;
+        const tag = node.tagName;
+        if (tag === "TEXTAREA") return !node.readOnly && !node.disabled;
+        if (tag !== "INPUT") return false;
+        const type = (node.getAttribute("type") || "text").toLowerCase();
+        return INSERTABLE_INPUT_TYPES.indexOf(type) !== -1 && !node.readOnly && !node.disabled;
+    }
+
+    /**
+     * The focused element, descending through shadow roots. The form's fields live inside
+     * <tiro-form-filler>'s shadow tree, where `document.activeElement` stops at the host
+     * element.
+     * @returns {any}
+     */
+    function deepActiveElement() {
+        let el = /** @type {any} */ (document.activeElement);
+        while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+        return el;
+    }
+
+    /**
+     * The selection that belongs to `el`, or null. Reads it off the element's own root:
+     * a selection inside a shadow tree is not visible on `document.getSelection()` in
+     * Chromium — `shadowRoot.getSelection()` is.
+     * @param {any} el
+     * @returns {any}
+     */
+    function selectionRangeIn(el) {
+        try {
+            const root = typeof el.getRootNode === "function" ? el.getRootNode() : document;
+            const selection = typeof root.getSelection === "function"
+                ? root.getSelection()
+                : (typeof document.getSelection === "function" ? document.getSelection() : null);
+            if (!selection || selection.rangeCount === 0) return null;
+            const range = selection.getRangeAt(0);
+            return el.contains(range.commonAncestorContainer) ? range.cloneRange() : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    /** @param {any} el @param {any} range */
+    function restoreRange(el, range) {
+        try {
+            if (!el.contains(range.commonAncestorContainer)) return;
+            const root = typeof el.getRootNode === "function" ? el.getRootNode() : document;
+            const selection = typeof root.getSelection === "function"
+                ? root.getSelection()
+                : (typeof document.getSelection === "function" ? document.getSelection() : null);
+            if (!selection) return;
+            selection.removeAllRanges();
+            selection.addRange(range);
+        } catch (err) {
+            // Caret stays wherever the browser put it — text still lands in the right field.
+        }
+    }
+
+    /**
+     * Last resort when execCommand is unavailable or refuses. Splices the value and
+     * dispatches a bubbling `input` event, going through the PROTOTYPE's value setter:
+     * React installs its own setter on the instance and only notices a change made
+     * through the prototype's. contenteditable has no equivalent, so it isn't attempted.
+     * @param {any} el
+     * @param {string} text
+     */
+    function spliceValue(el, text) {
+        if (el.isContentEditable) return false;
+        if (typeof el.value !== "string") return false;
+        const start = typeof el.selectionStart === "number" ? el.selectionStart : el.value.length;
+        const end = typeof el.selectionEnd === "number" ? el.selectionEnd : start;
+        const next = el.value.slice(0, start) + text + el.value.slice(end);
+        const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value");
+        if (descriptor && descriptor.set) descriptor.set.call(el, next);
+        else el.value = next;
+        const caret = start + text.length;
+        try { el.setSelectionRange(caret, caret); } catch (err) { /* not all inputs support it */ }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+    }
+
+    /**
+     * The field an insert should act on, focused and with its caret restored — or null when
+     * there is nothing to insert into.
+     *
+     * Split out from the insertion itself so both the rich and the plain path act on the same
+     * field: a rich attempt that the field declines must not cost the fallback its caret.
+     * @returns {any}
+     */
+    function resolveInsertTarget() {
+        const active = deepActiveElement();
+        const target = isTextEditable(active)
+            ? active
+            : (lastEditable && lastEditable.isConnected ? lastEditable : null);
+        if (!target) return null;
+
+        if (target !== active) {
+            // The host-side click took OS focus out of the WebView2. The .NET side gives
+            // focus back to the browser control; this puts it back on the field, so the
+            // clinician's next keystroke continues where the inserted content ended.
+            try { target.focus({ preventScroll: true }); } catch (err) { target.focus(); }
+            if (lastRange) restoreRange(target, lastRange);
+        }
+        return target;
+    }
+
+    /**
+     * Inserts plain text at the caret of an already-resolved field.
+     * @param {any} target
+     * @param {string} text
+     * @returns {boolean}
+     */
+    function insertPlainTextInto(target, text) {
+        // execCommand is deprecated, and still the only insertion Chromium routes through
+        // beforeinput/input as if it had been typed — which is what makes a React-controlled
+        // field (every field the SDK renders) keep the text. Assigning .value or textContent
+        // updates the DOM and is reverted on the next render, with the text never reaching
+        // the QuestionnaireResponse: the answer appears, then vanishes on the next keystroke.
+        let inserted = false;
+        try {
+            inserted = document.execCommand("insertText", false, text);
+        } catch (err) {
+            inserted = false;
+        }
+        if (!inserted) inserted = spliceValue(target, text);
+        return inserted;
+    }
+
+    /**
+     * Inserts an HTML fragment at the caret by synthesizing the paste the user would have
+     * made. Returns true only when something actually consumed it.
+     *
+     * Why a paste rather than execCommand("insertHTML"): the SDK's rich-text answers are a
+     * Lexical editor, which owns a paste pipeline that reads `text/html` off the event's
+     * DataTransfer and converts it to its own nodes. Feeding that pipeline uses the one path
+     * the editor is known to support, instead of hoping it interprets an insertHTML
+     * beforeinput the same way.
+     *
+     * The return value is honest because Lexical calls preventDefault() on a paste it
+     * handles: dispatchEvent then reports false, which is our signal that the content landed.
+     * A plain <input> or a page-owned textarea won't handle it and won't cancel, so we learn
+     * to fall back rather than silently dropping the content.
+     *
+     * @param {any} target the focused, already-refocused field
+     * @param {string} html body-level fragment
+     * @param {string} text plain-text rendition, offered on the same DataTransfer
+     * @returns {boolean} true when the editor consumed the paste
+     */
+    function insertHtmlAtCaret(target, html, text) {
+        if (typeof DataTransfer !== "function" || typeof ClipboardEvent !== "function") return false;
+        try {
+            const data = new DataTransfer();
+            data.setData("text/html", html);
+            // Same DataTransfer carries the plain rendition, so an editor that prefers text
+            // (or a page field that reads only text) still gets something sensible.
+            if (text) data.setData("text/plain", text);
+            const event = new ClipboardEvent("paste", {
+                clipboardData: data,
+                bubbles: true,
+                cancelable: true,
+            });
+            // false = something called preventDefault = a paste handler took it.
+            return target.dispatchEvent(event) === false;
+        } catch (err) {
+            console.warn("[bridge] rich insert failed; falling back to plain text:", err);
+            return false;
+        }
+    }
+
+    function installContentInsertion() {
+        // composedPath()[0] rather than e.target: a focus event crossing a shadow boundary
+        // is retargeted to the host element (<tiro-form-filler>), and the path's first entry
+        // is the field the user actually clicked into.
+        const originOf = event => {
+            const path = typeof event.composedPath === "function" ? event.composedPath() : null;
+            return path && path.length ? path[0] : event.target;
+        };
+
+        document.addEventListener("focusin", event => {
+            const el = originOf(event);
+            if (!isTextEditable(el)) return;
+            lastEditable = el;
+            lastRange = null;
+        }, true);
+
+        // Snapshot the caret while the field still has it (contenteditable only, see above).
+        document.addEventListener("focusout", event => {
+            const el = originOf(event);
+            if (!el || el !== lastEditable || !el.isContentEditable) return;
+            lastRange = selectionRangeIn(el);
+        }, true);
+
+        SmartWebMessaging.on("ui.form.insertContent", payload => {
+            const text = payload && payload.text;
+            const html = payload && payload.html;
+            if (typeof text !== "string" || text.length === 0) {
+                console.warn("[bridge] ui.form.insertContent carried no text");
+                return { inserted: false, mode: "none" };
+            }
+
+            // Resolve and refocus the target once, so both paths act on the same field and
+            // the rich attempt's failure doesn't cost the fallback its caret.
+            const target = resolveInsertTarget();
+            if (!target) {
+                // Not an error: the host UI is reachable at any time, including before the
+                // clinician has clicked into anything. Ack with the outcome so the host can
+                // say "click a field first" instead of failing silently.
+                console.warn("[bridge] ui.form.insertContent: no focused text field to insert into");
+                fire("tiro-content-inserted", { inserted: false, mode: "none" });
+                return { inserted: false, mode: "none" };
+            }
+
+            let mode = "none";
+            if (typeof html === "string" && html.length > 0 && insertHtmlAtCaret(target, html, text)) {
+                mode = "html";
+            } else if (insertPlainTextInto(target, text)) {
+                // Either no html was offered, or the field declined the paste — a plain
+                // <input>, or a rich editor that isn't listening. Plain text is the honest
+                // outcome, and the host is told which happened.
+                mode = "text";
+            }
+
+            lastRange = null;
+            fire("tiro-content-inserted", { text, html, inserted: mode !== "none", mode, target });
+            return { inserted: mode !== "none", mode };
+        });
+    }
+
+    // ============================================================
+    // 6. Sentry boot from window.__tiroSentryConfig
     // ============================================================
 
     function bootSentry() {
@@ -477,7 +768,7 @@
     }
 
     // ============================================================
-    // 6. Embedded web-sdk injection (GH-60)
+    // 7. Embedded web-sdk injection (GH-60)
     // ============================================================
 
     // The embedded, validated @tiro-health/web-sdk served by the host (GH-60). The host
@@ -530,13 +821,17 @@
     }
 
     // ============================================================
-    // 7. Bootstrap on DOMContentLoaded
+    // 8. Bootstrap on DOMContentLoaded
     // ============================================================
 
     function bootstrap() {
         // SDK loads before wiring, so elements are upgraded when wireFormFiller runs.
         Promise.all([bootSentry(), bootSdk()]).then(([, sdkSource]) => {
             wireAllFormFillers();
+            // Document-wide and element-agnostic, so it's installed once rather than per
+            // <tiro-form-filler>: the host may want to insert into a field the page itself
+            // renders (a free-text box beside the form) just as much as into the form's.
+            installContentInsertion();
 
             const transportOk = SmartWebMessaging.init();
             if (!transportOk) {
