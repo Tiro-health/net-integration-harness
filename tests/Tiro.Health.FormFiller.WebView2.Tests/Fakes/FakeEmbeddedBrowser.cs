@@ -29,11 +29,22 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         /// Set by the viewer at init. Tests call it to model a right-click, since the real menu
         /// is Chromium's and never appears in a unit test.
         /// </summary>
-        public Func<TiroContextMenuContext, IReadOnlyList<EmbeddedBrowserMenuItem>> ContextMenuItemsProvider { get; set; }
+        public Func<TiroContextMenuContext, IReadOnlyList<TiroMenuEntry>, IReadOnlyList<TiroMenuEntry>> ContextMenuBuilder { get; set; }
 
-        /// <summary>The items a right-click on the given target would show.</summary>
-        public IReadOnlyList<EmbeddedBrowserMenuItem> RequestContextMenu(bool isEditable = true, string selectionText = null)
-            => ContextMenuItemsProvider?.Invoke(new TiroContextMenuContext(isEditable, selectionText));
+        /// <summary>
+        /// Stand-ins for the entries Chromium would have offered. Empty by default — most tests
+        /// only care about the host's own — so set it to model a click that has native entries.
+        /// </summary>
+        public List<TiroMenuEntry> BrowserItems { get; } = new List<TiroMenuEntry>();
+
+        /// <summary>Builds a stand-in for one of Chromium's entries.</summary>
+        public static TiroMenuEntry BrowserItem(
+            string name, string label = null, TiroMenuEntryKind kind = TiroMenuEntryKind.Command, bool isEnabled = true)
+            => new TiroMenuEntry(name, label ?? name, kind, isEnabled, new object());
+
+        /// <summary>The menu a right-click on the given target would show.</summary>
+        public IReadOnlyList<TiroMenuEntry> RequestContextMenu(bool isEditable = true, string selectionText = null)
+            => ContextMenuBuilder?.Invoke(new TiroContextMenuContext(isEditable, selectionText), BrowserItems);
 
         public Task InitializeAsync()
         {

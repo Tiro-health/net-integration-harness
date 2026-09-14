@@ -84,5 +84,17 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         public Func<TiroContextMenuContext, bool> IsVisible { get; set; }
 
+        /// <summary>
+        /// Optional per-click enabled test. Return false to show the item greyed out rather than
+        /// hidden — the right choice when its absence would be confusing ("Insert conclusion"
+        /// missing looks like a broken build; greyed out reads as "not yet"). Null means always
+        /// enabled.
+        /// </summary>
+        /// <remarks>
+        /// Applies to host items only. The embedded browser owns the enabled state of its own
+        /// entries; see <see cref="TiroMenuEntry.IsEnabled"/>.
+        /// </remarks>
+        public Func<TiroContextMenuContext, bool> IsEnabled { get; set; }
+
     }
 }

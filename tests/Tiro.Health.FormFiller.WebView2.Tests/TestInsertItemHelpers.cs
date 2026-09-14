@@ -42,7 +42,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }
 
         private async Task Initialized()
-            => await PollFor(() => _browser.ContextMenuItemsProvider != null, TimeSpan.FromSeconds(5));
+            => await PollFor(() => _browser.ContextMenuBuilder != null, TimeSpan.FromSeconds(5));
 
         private async Task DisplayForm()
         {
@@ -173,6 +173,44 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 () => _browser.PostedMessages.Exists(m => m.Contains("ui.form.insertContent")),
                 TimeSpan.FromSeconds(5));
             Assert.AreEqual(0, _sink.CapturedExceptions.Count, "a missing callback is not a failure");
+        }
+
+        [TestMethod]
+        public async Task OnResultStillFiresWhenTheInsertFailsOutright()
+        {
+            // Without this the callback is skipped entirely on a throw, so a status label keeps
+            // showing the PREVIOUS click's outcome — the item looks like it worked. That is the
+            // exact case onResult is documented to cover.
+            await DisplayForm();
+            var results = new List<TextInsertResult>();
+            _viewer.AddInsertItem(
+                "Insert conclusion",
+                () => throw new InvalidOperationException("the EHR has no conclusion loaded"),
+                onResult: r => results.Add(r));
+
+            _browser.RequestContextMenu()[0].Invoke();
+
+            await PollFor(() => results.Count == 1, TimeSpan.FromSeconds(5));
+            Assert.IsFalse(results[0].Inserted);
+            Assert.AreEqual(TextInsertMode.None, results[0].Mode);
+            Assert.AreEqual(1, _sink.CapturedExceptions.Count,
+                "the failure still has to reach telemetry, not just the status label");
+        }
+
+        [TestMethod]
+        public async Task AThrowingOnResultDoesNotEscapeTheMenuDispatch()
+        {
+            await DisplayForm();
+            _viewer.AddInsertItem(
+                "Insert conclusion",
+                () => throw new InvalidOperationException("no conclusion"),
+                onResult: _ => throw new InvalidOperationException("and the status label is broken too"));
+
+            _browser.RequestContextMenu()[0].Invoke();
+
+            await PollFor(() => _sink.CapturedExceptions.Count > 0, TimeSpan.FromSeconds(5));
+            // Whichever exception surfaces, it lands in telemetry rather than on the message pump.
+            Assert.IsTrue(_sink.CapturedExceptions.Count >= 1);
         }
 
         [TestMethod]

@@ -87,17 +87,60 @@ namespace Tiro.Health.FormFiller.WebView2
         /// browser's own. Populate at any time — the list is read each time a menu is requested,
         /// so items can come from the EHR's configuration, change with the patient, or resolve
         /// their data at click time. See <see cref="TiroContextMenuItem"/>, and
-        /// <see cref="TiroContextMenuItem.CopyToClipboard"/> for the copy-then-Ctrl+V case.
+        /// <see cref="AddInsertItem"/> for the insert-at-the-caret case.
         /// </summary>
         /// <remarks>
         /// Requires an <see cref="IEmbeddedBrowser"/> that implements
         /// <see cref="IContextMenuCapableBrowser"/> (WebView2 does); with anything else the
         /// items are simply never shown. Hidden from the Designer: these are code-configured
         /// delegates, and nothing about them serialises into InitializeComponent.
+        /// <para>
+        /// This is the simple path: browser entries first, then these. To reorder, hide the
+        /// browser's own entries, or interleave, set <see cref="BuildContextMenu"/> instead —
+        /// these items reach it as <see cref="TiroContextMenuRequest.HostItems"/>, so both can
+        /// be used together.
+        /// </para>
         /// </remarks>
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public IList<TiroContextMenuItem> ContextMenuItems { get; } = new List<TiroContextMenuItem>();
+
+        /// <summary>
+        /// Full control of the form's right-click menu. Called on every right-click with the
+        /// browser's own entries and the host's; returns the menu to show, in order. Null (the
+        /// default) keeps the standard layout — the browser's entries, a separator, then
+        /// <see cref="ContextMenuItems"/>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The returned list is the menu. Leave an entry out to hide it, put entries in any
+        /// order, mix the browser's with the host's. A browser entry may be reordered or
+        /// dropped but not relabelled or disabled, and must come from
+        /// <see cref="TiroContextMenuRequest.BrowserItems"/> for the click being built — one
+        /// kept from an earlier click is stale and is dropped.
+        /// </para>
+        /// <para>
+        /// Runs on the UI thread inside the browser's context-menu event, so it must not block.
+        /// A builder that throws costs the customisation, not the menu: the exception reaches
+        /// telemetry and the standard layout is shown.
+        /// </para>
+        /// <example>
+        /// Snippets on top, and no Inspect in production:
+        /// <code>
+        /// viewer.BuildContextMenu = menu =>
+        /// {
+        ///     var result = new List&lt;TiroMenuEntry&gt;(menu.HostItems);
+        ///     if (result.Count > 0) result.Add(TiroMenuEntry.CreateSeparator());
+        ///     foreach (var native in menu.BrowserItems)
+        ///         if (native.Name != "inspectElement") result.Add(native);
+        ///     return result;
+        /// };
+        /// </code>
+        /// </example>
+        /// </remarks>
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public Func<TiroContextMenuRequest, IReadOnlyList<TiroMenuEntry>> BuildContextMenu { get; set; }
         /// <summary>
         /// Adds a right-click item that inserts content at the caret, and returns it.
         /// </summary>
@@ -132,6 +175,12 @@ namespace Tiro.Health.FormFiller.WebView2
         /// status label directly. Worth supplying at least for
         /// <see cref="TextInsertResult.Inserted"/> being false — nothing was focused, and the
         /// item otherwise looks broken. Omit it to insert silently.
+        /// <para>
+        /// Also called with <see cref="TextInsertResult.NotInserted"/> when the insert fails
+        /// outright — the page didn't answer in time, or the viewer was disposed mid-flight —
+        /// so a status label never sits showing the previous click's outcome. The exception
+        /// itself still reaches telemetry.
+        /// </para>
         /// </param>
         public TiroContextMenuItem AddInsertItem(
             string label,
@@ -146,7 +195,22 @@ namespace Tiro.Health.FormFiller.WebView2
             // becoming an unhandled async-void exception on the SynchronizationContext.
             var item = new TiroContextMenuItem(label, async context =>
             {
-                var result = await InsertContentAsync(text(), html == null ? null : html());
+                TextInsertResult result;
+                try
+                {
+                    result = await InsertContentAsync(text(), html == null ? null : html());
+                }
+                catch
+                {
+                    // The insert never completed — the page didn't answer in time, the viewer
+                    // went away mid-flight, or the host's own content provider threw. Without
+                    // this the callback is skipped entirely and the clinician gets no signal at
+                    // all, which is precisely the "the item looks broken" case onResult exists
+                    // to cover. Rethrown afterwards, so the task still faults and the exception
+                    // still reaches telemetry.
+                    if (onResult != null) onResult(TextInsertResult.NotInserted);
+                    throw;
+                }
                 // Resumes on the captured context — the UI thread, since menu dispatch runs
                 // there — so a subscriber may touch controls without marshalling.
                 if (onResult != null) onResult(result);
@@ -486,7 +550,7 @@ namespace Tiro.Health.FormFiller.WebView2
             // the host's to mutate at any time, and the provider answers "nothing" until it
             // holds something.
             if (_browser is IContextMenuCapableBrowser contextMenuBrowser)
-                contextMenuBrowser.ContextMenuItemsProvider = BuildContextMenuItems;
+                contextMenuBrowser.ContextMenuBuilder = ComposeContextMenu;
             _browser.Control.Dock = DockStyle.Fill;
             this.Controls.Add(_browser.Control);
 
@@ -1284,15 +1348,79 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
-        /// Resolves <see cref="ContextMenuItems"/> for one right-click: applies each item's
-        /// visibility test and reduces it to a label plus a guarded invocation. Runs on the UI
-        /// thread, inside the browser's context-menu event, so it does no I/O and never throws
-        /// — a host delegate that fails costs its own item, not the menu.
+        /// Composes the menu for one right-click. Runs on the UI thread, inside the browser's
+        /// context-menu event, so it does no I/O and never throws — a host delegate that fails
+        /// costs its own item, or its own customisation, not the menu.
         /// </summary>
-        private IReadOnlyList<EmbeddedBrowserMenuItem> BuildContextMenuItems(TiroContextMenuContext context)
+        private IReadOnlyList<TiroMenuEntry> ComposeContextMenu(
+            TiroContextMenuContext context, IReadOnlyList<TiroMenuEntry> browserItems)
         {
-            var resolved = new List<EmbeddedBrowserMenuItem>();
-            if (State == TiroFormViewerState.Disposed) return resolved;
+            if (State == TiroFormViewerState.Disposed) return new List<TiroMenuEntry>();
+            if (browserItems == null) browserItems = new List<TiroMenuEntry>();
+
+            var hostItems = ResolveHostItems(context);
+
+            var builder = BuildContextMenu;
+            if (builder == null) return DefaultContextMenuLayout(browserItems, hostItems);
+
+            IReadOnlyList<TiroMenuEntry> requested;
+            try
+            {
+                requested = builder(new TiroContextMenuRequest(
+                    context, browserItems, hostItems, item => CreateContextMenuEntry(item, context)));
+            }
+            catch (Exception ex)
+            {
+                // The builder owns the whole menu, so there is no partial result to salvage.
+                // Falling back to the standard layout keeps Copy and Paste working on a click
+                // that would otherwise produce nothing.
+                _telemetry.CaptureException(ex);
+                return DefaultContextMenuLayout(browserItems, hostItems);
+            }
+
+            if (requested == null) return DefaultContextMenuLayout(browserItems, hostItems);
+
+            // A browser entry is only renderable on the click that produced it. One held over
+            // from an earlier menu carries a handle the browser has moved on from, so it is
+            // dropped rather than passed down for the browser layer to choke on.
+            var offered = new HashSet<TiroMenuEntry>(browserItems);
+            var placed = new HashSet<object>();
+            var final = new List<TiroMenuEntry>(requested.Count);
+            var stale = 0;
+            var duplicated = 0;
+            foreach (var entry in requested)
+            {
+                if (entry == null) continue;
+                if (entry.IsFromBrowser)
+                {
+                    if (!offered.Contains(entry)) { stale++; continue; }
+                    // One browser item cannot occupy two positions in one menu. The browser
+                    // layer drops the repeat regardless; catching it here is what lets the host
+                    // hear about it, since that layer has no telemetry.
+                    if (!placed.Add(entry.BrowserHandle)) { duplicated++; continue; }
+                }
+                final.Add(entry);
+            }
+            if (stale > 0)
+                _telemetry.CaptureException(new InvalidOperationException(
+                    $"BuildContextMenu returned {stale} browser entr{(stale == 1 ? "y" : "ies")} from an " +
+                    "earlier right-click. Browser entries are valid only for the request they arrive on; " +
+                    "read them from TiroContextMenuRequest.BrowserItems each time rather than caching them."));
+            if (duplicated > 0)
+                _telemetry.CaptureException(new InvalidOperationException(
+                    $"BuildContextMenu returned {duplicated} browser entr{(duplicated == 1 ? "y" : "ies")} more " +
+                    "than once. Each appears in the menu at its first position only; to repeat a command, add a " +
+                    "host item instead."));
+            return final;
+        }
+
+        /// <summary>
+        /// <see cref="ContextMenuItems"/> reduced to entries for one click: the visibility test
+        /// applied, the enabled test resolved, and the action wrapped in the telemetry guard.
+        /// </summary>
+        private IReadOnlyList<TiroMenuEntry> ResolveHostItems(TiroContextMenuContext context)
+        {
+            var resolved = new List<TiroMenuEntry>();
 
             // Snapshot: the host owns this list and may hold it from another thread. A copy
             // costs nothing at menu scale and can't throw mid-enumeration.
@@ -1312,10 +1440,45 @@ namespace Tiro.Health.FormFiller.WebView2
                     continue;
                 }
 
-                var captured = item;
-                resolved.Add(new EmbeddedBrowserMenuItem(captured.Label, () => InvokeContextMenuItem(captured, context)));
+                resolved.Add(CreateContextMenuEntry(item, context));
             }
             return resolved;
+        }
+
+        /// <summary>
+        /// Wraps one item as an entry: resolves its enabled test and binds its action to this
+        /// click's context through the guard. An enabled test that throws leaves the item
+        /// enabled — a visible item that reports its own failure beats one silently greyed out.
+        /// </summary>
+        private TiroMenuEntry CreateContextMenuEntry(TiroContextMenuItem item, TiroContextMenuContext context)
+        {
+            var isEnabled = true;
+            try
+            {
+                if (item.IsEnabled != null) isEnabled = item.IsEnabled(context);
+            }
+            catch (Exception ex)
+            {
+                _telemetry.CaptureException(ex);
+            }
+
+            var captured = item;
+            return new TiroMenuEntry(captured.Label, () => InvokeContextMenuItem(captured, context), isEnabled);
+        }
+
+        /// <summary>
+        /// What the menu looks like when no <see cref="BuildContextMenu"/> is set: the browser's
+        /// own entries, then the host's below them. The separator only earns its place when
+        /// there is something on both sides of it.
+        /// </summary>
+        private static IReadOnlyList<TiroMenuEntry> DefaultContextMenuLayout(
+            IReadOnlyList<TiroMenuEntry> browserItems, IReadOnlyList<TiroMenuEntry> hostItems)
+        {
+            var layout = new List<TiroMenuEntry>(browserItems.Count + hostItems.Count + 1);
+            layout.AddRange(browserItems);
+            if (browserItems.Count > 0 && hostItems.Count > 0) layout.Add(TiroMenuEntry.CreateSeparator());
+            layout.AddRange(hostItems);
+            return layout;
         }
 
         /// <summary>
