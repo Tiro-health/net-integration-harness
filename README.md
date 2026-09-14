@@ -200,6 +200,28 @@ Await TiroFormViewer.SetContextAsync(
     })
 ```
 
+### Launching a Questionnaire you already hold
+
+`SetContextAsync` also takes the Questionnaire itself, for templates an EHR keeps privately, one assembled or patched at runtime, or a form that has to render without a publish cycle:
+
+```vb
+Await TiroFormViewer.SetContextAsync(myQuestionnaire, patient:=patient)
+```
+
+Three things to know:
+
+- **It is rendered as given.** The page strips `id`, `url` and `version` before rendering, so a Questionnaire carrying a `url` still renders inline — it does **not** resolve that URL against the server.
+- **This is not an offline mode.** Terminology expansion, `$populate` and the SDC version check still reach the server.
+- **Extraction needs it too.** `$extract` normally resolves the Questionnaire from the response's canonical, so one that was never published has nothing to resolve. Pass it to the client as well, or a form that rendered perfectly fails on submit:
+
+```vb
+Dim bundle As Bundle = Await client.ExtractAsync(e.Response, myQuestionnaire)
+```
+
+That overload sends a `Parameters` body carrying both. It's worth using even for a published Questionnaire — it saves the server a lookup. Passing `Nothing` falls back to the single-argument form.
+
+> Because both overloads take a reference type, a bare `SetContextAsync(Nothing)` is ambiguous and won't compile. Pass a typed variable.
+
 ## Shipping your own index.html
 
 The library ships a working default `index.html` so the samples run out-of-the-box, but for production you'll want to host your own page. The bridge, the SMART Web Messaging plumbing, **and the `tiro-web-sdk` itself** are auto-injected by the host (regardless of which page is loaded), so your `index.html` stays purely branding — no SDK script tag, no SDK init, no transport setup, no Sentry CDN tag.

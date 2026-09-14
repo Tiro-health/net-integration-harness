@@ -44,9 +44,9 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>
         /// Optional folder containing a consumer-supplied <c>index.html</c> (and any supporting assets).
         /// When null, the <c>index.html</c> shipped with this package is used.
-        /// The value is read once, at the first <see cref="SetContextAsync"/> call (the point the page is
+        /// The value is read once, at the first <see cref="SetContextAsync(string, TResource, TResource, TResource, TQR, List{LaunchContext{TResource}}, CancellationToken)"/> call (the point the page is
         /// navigated), so set it any time before then — an object initializer or <c>Form_Load</c> both work.
-        /// Setting it after the first <see cref="SetContextAsync"/> has no effect.
+        /// Setting it after the first <see cref="SetContextAsync(string, TResource, TResource, TResource, TQR, List{LaunchContext{TResource}}, CancellationToken)"/> has no effect.
         /// </summary>
         public string WebContentFolder { get; set; }
 
@@ -56,7 +56,7 @@ namespace Tiro.Health.FormFiller.WebView2
         /// element, overwriting any value baked into <c>index.html</c>. The closed bindings
         /// (<c>TiroFormViewerR5</c>/<c>R4</c>) seed this with the Tiro-hosted SDC server in
         /// their constructors so out-of-the-box use works; hosts override before
-        /// <see cref="SetContextAsync"/> to point at a different server.
+        /// <see cref="SetContextAsync(string, TResource, TResource, TResource, TQR, List{LaunchContext{TResource}}, CancellationToken)"/> to point at a different server.
         /// </summary>
         public string SdcEndpointAddress { get; set; }
 
@@ -64,7 +64,7 @@ namespace Tiro.Health.FormFiller.WebView2
         /// Optional override for the <c>data-endpoint-address</c> attribute on every
         /// <c>&lt;tiro-form-filler&gt;</c> element. Unlike <see cref="SdcEndpointAddress"/>,
         /// this has no default — set it when the form needs to reach a data server (e.g.
-        /// hospital-hosted FHIR data store). Set before <see cref="SetContextAsync"/>.
+        /// hospital-hosted FHIR data store). Set before <see cref="SetContextAsync(string, TResource, TResource, TResource, TQR, List{LaunchContext{TResource}}, CancellationToken)"/>.
         /// </summary>
         public string DataEndpointAddress { get; set; }
 
@@ -74,7 +74,7 @@ namespace Tiro.Health.FormFiller.WebView2
         /// view-only — no answer can be changed. Defaults to <c>false</c>.
         /// <para>
         /// Read once when the <c>sdc.configure</c> payload is built, so set it before
-        /// <see cref="SetContextAsync"/> — setting it afterwards has no effect. A viewer cannot
+        /// <see cref="SetContextAsync(string, TResource, TResource, TResource, TQR, List{LaunchContext{TResource}}, CancellationToken)"/> — setting it afterwards has no effect. A viewer cannot
         /// be flipped between editable and view-only mid-session; use one viewer per role
         /// (the form component locks itself after a final submit regardless of this property;
         /// a saved draft leaves it editable so the user can carry on).
@@ -374,7 +374,7 @@ namespace Tiro.Health.FormFiller.WebView2
         private TiroFormViewerState MarkDisposed()
             => (TiroFormViewerState)Interlocked.Exchange(ref _state, (int)TiroFormViewerState.Disposed);
 
-        /// <summary>Fast-path guard for <see cref="SetContextAsync"/>.</summary>
+        /// <summary>Fast-path guard for <see cref="SetContextAsync(string, TResource, TResource, TResource, TQR, List{LaunchContext{TResource}}, CancellationToken)"/>.</summary>
         private void GuardCanSetContext()
         {
             switch (State)
@@ -447,7 +447,7 @@ namespace Tiro.Health.FormFiller.WebView2
         /// reads <see cref="TiroFormViewerDefaults.TelemetrySinkFactory"/> — so applications opt
         /// into telemetry once at startup (e.g. <c>TiroFormFillerSentry.UseSentry()</c>) and every
         /// Designer-placed viewer picks it up. The session begins eagerly so init/handshake
-        /// telemetry is captured before the first <see cref="SetContextAsync"/>.
+        /// telemetry is captured before the first <see cref="SetContextAsync(string, TResource, TResource, TResource, TQR, List{LaunchContext{TResource}}, CancellationToken)"/>.
         /// </summary>
         protected TiroFormViewer()
         {
@@ -704,7 +704,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
         /// <summary>
         /// The outcome of this viewer's SDC server version check, or <c>null</c> until
-        /// <see cref="SetContextAsync"/> has run it (and when <see cref="SdcEndpointAddress"/>
+        /// <see cref="SetContextAsync(string, TResource, TResource, TResource, TQR, List{LaunchContext{TResource}}, CancellationToken)"/> has run it (and when <see cref="SdcEndpointAddress"/>
         /// is unset or not an absolute URI, in which case there is nothing to check).
         /// Exposed because the check's telemetry lands in the <em>customer's</em> logs, not
         /// Tiro's — they self-host the SDC server.
@@ -1048,7 +1048,7 @@ namespace Tiro.Health.FormFiller.WebView2
         /// launch context entries; <paramref name="launchContext"/> carries any additional named
         /// resource (e.g. coverage, device, or an app-specific launch parameter) alongside them.
         /// </summary>
-        public async Task SetContextAsync(
+        public Task SetContextAsync(
             string questionnaireCanonicalUrl,
             TResource patient = default,
             TResource encounter = default,
@@ -1056,6 +1056,54 @@ namespace Tiro.Health.FormFiller.WebView2
             TQR initialResponse = default,
             List<LaunchContext<TResource>> launchContext = null,
             CancellationToken cancellationToken = default)
+            => SetContextCoreAsync(
+                questionnaireCanonicalUrl, patient, encounter, author, initialResponse, launchContext, cancellationToken);
+
+        /// <summary>
+        /// Displays a Questionnaire the host already holds, instead of one the SDC server is
+        /// asked to resolve. For templates an EHR keeps privately, a Questionnaire assembled or
+        /// patched at runtime, or a form that has to render without a publish cycle.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The resource is rendered <em>as given</em>: the page strips <c>id</c>, <c>url</c> and
+        /// <c>version</c> before rendering, so passing a Questionnaire that carries a <c>url</c>
+        /// still renders inline — it does not resolve that URL against the server.
+        /// </para>
+        /// <para>
+        /// This is not an offline mode. Terminology expansion, <c>$populate</c> and the SDC
+        /// version check still reach the server. And because extraction needs the Questionnaire
+        /// too, a Questionnaire that was never published has nothing for the server to resolve
+        /// at <c>$extract</c> — pass it to <c>SdcClientBase.ExtractAsync(response, questionnaire)</c>
+        /// as well, or extraction fails after a form that rendered perfectly.
+        /// </para>
+        /// </remarks>
+        public Task SetContextAsync(
+            TResource questionnaire,
+            TResource patient = default,
+            TResource encounter = default,
+            TResource author = default,
+            TQR initialResponse = default,
+            List<LaunchContext<TResource>> launchContext = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (questionnaire == null) throw new ArgumentNullException(nameof(questionnaire));
+            return SetContextCoreAsync(
+                questionnaire, patient, encounter, author, initialResponse, launchContext, cancellationToken);
+        }
+
+        /// <summary>
+        /// The launch, over either shape of questionnaire: a canonical URL string the server
+        /// resolves, or the resource itself.
+        /// </summary>
+        private async Task SetContextCoreAsync(
+            object questionnaire,
+            TResource patient,
+            TResource encounter,
+            TResource author,
+            TQR initialResponse,
+            List<LaunchContext<TResource>> launchContext,
+            CancellationToken cancellationToken)
         {
             GuardCanSetContext();
 
@@ -1066,9 +1114,15 @@ namespace Tiro.Health.FormFiller.WebView2
             // so a too-old server refuses the session instead of rendering a form against it.
             StartSdcVersionCheck();
 
+            // Identifies the questionnaire without carrying it: an inline one can be large and
+            // its answerOption text is clinical content, so only a canonical URL, an id, or the
+            // literal "inline" is ever tagged — never the resource.
+            var questionnaireLabel = DescribeQuestionnaire(questionnaire);
+
             var span = _session?.StartTransaction("sdc.displayQuestionnaire", "swm.send");
             span?.SetTag("messageType", "sdc.displayQuestionnaire");
-            span?.SetTag("questionnaire_url", questionnaireCanonicalUrl);
+            span?.SetTag("questionnaire_url", questionnaireLabel);
+            span?.SetTag("questionnaire_source", questionnaire is string ? "canonical" : "inline");
 
             using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
             {
@@ -1084,7 +1138,7 @@ namespace Tiro.Health.FormFiller.WebView2
                     NavigateToContent();
 
                     await WaitForHandshakeAsync(span, linkedCts.Token, cancellationToken,
-                        timeoutMessage: $"Handshake not received for {questionnaireCanonicalUrl} within 30s.");
+                        timeoutMessage: $"Handshake not received for {questionnaireLabel} within 30s.");
 
                     // Establishes and reports the server's version. Placed after the handshake
                     // so the page is proven alive first — a handshake failure is the more
@@ -1149,15 +1203,33 @@ namespace Tiro.Health.FormFiller.WebView2
 
                     var wrappedHandler = WrapForRoundTrip("sdc.displayQuestionnaire", span, cancellationToken, originalHandler: null);
 
-                    await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
-                        questionnaireCanonicalUrl: questionnaireCanonicalUrl,
-                        questionnaireResponse: initialResponse,
-                        patient: patient,
-                        encounter: encounter,
-                        author: author,
-                        launchContext: launchContext,
-                        responseHandler: wrappedHandler,
-                        cancellationToken: linkedCts.Token);
+                    // Two overloads rather than the object one, because these merge the
+                    // patient/encounter/author shorthand into launchContext; the object overload
+                    // takes ResourceReferences and would drop that.
+                    if (questionnaire is string canonicalUrl)
+                    {
+                        await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
+                            questionnaireCanonicalUrl: canonicalUrl,
+                            questionnaireResponse: initialResponse,
+                            patient: patient,
+                            encounter: encounter,
+                            author: author,
+                            launchContext: launchContext,
+                            responseHandler: wrappedHandler,
+                            cancellationToken: linkedCts.Token);
+                    }
+                    else
+                    {
+                        await _smartWebMessageHandler.SendSdcDisplayQuestionnaireAsync(
+                            questionnaire: (TResource)questionnaire,
+                            questionnaireResponse: initialResponse,
+                            patient: patient,
+                            encounter: encounter,
+                            author: author,
+                            launchContext: launchContext,
+                            responseHandler: wrappedHandler,
+                            cancellationToken: linkedCts.Token);
+                    }
 
                     // Ready → ContextSet on successful send. If Dispose / Submit raced in,
                     // the CAS fails silently — we leave the terminal state in place.
@@ -1175,6 +1247,24 @@ namespace Tiro.Health.FormFiller.WebView2
                     throw;
                 }
             }
+        }
+
+        /// <summary>
+        /// A telemetry-safe name for the questionnaire being launched: the canonical URL when
+        /// there is one, else the resource's id, else the literal <c>"inline"</c>. Never the
+        /// resource — an inline Questionnaire can be large, and its answerOption text is
+        /// clinical content that has no business on a span tag.
+        /// </summary>
+        private static string DescribeQuestionnaire(object questionnaire)
+        {
+            if (questionnaire is string url) return url;
+            if (questionnaire is IVersionableConformanceResource conformance
+                && !string.IsNullOrEmpty(conformance.Url))
+            {
+                return conformance.Url;
+            }
+            var id = (questionnaire as Resource)?.Id;
+            return string.IsNullOrEmpty(id) ? "inline" : id;
         }
 
         public async Task SendFormRequestSubmitAsync(
