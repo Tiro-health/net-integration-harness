@@ -107,8 +107,55 @@ namespace Tiro.Health.FormSdk.Client
         /// Extract FHIR resources from a QuestionnaireResponse
         /// (<c>POST QuestionnaireResponse/$extract</c>), returning the resulting transaction <typeparamref name="TBundle"/>.
         /// </summary>
+        /// <remarks>
+        /// The server resolves the Questionnaire from the response's <c>questionnaire</c>
+        /// canonical, so it must be published there. For one that isn't, use the overload that
+        /// takes it.
+        /// </remarks>
         public Task<TBundle> ExtractAsync(TQuestionnaireResponse questionnaireResponse, CancellationToken cancellationToken = default)
             => PostResourceAsync<TBundle>("QuestionnaireResponse/$extract", questionnaireResponse, cancellationToken);
+
+        /// <summary>
+        /// Extract with the Questionnaire supplied, rather than left to the server to resolve.
+        /// </summary>
+        /// <remarks>
+        /// Extraction needs the Questionnaire — the rules for which answer becomes which
+        /// resource live on it, not on the response. Given one, the server uses it as-is and
+        /// looks nothing up, which is what makes a Questionnaire the host holds privately (never
+        /// published, assembled at runtime, patched per department) extractable at all. It also
+        /// saves a lookup when the Questionnaire <em>is</em> published.
+        /// <para>
+        /// Sent as a <c>Parameters</c> body rather than a bare resource; a null
+        /// <paramref name="questionnaire"/> falls back to the single-argument form.
+        /// </para>
+        /// </remarks>
+        /// <param name="questionnaireResponse">The completed response to extract from.</param>
+        /// <param name="questionnaire">
+        /// The Questionnaire the response was filled against. Null to let the server resolve it.
+        /// </param>
+        /// <param name="cancellationToken">Cancels the request.</param>
+        public Task<TBundle> ExtractAsync(
+            TQuestionnaireResponse questionnaireResponse,
+            Resource questionnaire,
+            CancellationToken cancellationToken = default)
+        {
+            if (questionnaireResponse == null) throw new ArgumentNullException(nameof(questionnaireResponse));
+            if (questionnaire == null) return ExtractAsync(questionnaireResponse, cancellationToken);
+
+            var parameters = new Parameters();
+            parameters.Parameter.Add(new Parameters.ParameterComponent
+            {
+                Name = "questionnaire-response",
+                Resource = questionnaireResponse,
+            });
+            parameters.Parameter.Add(new Parameters.ParameterComponent
+            {
+                Name = "questionnaire",
+                Resource = questionnaire,
+            });
+
+            return PostResourceAsync<TBundle>("QuestionnaireResponse/$extract", parameters, cancellationToken);
+        }
 
         /// <summary>
         /// The outcome of this client's SDC server version check, or <c>null</c> until the

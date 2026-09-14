@@ -158,5 +158,62 @@ namespace Tiro.Health.FormSdk.Client.Tests
             Assert.ThrowsException<ArgumentException>(
                 () => new SdcClient(new Uri("https://sdc.test.local/fhir/r5?key=abc")));
         }
+        [TestMethod]
+        public async Task ExtractAsync_WithQuestionnaire_PostsParametersCarryingBoth()
+        {
+            // The shape the SDC server matches on: given a `questionnaire` parameter it uses it
+            // as-is and resolves nothing, which is what makes a Questionnaire the host never
+            // published extractable at all.
+            const string bundleJson = """{"resourceType":"Bundle","type":"transaction"}""";
+            var (client, handler) = ClientReturning(HttpStatusCode.OK, bundleJson);
+            var questionnaire = new Questionnaire
+            {
+                Id = "intake",
+                Title = "Intake",
+                Status = PublicationStatus.Active,
+            };
+
+            var bundle = await client.ExtractAsync(SampleResponse(), questionnaire);
+
+            Assert.IsNotNull(bundle);
+            Assert.IsTrue(handler.LastRequest!.RequestUri!.AbsolutePath
+                .EndsWith("/QuestionnaireResponse/$extract", StringComparison.Ordinal));
+
+            var sent = JsonSerializer.Deserialize<Resource>(handler.LastRequestBody!, FhirJson) as Parameters;
+            Assert.IsNotNull(sent, "the body must be a Parameters, not a bare resource");
+            Assert.AreEqual(2, sent!.Parameter.Count);
+
+            var qrParam = sent.Parameter.Find(p => p.Name == "questionnaire-response");
+            Assert.IsNotNull(qrParam, "the server requires exactly one questionnaire-response parameter");
+            Assert.IsInstanceOfType(qrParam!.Resource, typeof(QuestionnaireResponse));
+
+            var qParam = sent.Parameter.Find(p => p.Name == "questionnaire");
+            Assert.IsNotNull(qParam);
+            Assert.AreEqual("intake", ((Questionnaire)qParam!.Resource).Id);
+        }
+
+        [TestMethod]
+        public async Task ExtractAsync_WithNullQuestionnaire_PostsTheBareResponse()
+        {
+            // The overload must not change the wire for callers who have nothing to supply:
+            // a bare QuestionnaireResponse, exactly as the single-argument form sends.
+            const string bundleJson = """{"resourceType":"Bundle","type":"transaction"}""";
+            var (client, handler) = ClientReturning(HttpStatusCode.OK, bundleJson);
+
+            await client.ExtractAsync(SampleResponse(), null);
+
+            var sent = JsonSerializer.Deserialize<Resource>(handler.LastRequestBody!, FhirJson);
+            Assert.IsInstanceOfType(sent, typeof(QuestionnaireResponse),
+                "a null questionnaire must fall back, not wrap in an empty Parameters");
+        }
+
+        [TestMethod]
+        public void ExtractAsync_RequiresAResponse()
+        {
+            var (client, _) = ClientReturning(HttpStatusCode.OK, """{"resourceType":"Bundle","type":"transaction"}""");
+
+            Assert.ThrowsException<ArgumentNullException>(
+                () => client.ExtractAsync(null!, new Questionnaire { Status = PublicationStatus.Active }));
+        }
     }
 }
