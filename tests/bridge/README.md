@@ -87,6 +87,20 @@ immediately rather than after the 30s retry window.
 on, and `client.version` (the element's static version, `null` when absent), which it records
 for diagnostics only.
 
+`insert-content.test.mjs` pins `ui.form.insertContent` — the host putting text or HTML into the
+focused field. Three things there are invisible to the type-check and to any static reading.
+First, plain insertion must go through `document.execCommand("insertText")`: it is the only
+insertion Chromium routes through `beforeinput`/`input` as if typed, and therefore the only one a
+React-controlled field keeps — assigning `.value` passes every check and then loses the text on
+the next render. Second, rich insertion is a *synthesized paste*, because the SDK's rich-text
+answers accept formatted content through their own paste pipeline; the bridge cannot see inside
+it, so it reads `dispatchEvent`'s return value (an editor that handles a paste calls
+`preventDefault`, reporting false) and falls back to plain text otherwise. That fallback and its
+`mode` report are what let a host tell "formatted" from "plain, because this field can't hold
+more". Third, focus: the host-side click that triggers an insert takes OS focus out of the
+WebView2, so the tests drive `focusin`/`focusout` (with `composedPath`, as a shadow boundary
+retargets them) and assert the tracked field is re-focused first.
+
 `launch-context.test.mjs` is the regression suite for **GH-48**: launch context was
 dropped whenever the host's `SdcEndpointAddress` differed from the tiro-web-sdk's
 built-in default, so `$populate` went out with no `context` parameters and every

@@ -33,17 +33,18 @@
         // user clicks Copy, the form-filler has runtime-applied attributes
         // (sdc-endpoint-address, launch-context, questionnaire) and the
         // tiro-web-sdk has injected its own runtime <style> blocks (audio-recorder
-        // etc.). A static template gives the integrator the bare scaffolding —
-        // doctype, a few CSS rules to make the element fill the
-        // viewport, and the element itself. No <html>/<head>/<body> wrappers
-        // (HTML5 makes them optional) so the result is essentially just the
-        // <tiro-form-filler> element with the minimum to make it render.
+        // etc.). A static template gives the integrator the bare scaffolding: a
+        // complete, well-formed document — doctype, html/head/body, a couple of CSS
+        // rules to make the element fill the viewport, and the element itself.
         //
-        // The end-script-tag inside this template literal is written as
-        // <\/script> so the HTML parser doesn't close the enclosing script
-        // block prematurely (the JS string evaluates back to the actual tag).
-        // (Don't write the literal characters here either — even in a comment
-        // the HTML parser still scans for them and would close the script.)
+        // It carries no <script> of its own, deliberately: the harness injects both
+        // the bridge and the validated tiro-web-sdk, so a page that adds its own SDK
+        // tag is refused at handshake (GH-60). That also means nothing in here needs
+        // the <\/script> escaping a nested script block would have forced.
+        //
+        // Reading it in an editor: the document below lives inside a JS template
+        // literal, so an HTML-aware editor may flag its tags as stray. They are not
+        // — the template is balanced, and tests/bridge plus the tag checks cover it.
         const STARTER_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>

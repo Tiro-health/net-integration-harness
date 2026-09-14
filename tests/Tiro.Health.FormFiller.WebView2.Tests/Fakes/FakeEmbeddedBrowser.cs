@@ -10,7 +10,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
     /// (posted messages, init scripts, virtual host mappings, navigations) and exposes
     /// <see cref="RaiseMessageReceived"/> so tests can simulate inbound page→host messages.
     /// </summary>
-    public sealed class FakeEmbeddedBrowser : IEmbeddedBrowser
+    public sealed class FakeEmbeddedBrowser : IEmbeddedBrowser, IContextMenuCapableBrowser
     {
         private readonly Control _control = new Control();
 
@@ -24,6 +24,27 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public Control Control => _control;
 
         public event EventHandler<string> MessageReceived;
+
+        /// <summary>
+        /// Set by the viewer at init. Tests call it to model a right-click, since the real menu
+        /// is Chromium's and never appears in a unit test.
+        /// </summary>
+        public Func<TiroContextMenuContext, IReadOnlyList<TiroMenuEntry>, IReadOnlyList<TiroMenuEntry>> ContextMenuBuilder { get; set; }
+
+        /// <summary>
+        /// Stand-ins for the entries Chromium would have offered. Empty by default — most tests
+        /// only care about the host's own — so set it to model a click that has native entries.
+        /// </summary>
+        public List<TiroMenuEntry> BrowserItems { get; } = new List<TiroMenuEntry>();
+
+        /// <summary>Builds a stand-in for one of Chromium's entries.</summary>
+        public static TiroMenuEntry BrowserItem(
+            string name, string label = null, TiroMenuEntryKind kind = TiroMenuEntryKind.Command, bool isEnabled = true)
+            => new TiroMenuEntry(name, label ?? name, kind, isEnabled, new object());
+
+        /// <summary>The menu a right-click on the given target would show.</summary>
+        public IReadOnlyList<TiroMenuEntry> RequestContextMenu(bool isEditable = true, string selectionText = null)
+            => ContextMenuBuilder?.Invoke(new TiroContextMenuContext(isEditable, selectionText), BrowserItems);
 
         public Task InitializeAsync()
         {
