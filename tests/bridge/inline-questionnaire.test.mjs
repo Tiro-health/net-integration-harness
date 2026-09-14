@@ -54,11 +54,20 @@ test("a canonical URL is still applied verbatim", async () => {
 });
 
 test("an inline Questionnaire is acked like any other display", async () => {
-    const { responses } = await display(INLINE);
+    // Routed rather than delivered: `deliver` calls the handler directly and never
+    // reaches the code that posts an ack, so the round trip needs a real inbound
+    // message. The host blocks on this ack to reach ContextSet.
+    const element = new FormFillerStub();
+    const h = await loadBridge([element], { host: true });
+    await flush();
 
-    const acks = responses();
-    assert.equal(acks.length, 1, "the host waits on this ack to reach ContextSet");
-    assert.notEqual(acks[0].payload?.$type, "error");
+    h.receive({ messageId: "m1", messageType: "sdc.displayQuestionnaire", payload: { questionnaire: INLINE } });
+    await flush();
+
+    const ack = h.responses().find(m => m.responseToMessageId === "m1");
+    assert.ok(ack, "the host awaits this ack");
+    assert.notEqual(ack.payload?.$type, "error", "an inline questionnaire must not be refused");
+    assert.equal(JSON.parse(element.attributes.get("questionnaire")).id, "private-intake");
 });
 
 test("launch context still precedes an inline questionnaire", async () => {
