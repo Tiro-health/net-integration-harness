@@ -829,12 +829,19 @@ handles, so the page can tell whether the HTML actually landed. `onResult` recei
 
 | | |
 |---|---|
-| `Inserted = False` | nothing was focused, or the field takes no free text |
+| `Inserted = False` | nothing was focused; the field takes no free text; the field stopped accepting it; or the insert failed outright |
 | `KeptFormatting = True` (`mode=Html`) | the formatting survived |
 | `KeptFormatting = False` (`mode=Text`) | that field can only hold plain text |
 
 The last one is worth acting on: it says the field cannot store formatting, so no better
 converter would change the result.
+
+`Inserted = False` is reported, never guessed. The page refuses a field that has become
+read-only or disabled since the clinician focused it — a form re-renders, an `enableWhen` flips,
+the form locks after a final submit — and when it falls back to writing the value directly it
+reads the value back rather than assuming the write stuck. A controlled component that rejects
+it is reported as not inserted, so the EHR is never told an answer landed when the next render
+will drop it.
 
 **Configuring from the EHR.** `ContextMenuItems` is a plain `IList` you fill in code, and the
 harness reads it *on every right-click* — so nothing is baked in at startup:
@@ -859,60 +866,6 @@ action)`, where the action is `Action`, `Action(Of TiroContextMenuContext)`, or 
 an `Async Sub` lambda, so the harness can observe a failure instead of it escaping as an
 unhandled async-void exception.
 
-#### Taking over the whole menu
-
-`ContextMenuItems` always appends below WebView2's own entries. When that isn't enough — snippets
-at the top, no **Inspect element** in production, the browser's entries interleaved with yours —
-set `BuildContextMenu`. It is called on every right-click with the browser's entries *and* yours,
-and the list it returns **is** the menu:
-
-```vb
-TiroFormViewer.BuildContextMenu =
-    Function(menu)
-        Dim result As New List(Of TiroMenuEntry)
-
-        result.AddRange(menu.HostItems)                      ' our snippets, on top
-        result.Add(TiroMenuEntry.CreateSeparator())
-
-        For Each native In menu.BrowserItems                 ' then Chromium's, minus Inspect
-            If native.Name <> "inspectElement" Then result.Add(native)
-        Next
-
-        Return result
-    End Function
-```
-
-The menu is still drawn by WebView2 — only reordered and filtered. That matters: suppressing it
-to show a WinForms `ContextMenuStrip` instead would move focus out of the page and lose the caret,
-and inserting at the caret is the whole feature.
-
-**What you can and can't do to an entry:**
-
-| | Browser entries (Copy, Paste, spelling suggestions, Inspect) | Your entries |
-|---|---|---|
-| Reorder | yes | yes |
-| Hide (leave out of the list) | yes | yes |
-| Disable (grey out) | no — WebView2 reserves this | yes, via `IsEnabled` |
-| Relabel | no — `Label` is the browser's, and localised | yes |
-
-**Match on `Name`, never `Label`.** `Name` is unlocalized and stable (`"copy"`, `"paste"`,
-`"inspectElement"`, `"saveAs"`); `Label` is translated and carries an `&` before the
-keyboard-accelerator character, so `"&Copy"` is `"&Kopiëren"` on Dutch Windows. `Name` is *not*
-unique either — every spelling suggestion is `"spellCheck"` and every host entry is `"custom"` —
-which is why the menu is a list and not a dictionary. Filter with it; don't key on it.
-
-**Browser entries can be reused, not invented.** There is no constructor for one: the only way to
-get the Copy entry is to take it out of `menu.BrowserItems` for that click. Which entries exist
-depends on what was clicked — Copy is absent without a selection, and spelling suggestions are
-generated fresh, with the suggested words as their labels — so an entry cached across clicks is
-stale and gets dropped (with a note to telemetry, so it isn't a silent disappearance).
-
-**Failure modes are deliberately dull.** Return `Nothing` for "no opinion" and you get the
-standard layout. Throw, and you also get the standard layout, with the exception captured — a
-clinician mid-consult keeps Copy and Paste even if the EHR's layout code is broken. Both
-`ContextMenuItems` and `BuildContextMenu` work together: the former arrives as `menu.HostItems`,
-already filtered by each item's `IsVisible`.
-
 **`AddInsertItem` does the wiring for you.** An insert item always needs the same three things,
 two of which are easy to get wrong, so there is a shorthand:
 
@@ -933,7 +886,10 @@ everywhere.
   nothing.
 - **`onResult` is optional but worth passing**, at least to catch `Inserted = False` — nothing
   was focused, and the item otherwise looks broken. It runs on the UI thread, so it can touch
-  controls directly.
+  controls directly. It also fires with `TextInsertResult.NotInserted` when the insert fails
+  outright (the page didn't answer in time, the viewer was disposed mid-flight, your own content
+  provider threw), so a status label never sits showing the previous click's outcome. The
+  exception still reaches telemetry either way.
 - Both providers run when the item is picked, not when it is added.
 
 **RTF helpers.** Most WinForms EHRs hold their content as RTF, so both renditions are available
@@ -972,6 +928,71 @@ the `html` provider instead; nothing about `TiroRtf.ToHtml` is mandatory.
 
 Worked example: the Extract sample's four **Insert ...** items in `Form1_Load` — two plain
 snippets, and two derived from an RTF constant through `TiroRtf`.
+
+#### Taking over the whole menu
+
+`ContextMenuItems` always appends below WebView2's own entries. When that isn't enough — snippets
+at the top, no **Inspect element** in production, the browser's entries interleaved with yours —
+set `BuildContextMenu`. It is called on every right-click with the browser's entries *and* yours,
+and the list it returns **is** the menu:
+
+```vb
+TiroFormViewer.BuildContextMenu =
+    Function(menu)
+        Dim result As New List(Of TiroMenuEntry)
+
+        result.AddRange(menu.HostItems)                      ' our snippets, on top
+        result.Add(TiroMenuEntry.CreateSeparator())
+
+        ' Then Chromium's, minus Inspect. The loop variable is typed explicitly because an
+        ' old-style VB project compiles with Option Infer Off, where `For Each native In ...`
+        ' is a compile error.
+        For Each native As TiroMenuEntry In menu.BrowserItems
+            If native.Name <> "inspectElement" Then result.Add(native)
+        Next
+
+        Return result
+    End Function
+```
+
+The menu is still drawn by WebView2 — only reordered and filtered. That matters: suppressing it
+to show a WinForms `ContextMenuStrip` instead would move focus out of the page and lose the caret,
+and inserting at the caret is the whole feature.
+
+**What you can and can't do to an entry:**
+
+| | Browser entries (Copy, Paste, spelling suggestions, Inspect) | Your entries |
+|---|---|---|
+| Reorder | yes | yes |
+| Hide (leave out of the list) | yes | yes |
+| Disable (grey out) | no — WebView2 reserves this | yes, via `IsEnabled` |
+| Relabel | no — `Label` is the browser's, and localised | yes |
+
+`IsEnabled` comes in two shapes, for the two ways you reach an item. On `TiroContextMenuItem`
+it is a per-click test (`Function(ctx) conclusion IsNot Nothing`), resolved before the builder
+runs. On a `TiroMenuEntry` inside the builder it is a plain `Boolean` you set. Setting it on a
+browser entry throws — omit the entry to hide it instead.
+
+**Match on `Name`, never `Label`.** `Name` is unlocalized and stable (`"copy"`, `"paste"`,
+`"inspectElement"`, `"saveAs"`); `Label` is translated and carries an `&` before the
+keyboard-accelerator character, so `"&Copy"` is `"&Kopiëren"` on Dutch Windows. `Name` is *not*
+unique either — every spelling suggestion is `"spellCheck"` and every host entry is `"custom"` —
+which is why the menu is a list and not a dictionary. Filter with it; don't key on it.
+
+**Browser entries can be reused, not invented.** There is no constructor for one: the only way to
+get the Copy entry is to take it out of `menu.BrowserItems` for that click. Which entries exist
+depends on what was clicked — Copy is absent without a selection, and spelling suggestions are
+generated fresh, with the suggested words as their labels — so an entry cached across clicks is
+stale and gets dropped (with a note to telemetry, so it isn't a silent disappearance). The same
+goes for one returned twice: a browser entry is a single object and cannot occupy two positions,
+so it appears at its first and the repeat is dropped and reported. To repeat a command, add a
+host item.
+
+**Failure modes are deliberately dull.** Return `Nothing` for "no opinion" and you get the
+standard layout. Throw, and you also get the standard layout, with the exception captured — a
+clinician mid-consult keeps Copy and Paste even if the EHR's layout code is broken. Both
+`ContextMenuItems` and `BuildContextMenu` work together: the former arrives as `menu.HostItems`,
+already filtered by each item's `IsVisible`.
 
 ### Frontend version compatibility
 
