@@ -568,7 +568,15 @@
         const caret = start + text.length;
         try { el.setSelectionRange(caret, caret); } catch (err) { /* not all inputs support it */ }
         el.dispatchEvent(new Event("input", { bubbles: true }));
-        return true;
+        // Verified rather than assumed: this is the path the comment above calls unreliable,
+        // so reporting a blind `true` would tell the host the answer landed in exactly the
+        // case where it didn't. A controlled component that rejects the write reverts `value`
+        // from its own input handler, which runs synchronously inside the dispatch above.
+        //
+        // This does not catch a revert on a LATER render — the value still reads back correctly
+        // at this point — so it narrows the lie rather than removing it. Catching that would
+        // mean re-reading on a future tick and holding the ack until then.
+        return el.value === next;
     }
 
     /**
@@ -581,9 +589,15 @@
      */
     function resolveInsertTarget() {
         const active = deepActiveElement();
-        const target = isTextEditable(active)
-            ? active
-            : (lastEditable && lastEditable.isConnected ? lastEditable : null);
+        // The remembered field is re-tested, not just checked for still being in the document.
+        // It passed isTextEditable at focusin, but a form re-renders: an enableWhen flips, the
+        // form locks after a final submit, an answer turns read-only. Chromium's readOnly stops
+        // the user, not a script — spliceValue would write through it and report success — so
+        // the same test that qualified the field has to qualify it again at insert time.
+        const remembered = lastEditable && lastEditable.isConnected && isTextEditable(lastEditable)
+            ? lastEditable
+            : null;
+        const target = isTextEditable(active) ? active : remembered;
         if (!target) return null;
 
         if (target !== active) {

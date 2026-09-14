@@ -325,3 +325,85 @@ test("with nothing focused, neither path runs", async () => {
         { inserted: false, mode: "none" });
     assert.deepEqual(h.execCommands, []);
 });
+
+test("a field that turned read-only after focus is no longer a target", async () => {
+    // The remembered field is re-tested at insert time, not merely checked for still being
+    // in the document. A form re-renders while the clinician is in it: an enableWhen flips,
+    // the form locks after a final submit, an answer turns read-only. Chromium's readOnly
+    // stops the user, not a script — the splice fallback would write straight through it and
+    // report success, so the answer would appear in a locked field and vanish on the next
+    // render, never reaching the QuestionnaireResponse.
+    const h = await bridge();
+    const input = field({ value: "BP 120/80" });
+    h.focus(input);
+
+    // The host-side click takes OS focus out of the WebView2, and the form locks meanwhile.
+    h.blur(input, null);
+    input.readOnly = true;
+
+    const result = deliver(h.window, "ui.form.insertContent", { text: "at rest " });
+
+    assert.equal(result.inserted, false, "a locked field must be refused, not written through");
+    assert.equal(input.value, "BP 120/80", "and left exactly as it was");
+    assert.deepEqual(h.execCommands, [], "nothing should even be attempted");
+});
+
+test("a field that became disabled after focus is no longer a target", async () => {
+    const h = await bridge();
+    const input = field({ value: "BP 120/80" });
+    h.focus(input);
+    h.blur(input, null);
+    input.disabled = true;
+
+    assert.equal(deliver(h.window, "ui.form.insertContent", { text: "x" }).inserted, false);
+    assert.equal(input.value, "BP 120/80");
+});
+
+test("a field detached after focus is no longer a target", async () => {
+    // isConnected was the only check here; it still has to hold alongside the re-test.
+    const h = await bridge();
+    const input = field({ value: "BP 120/80" });
+    h.focus(input);
+    h.blur(input, null);
+    input.isConnected = false;
+
+    assert.equal(deliver(h.window, "ui.form.insertContent", { text: "x" }).inserted, false);
+});
+
+test("a still-editable remembered field is inserted into after focus leaves", async () => {
+    // The counterpart to the three above: re-testing must not break the case the tracked
+    // field exists for — a host-side click that took focus out of the WebView2 entirely.
+    const h = await bridge();
+    const input = field({ value: "BP 120/80" });
+    input.selectionStart = 3;
+    input.selectionEnd = 3;
+    h.focus(input);
+    h.blur(input, null);
+
+    const result = deliver(h.window, "ui.form.insertContent", { text: "at rest " });
+
+    assert.equal(result.inserted, true);
+    assert.ok(input.focusCalls > 0, "the field has to be refocused before the insert");
+});
+
+test("a splice the field rejects is reported as not inserted", async () => {
+    // The splice fallback is the path the bridge's own comments call unreliable: a controlled
+    // component can reject the write from its input handler. Reporting a blind success there
+    // tells the host the answer landed in exactly the case where it did not.
+    const h = await bridge();
+    h.failExecCommand();
+    const input = field({ value: "BP 120/80" });
+
+    // A controlled component that reverts from its own input handler, synchronously.
+    input.dispatchEvent = function (event) {
+        this.events.push(event.type);
+        if (event.type === "input") this._value = "BP 120/80";
+        return true;
+    };
+    h.focus(input);
+
+    const result = deliver(h.window, "ui.form.insertContent", { text: "at rest " });
+
+    assert.equal(result.inserted, false, "the host must not be told an answer landed when it did not");
+    assert.equal(input.value, "BP 120/80");
+});
