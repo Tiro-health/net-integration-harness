@@ -121,6 +121,16 @@ Public Class Form1
     End Sub
 
     ''' <summary>
+    ''' Asks the form to submit. The button does not submit anything itself — it requests it, and
+    ''' the page decides: it validates, and only a form that passes comes back through
+    ''' <see cref="HandleFormSubmitted"/> with the completed QuestionnaireResponse. That is why
+    ''' there is no result to inspect here.
+    ''' </summary>
+    Private Async Sub SubmitButton_Click(sender As Object, e As EventArgs) Handles SubmitButton.Click
+        Await TiroFormViewer.SendFormRequestSubmitAsync()
+    End Sub
+
+    ''' <summary>
     ''' Shows what the page managed, in the window title, so the outcome is visible without a
     ''' debugger. The harness calls this on the UI thread, so touching controls is safe.
     ''' </summary>
