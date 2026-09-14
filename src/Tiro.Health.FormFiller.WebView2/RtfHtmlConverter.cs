@@ -68,6 +68,9 @@ namespace Tiro.Health.FormFiller.WebView2
                 if (c == '{')
                 {
                     _pos++;
+                    // Any \'hh still buffered belongs to the text before the group, under the
+                    // format in force now — not the one the group is about to establish.
+                    FlushBytes();
                     _groups.Push(_format);
                 }
                 else if (c == '}')
@@ -195,6 +198,10 @@ namespace Tiro.Health.FormFiller.WebView2
 
         private void Apply(string word, int? parameter)
         {
+            // Every word, not just the breaks: a buffered \'hh decoded after a format change
+            // lands under the new format — "R\'e9sum\'e9\b0" puts the final é outside the bold.
+            FlushBytes();
+
             switch (word)
             {
                 // --- character formatting -------------------------------------------------

@@ -202,13 +202,12 @@ namespace Tiro.Health.FormFiller.WebView2
                 }
                 catch
                 {
-                    // The insert never completed — the page didn't answer in time, the viewer
-                    // went away mid-flight, or the host's own content provider threw. Without
-                    // this the callback is skipped entirely and the clinician gets no signal at
-                    // all, which is precisely the "the item looks broken" case onResult exists
-                    // to cover. Rethrown afterwards, so the task still faults and the exception
-                    // still reaches telemetry.
-                    if (onResult != null) onResult(TextInsertResult.NotInserted);
+                    // The insert never completed — a timeout, a dispose race, or the host's own
+                    // provider throwing. Without this the callback is skipped and the clinician
+                    // gets no signal at all. Its own guard, so a throwing callback can't replace
+                    // the original failure before the rethrow carries it to telemetry.
+                    try { onResult?.Invoke(TextInsertResult.NotInserted); }
+                    catch (Exception callbackFailure) { _telemetry.CaptureException(callbackFailure); }
                     throw;
                 }
                 // Resumes on the captured context — the UI thread, since menu dispatch runs
@@ -1355,7 +1354,9 @@ namespace Tiro.Health.FormFiller.WebView2
         private IReadOnlyList<TiroMenuEntry> ComposeContextMenu(
             TiroContextMenuContext context, IReadOnlyList<TiroMenuEntry> browserItems)
         {
-            if (State == TiroFormViewerState.Disposed) return new List<TiroMenuEntry>();
+            // null, not empty: empty is a deliberate "show nothing" and strips Copy and Paste
+            // too. A disposed viewer has no opinion — the browser keeps its own menu.
+            if (State == TiroFormViewerState.Disposed) return null;
             if (browserItems == null) browserItems = new List<TiroMenuEntry>();
 
             var hostItems = ResolveHostItems(context);

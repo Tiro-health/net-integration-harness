@@ -199,5 +199,27 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.IsFalse(html.Contains("<body"), "no body");
             StringAssert.StartsWith(html, "<p>");
         }
+        [TestMethod]
+        public void AnAccentAtTheEndOfARunKeepsThatRunsFormatting()
+        {
+            // \'hh is buffered until the codepage is known, so a byte still pending when the
+            // format toggles would be decoded under the NEW format: the accent jumps out of the
+            // bold run it belongs to. Accented characters ending a run are ordinary in NL/FR
+            // clinical text, and \b ...\b0 is exactly what RichTextBox emits.
+            var html = TiroRtf.ToHtml(Preamble + @"\b R\'e9sum\'e9\b0  plain\par}");
+
+            StringAssert.Contains(html, "<b>R\u00e9sum\u00e9</b>", "the accent belongs to the bold run");
+            Assert.IsFalse(html.Contains("</b>\u00e9"), "it must not be emitted after the run closed");
+        }
+
+        [TestMethod]
+        public void AnAccentBeforeAGroupKeepsTheOuterFormatting()
+        {
+            // Same trap through the group-open branch rather than a format toggle.
+            var html = TiroRtf.ToHtml(Preamble + @" caf\'e9{\b bold}\par}");
+
+            StringAssert.Contains(html, "caf\u00e9", "the accent stays with the text before the group");
+            Assert.IsFalse(html.Contains("<b>\u00e9"), "it must not be pulled into the bold group");
+        }
     }
 }

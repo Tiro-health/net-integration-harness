@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -208,9 +209,13 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             _browser.RequestContextMenu()[0].Invoke();
 
-            await PollFor(() => _sink.CapturedExceptions.Count > 0, TimeSpan.FromSeconds(5));
-            // Whichever exception surfaces, it lands in telemetry rather than on the message pump.
-            Assert.IsTrue(_sink.CapturedExceptions.Count >= 1);
+            // Both must arrive: a throwing callback must not replace the failure it was told
+            // about. Asserting only "something was captured" is what let that slip through.
+            await PollFor(() => _sink.CapturedExceptions.Count >= 2, TimeSpan.FromSeconds(5));
+            // The original arrives wrapped by the faulted-task continuation, so match on text.
+            var messages = string.Join(" | ", _sink.CapturedExceptions.Select(ex => ex.ToString()));
+            StringAssert.Contains(messages, "no conclusion", "the original failure");
+            StringAssert.Contains(messages, "and the status label is broken too", "and the callback's");
         }
 
         [TestMethod]

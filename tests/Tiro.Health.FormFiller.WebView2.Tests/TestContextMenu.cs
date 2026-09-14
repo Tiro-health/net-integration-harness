@@ -155,8 +155,9 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
 
             var shown = _browser.RequestContextMenu();
 
-            Assert.AreEqual(0, shown == null ? 0 : shown.Count,
-                "a disposed viewer must not answer a menu request");
+            // null, not empty. Empty is a deliberate "show nothing", which the render plan
+            // honours by clearing the menu — stripping Copy and Paste on the way out.
+            Assert.IsNull(shown, "a disposed viewer has no opinion; the browser keeps its own menu");
         }
 
         [TestMethod]

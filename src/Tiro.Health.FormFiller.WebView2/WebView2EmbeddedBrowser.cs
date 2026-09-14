@@ -175,49 +175,51 @@ namespace Tiro.Health.FormFiller.WebView2
 
             _menuBuildSequence++;
 
-            // Snapshot before anything is removed: this is both what the builder is offered and
-            // the record of which handles are legitimate for this click.
-            var native = new List<CoreWebView2ContextMenuItem>(e.MenuItems);
-            var offered = new List<TiroMenuEntry>(native.Count);
-            foreach (var item in native)
-                offered.Add(new TiroMenuEntry(item.Name, item.Label, MapKind(item.Kind), item.IsEnabled, item));
-
-            IReadOnlyList<TiroMenuEntry> final;
+            // Covers every exit, not just the rendered one: a builder that threw or declined is
+            // still a click, and the previous click's SelectionText must not survive it.
             try
             {
-                var target = e.ContextMenuTarget;
-                var context = new TiroContextMenuContext(
-                    target != null && target.IsEditable,
-                    target != null && target.HasSelection ? target.SelectionText : null);
-                final = builder(context, offered);
-            }
-            catch (Exception ex)
-            {
-                // The builder is the viewer's, which already guards the host's delegates. If one
-                // still escapes, WebView2's own menu is shown untouched rather than the event
-                // faulting mid-dispatch.
-                Debug.Fail("Context menu builder threw: " + ex.Message);
-                return;
-            }
-            if (final == null) return;
+                // Snapshot before anything is removed: this is both what the builder is offered
+                // and the record of which handles are legitimate for this click.
+                var native = new List<CoreWebView2ContextMenuItem>(e.MenuItems);
+                var offered = new List<TiroMenuEntry>(native.Count);
+                foreach (var item in native)
+                    offered.Add(new TiroMenuEntry(item.Name, item.Label, MapKind(item.Kind), item.IsEnabled, item));
 
-            // Everything below here is COM. A throw from any of it unwinds through WebView2's
-            // callback into the WinForms message pump, where there is no handler — the process
-            // dies from a right-click. Whatever fails, the menu is worth less than the session,
-            // so the whole render is guarded and a partial menu is the worst outcome.
-            try
-            {
-                Render(e, ContextMenuRenderPlan.Create(final, native), environment);
-            }
-            catch (Exception ex)
-            {
-                Debug.Fail("Context menu render failed: " + ex.Message);
+                IReadOnlyList<TiroMenuEntry> final;
+                try
+                {
+                    var target = e.ContextMenuTarget;
+                    var context = new TiroContextMenuContext(
+                        target != null && target.IsEditable,
+                        target != null && target.HasSelection ? target.SelectionText : null);
+                    final = builder(context, offered);
+                }
+                catch (Exception ex)
+                {
+                    // The builder is the viewer's, which already guards the host's delegates. If
+                    // one still escapes, WebView2's own menu is shown untouched rather than the
+                    // event faulting mid-dispatch.
+                    Debug.Fail("Context menu builder threw: " + ex.Message);
+                    return;
+                }
+                if (final == null) return;
+
+                // Everything below here is COM. A throw from any of it unwinds through WebView2's
+                // callback into the WinForms message pump, where there is no handler — the process
+                // dies from a right-click. Whatever fails, the menu is worth less than the session,
+                // so the whole render is guarded and a partial menu is the worst outcome.
+                try
+                {
+                    Render(e, ContextMenuRenderPlan.Create(final, native), environment);
+                }
+                catch (Exception ex)
+                {
+                    Debug.Fail("Context menu render failed: " + ex.Message);
+                }
             }
             finally
             {
-                // An action holds the context of the menu it was built for, and that context
-                // carries SelectionText — form content, clinical data. Items not in the menu
-                // just built have no further use for theirs, so it does not outlive the click.
                 ClearActionsNotUsedInCurrentMenu();
             }
         }
