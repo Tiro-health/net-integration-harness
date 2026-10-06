@@ -237,12 +237,15 @@ Public Class Form1
 
     ''' <summary>
     ''' A section's text is XHTML: an &lt;h2&gt; with the title, then a &lt;p&gt; per answer.
-    ''' This keeps the paragraphs, one per line.
+    ''' This keeps the paragraphs, one per line. A rich-text answer arrives as its own
+    ''' paragraphs nested inside the answer's &lt;p&gt;, so only the innermost ones are read,
+    ''' or that answer would be listed twice.
     ''' </summary>
     Private Shared Function SectionText(div As String) As String
         Return String.Join(Environment.NewLine,
             System.Xml.Linq.XElement.Parse(div).Descendants().
-                Where(Function(e) e.Name.LocalName = "p").
+                Where(Function(e) e.Name.LocalName = "p" AndAlso
+                                  Not e.Descendants().Any(Function(d) d.Name.LocalName = "p")).
                 Select(Function(e) e.Value))
     End Function
 
