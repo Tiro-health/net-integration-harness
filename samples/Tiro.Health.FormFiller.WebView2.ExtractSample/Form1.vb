@@ -217,7 +217,7 @@ Public Class Form1
                     Dim report As String = String.Join(
                         Environment.NewLine & Environment.NewLine,
                         composition.Section.Select(
-                            Function(s) If(s.Title, "(untitled section)").ToUpperInvariant() & Environment.NewLine & XhtmlToText(s.Text?.Div, s.Title)))
+                            Function(s) s.Title.ToUpperInvariant() & Environment.NewLine & SectionText(s.Text?.Div)))
 
                     Dim title As String = If(String.IsNullOrEmpty(composition.Title), "Extracted Composition", composition.Title)
                     MessageBox.Show(report, title, MessageBoxButtons.OK, MessageBoxIcon.Information)
@@ -240,50 +240,17 @@ Public Class Form1
     End Sub
 
     ''' <summary>
-    ''' Flattens a section's XHTML narrative to text for the MessageBox: a line per paragraph,
-    ''' heading or list item. A real EHR would convert to its own format (RTF, its editor's HTML)
-    ''' instead; this only keeps the demo readable. Generated sections open with their own title
-    ''' as a heading; that line is dropped, since the caller already prints the title.
+    ''' A section's XHTML as plain text for the MessageBox: one line per paragraph. The generated
+    ''' div is an &lt;h2&gt; repeating the title, then a &lt;p&gt; per answer, so the paragraphs are
+    ''' the content. A real EHR would convert the div to its own format (RTF, its editor's HTML).
     ''' </summary>
-    Private Shared Function XhtmlToText(div As String, sectionTitle As String) As String
+    Private Shared Function SectionText(div As String) As String
         If String.IsNullOrEmpty(div) Then Return "(empty)"
-        Dim lines As New List(Of String)
-        Dim current As New System.Text.StringBuilder()
-        Try
-            AppendBlocks(System.Xml.Linq.XElement.Parse(div), lines, current)
-        Catch ex As System.Xml.XmlException
-            Return div ' Not well-formed: show it as received rather than lose the section.
-        End Try
-        EndLine(lines, current)
-        If lines.Count > 0 AndAlso String.Equals(lines(0), sectionTitle, StringComparison.OrdinalIgnoreCase) Then lines.RemoveAt(0)
-        Return If(lines.Count = 0, "(empty)", String.Join(Environment.NewLine, lines))
+        Return String.Join(Environment.NewLine,
+            System.Xml.Linq.XElement.Parse(div).Descendants().
+                Where(Function(e) e.Name.LocalName = "p").
+                Select(Function(e) e.Value))
     End Function
-
-    Private Shared ReadOnly BlockElements As New HashSet(Of String) From {
-        "p", "div", "li", "br", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
-
-    ''' <summary>Appends a node's text to <paramref name="current"/>, ending a line at each block element.</summary>
-    Private Shared Sub AppendBlocks(node As System.Xml.Linq.XNode, lines As List(Of String), current As System.Text.StringBuilder)
-        Dim text As System.Xml.Linq.XText = TryCast(node, System.Xml.Linq.XText)
-        If text IsNot Nothing Then
-            current.Append(text.Value)
-            Return
-        End If
-        Dim element As System.Xml.Linq.XElement = TryCast(node, System.Xml.Linq.XElement)
-        If element Is Nothing Then Return
-        Dim isBlock As Boolean = BlockElements.Contains(element.Name.LocalName)
-        If isBlock Then EndLine(lines, current)
-        For Each child As System.Xml.Linq.XNode In element.Nodes()
-            AppendBlocks(child, lines, current)
-        Next
-        If isBlock Then EndLine(lines, current)
-    End Sub
-
-    Private Shared Sub EndLine(lines As List(Of String), current As System.Text.StringBuilder)
-        Dim line As String = current.ToString().Trim()
-        If line.Length > 0 Then lines.Add(line)
-        current.Clear()
-    End Sub
 
     Private Sub HandleCloseApplication(sender As Object, e As CloseApplicationEventArgs)
         isClosingConfirmed = True
