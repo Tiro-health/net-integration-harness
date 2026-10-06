@@ -206,21 +206,17 @@ Public Class Form1
                     bundle.Entry.Select(Function(entry) entry.Resource).OfType(Of Composition)().FirstOrDefault()
 
                 If composition IsNot Nothing Then
-                    ' The readable text lives on the Composition's SECTIONS, one per report
-                    ' section (Macroscopie, Microscopie, Conclusie): Section.Title is the heading,
-                    ' Section.Text.Div the XHTML the template rendered from the answers. The server
-                    ' does not set Composition.Text, so there is no whole-document div to read.
-                    '
-                    ' Keeping the sections apart is the point of extracting rather than reading
-                    ' QuestionnaireResponse.Text (which has the same content, already joined): an
-                    ' EHR can file each section into its own field. Here they are just listed.
-                    Dim report As String = String.Join(
-                        Environment.NewLine & Environment.NewLine,
-                        composition.Section.Select(
-                            Function(s) s.Title.ToUpperInvariant() & Environment.NewLine & SectionText(s.Text?.Div)))
+                    ' One section per part of the report (Macroscopie, Microscopie, Conclusie),
+                    ' each with its own text. Keeping them apart is why you'd extract: an EHR can
+                    ' file each section into its own field. Here they are just listed.
+                    Dim report As New System.Text.StringBuilder()
+                    For Each section As Composition.SectionComponent In composition.Section
+                        report.AppendLine(section.Title.ToUpperInvariant())
+                        report.AppendLine(SectionText(section.Text.Div))
+                        report.AppendLine()
+                    Next
 
-                    Dim title As String = If(String.IsNullOrEmpty(composition.Title), "Extracted Composition", composition.Title)
-                    MessageBox.Show(report, title, MessageBoxButtons.OK, MessageBoxIcon.Information)
+                    MessageBox.Show(report.ToString(), composition.Title, MessageBoxButtons.OK, MessageBoxIcon.Information)
                 Else
                     ' No Composition: the template version has no Composition blueprint, so there is
                     ' nothing to build one from (a definition-based questionnaire extracts structured
@@ -240,12 +236,10 @@ Public Class Form1
     End Sub
 
     ''' <summary>
-    ''' A section's XHTML as plain text for the MessageBox: one line per paragraph. The generated
-    ''' div is an &lt;h2&gt; repeating the title, then a &lt;p&gt; per answer, so the paragraphs are
-    ''' the content. A real EHR would convert the div to its own format (RTF, its editor's HTML).
+    ''' A section's text is XHTML: an &lt;h2&gt; with the title, then a &lt;p&gt; per answer.
+    ''' This keeps the paragraphs, one per line.
     ''' </summary>
     Private Shared Function SectionText(div As String) As String
-        If String.IsNullOrEmpty(div) Then Return "(empty)"
         Return String.Join(Environment.NewLine,
             System.Xml.Linq.XElement.Parse(div).Descendants().
                 Where(Function(e) e.Name.LocalName = "p").
