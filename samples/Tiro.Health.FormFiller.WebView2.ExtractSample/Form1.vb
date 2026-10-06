@@ -116,7 +116,7 @@ Public Class Form1
         ' blueprint (authored with the template) is what makes $extract return one Composition
         ' section per report section — see HandleFormSubmitted.
         Await TiroFormViewer.SetContextAsync(
-            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|2.0.2",
+            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|2.0.4",
             patient:=patient,
             launchContext:=New List(Of LaunchContext(Of Resource)) From {
                 New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
