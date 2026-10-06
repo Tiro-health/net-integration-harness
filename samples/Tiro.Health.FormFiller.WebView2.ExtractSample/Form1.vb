@@ -102,13 +102,32 @@ Public Class Form1
                                      Function() TiroRtf.ToHtml(ConclusionRtf),
                                      onResult:=AddressOf ShowInsertResult)
 
-        ' Showcases passing an arbitrary named resource as launch context, alongside the
-        ' well-known patient/encounter/author shorthand — here a Specimen, via the
-        ' launchContext parameter. Purely illustrative: this sample form doesn't reference
-        ' %specimen anywhere, so it has no effect on rendering or extraction.
+        ' The clinician writing the report and the visit it belongs to. The form's Klinische
+        ' informatie fields prefill from these: Auteur from %user (the author), Datum consult
+        ' from %encounter. Leave either out and its field stays empty.
+        Dim author As New Practitioner() With {
+            .Id = "practitioner-1",
+            .Name = New List(Of HumanName) From {
+                New HumanName() With {
+                    .Family = "Peeters",
+                    .Given = New List(Of String) From {"An"},
+                    .Text = "Dr. An Peeters"
+                }
+            }
+        }
+
+        Dim encounter As New Encounter() With {
+            .Id = "encounter-1",
+            .Status = EncounterStatus.Completed,
+            .ActualPeriod = New Period() With {.StartElement = New FhirDateTime("2026-10-01T09:30:00+02:00")}
+        }
+
+        ' Any other named resource goes through launchContext, alongside the patient/encounter/
+        ' author shorthand — here a Specimen, which the form reads as %specimen for Weefseltype.
+        ' The field shows type.text, so set it; a coding alone leaves the field empty.
         Dim specimen As New Specimen() With {
             .Id = "specimen-1",
-            .Type = New CodeableConcept("http://terminology.hl7.org/CodeSystem/v2-0487", "TISS", "Tissue"),
+            .Type = New CodeableConcept("http://terminology.hl7.org/CodeSystem/v2-0487", "TISS", "Tissue") With {.Text = "Huid"},
             .Subject = New ResourceReference("Patient/test-123")
         }
 
@@ -118,6 +137,8 @@ Public Class Form1
         Await TiroFormViewer.SetContextAsync(
             "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|2.0.4",
             patient:=patient,
+            encounter:=encounter,
+            author:=author,
             launchContext:=New List(Of LaunchContext(Of Resource)) From {
                 New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
             })
