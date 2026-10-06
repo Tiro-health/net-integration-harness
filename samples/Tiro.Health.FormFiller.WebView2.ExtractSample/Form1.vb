@@ -236,17 +236,20 @@ Public Class Form1
     End Sub
 
     ''' <summary>
-    ''' A section's text is XHTML: an &lt;h2&gt; with the title, then a &lt;p&gt; per answer.
-    ''' This keeps the paragraphs, one per line. A rich-text answer arrives as its own
-    ''' paragraphs nested inside the answer's &lt;p&gt;, so only the innermost ones are read,
-    ''' or that answer would be listed twice.
+    ''' A section's text is XHTML: an &lt;h2&gt; with the title, then a block per answer.
+    ''' This keeps the text blocks (&lt;p&gt;, &lt;div&gt;, &lt;li&gt;), one per line. Only the
+    ''' innermost ones are read: a rich-text answer brings its own paragraphs, which the server
+    ''' currently nests inside another &lt;p&gt;, and reading both would list it twice.
     ''' </summary>
     Private Shared Function SectionText(div As String) As String
         Return String.Join(Environment.NewLine,
             System.Xml.Linq.XElement.Parse(div).Descendants().
-                Where(Function(e) e.Name.LocalName = "p" AndAlso
-                                  Not e.Descendants().Any(Function(d) d.Name.LocalName = "p")).
+                Where(Function(e) IsTextBlock(e) AndAlso Not e.Descendants().Any(AddressOf IsTextBlock)).
                 Select(Function(e) e.Value))
+    End Function
+
+    Private Shared Function IsTextBlock(e As System.Xml.Linq.XElement) As Boolean
+        Return e.Name.LocalName = "p" OrElse e.Name.LocalName = "div" OrElse e.Name.LocalName = "li"
     End Function
 
     Private Sub HandleCloseApplication(sender As Object, e As CloseApplicationEventArgs)
