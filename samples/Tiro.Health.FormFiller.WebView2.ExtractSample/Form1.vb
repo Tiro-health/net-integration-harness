@@ -102,19 +102,43 @@ Public Class Form1
                                      Function() TiroRtf.ToHtml(ConclusionRtf),
                                      onResult:=AddressOf ShowInsertResult)
 
-        ' Showcases passing an arbitrary named resource as launch context, alongside the
-        ' well-known patient/encounter/author shorthand — here a Specimen, via the
-        ' launchContext parameter. Purely illustrative: this sample form doesn't reference
-        ' %specimen anywhere, so it has no effect on rendering or extraction.
+        ' The clinician writing the report and the visit it belongs to. The form's Klinische
+        ' informatie fields prefill from these: Auteur from %user (the author), Datum consult
+        ' from %encounter. Leave either out and its field stays empty.
+        Dim author As New Practitioner() With {
+            .Id = "practitioner-1",
+            .Name = New List(Of HumanName) From {
+                New HumanName() With {
+                    .Family = "Peeters",
+                    .Given = New List(Of String) From {"An"},
+                    .Text = "Dr. An Peeters"
+                }
+            }
+        }
+
+        Dim encounter As New Encounter() With {
+            .Id = "encounter-1",
+            .Status = EncounterStatus.Completed,
+            .ActualPeriod = New Period() With {.StartElement = New FhirDateTime("2026-10-01T09:30:00+02:00")}
+        }
+
+        ' Any other named resource goes through launchContext, alongside the patient/encounter/
+        ' author shorthand — here a Specimen, which the form reads as %specimen for Weefseltype.
+        ' The field shows type.text, so set it; a coding alone leaves the field empty.
         Dim specimen As New Specimen() With {
             .Id = "specimen-1",
-            .Type = New CodeableConcept("http://terminology.hl7.org/CodeSystem/v2-0487", "TISS", "Tissue"),
+            .Type = New CodeableConcept("http://terminology.hl7.org/CodeSystem/v2-0487", "TISS", "Tissue") With {.Text = "Huid"},
             .Subject = New ResourceReference("Patient/test-123")
         }
 
+        ' A pathology report with Macroscopie / Microscopie / Conclusie sections. Its Composition
+        ' blueprint (authored with the template) is what makes $extract return one Composition
+        ' section per report section — see HandleFormSubmitted.
         Await TiroFormViewer.SetContextAsync(
-            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|1.2.7",
+            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|2.0.5",
             patient:=patient,
+            encounter:=encounter,
+            author:=author,
             launchContext:=New List(Of LaunchContext(Of Resource)) From {
                 New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
             })
@@ -182,23 +206,24 @@ Public Class Form1
                     bundle.Entry.Select(Function(entry) entry.Resource).OfType(Of Composition)().FirstOrDefault()
 
                 If composition IsNot Nothing Then
-                    ' The readable narrative lives on the Composition's SECTIONS (section[].Text.Div))
-                    Dim narrative As String = String.Join(
-                        Environment.NewLine & Environment.NewLine,
-                        composition.Section.
-                            Select(Function(s) s.Text?.Div).
-                            Where(Function(div) Not String.IsNullOrEmpty(div)))
+                    ' One section per part of the report (Macroscopie, Microscopie, Conclusie),
+                    ' each with its own text. Keeping them apart is why you'd extract: an EHR can
+                    ' file each section into its own field. Here they are just listed.
+                    Dim report As New System.Text.StringBuilder()
+                    For Each section As Composition.SectionComponent In composition.Section
+                        report.AppendLine(section.Title.ToUpperInvariant())
+                        report.AppendLine(SectionText(section.Text.Div))
+                        report.AppendLine()
+                    Next
 
-                    If String.IsNullOrEmpty(narrative) Then narrative = composition.Text?.Div
-
-                    Dim title As String = If(String.IsNullOrEmpty(composition.Title), "Extracted Composition", composition.Title)
-                    MessageBox.Show(narrative, title, MessageBoxButtons.OK, MessageBoxIcon.Information)
+                    MessageBox.Show(report.ToString(), composition.Title, MessageBoxButtons.OK, MessageBoxIcon.Information)
                 Else
-                    ' No Composition (e.g. a definition-based questionnaire extracts structured
+                    ' No Composition: the template version has no Composition blueprint, so there is
+                    ' nothing to build one from (a definition-based questionnaire extracts structured
                     ' resources like Observation instead). Fall back to what the Bundle contains.
                     Dim summary As String =
                         $"$extract produced a '{bundle.Type}' Bundle with {bundle.Entry.Count} entries, " &
-                        "but no Composition to show a narrative for."
+                        "but no Composition. Does this template version have a Composition blueprint?"
                     MessageBox.Show(summary, "Extract result", MessageBoxButtons.OK, MessageBoxIcon.Information)
                 End If
             End Using
@@ -209,6 +234,23 @@ Public Class Form1
         isClosingConfirmed = True
         Me.Close()
     End Sub
+
+    ''' <summary>
+    ''' A section's text is XHTML: an &lt;h2&gt; with the title, then a block per answer.
+    ''' This keeps the text blocks (&lt;p&gt;, &lt;div&gt;, &lt;li&gt;), one per line. Only the
+    ''' innermost ones are read: a rich-text answer brings its own paragraphs, which the server
+    ''' currently nests inside another &lt;p&gt;, and reading both would list it twice.
+    ''' </summary>
+    Private Shared Function SectionText(div As String) As String
+        Return String.Join(Environment.NewLine,
+            System.Xml.Linq.XElement.Parse(div).Descendants().
+                Where(Function(e) IsTextBlock(e) AndAlso Not e.Descendants().Any(AddressOf IsTextBlock)).
+                Select(Function(e) e.Value))
+    End Function
+
+    Private Shared Function IsTextBlock(e As System.Xml.Linq.XElement) As Boolean
+        Return e.Name.LocalName = "p" OrElse e.Name.LocalName = "div" OrElse e.Name.LocalName = "li"
+    End Function
 
     Private Sub HandleCloseApplication(sender As Object, e As CloseApplicationEventArgs)
         isClosingConfirmed = True
