@@ -112,8 +112,11 @@ Public Class Form1
             .Subject = New ResourceReference("Patient/test-123")
         }
 
+        ' A pathology report with Macroscopie / Microscopie / Conclusie sections. Its Composition
+        ' blueprint (authored with the template) is what makes $extract return one Composition
+        ' section per report section — see HandleFormSubmitted.
         Await TiroFormViewer.SetContextAsync(
-            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|1.2.7",
+            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|2.0.2",
             patient:=patient,
             launchContext:=New List(Of LaunchContext(Of Resource)) From {
                 New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
@@ -182,23 +185,28 @@ Public Class Form1
                     bundle.Entry.Select(Function(entry) entry.Resource).OfType(Of Composition)().FirstOrDefault()
 
                 If composition IsNot Nothing Then
-                    ' The readable narrative lives on the Composition's SECTIONS (section[].Text.Div))
-                    Dim narrative As String = String.Join(
+                    ' The readable text lives on the Composition's SECTIONS, one per report
+                    ' section (Macroscopie, Microscopie, Conclusie): Section.Title is the heading,
+                    ' Section.Text.Div the XHTML the template rendered from the answers. The server
+                    ' does not set Composition.Text, so there is no whole-document div to read.
+                    '
+                    ' Keeping the sections apart is the point of extracting rather than reading
+                    ' QuestionnaireResponse.Text (which has the same content, already joined): an
+                    ' EHR can file each section into its own field. Here they are just listed.
+                    Dim report As String = String.Join(
                         Environment.NewLine & Environment.NewLine,
-                        composition.Section.
-                            Select(Function(s) s.Text?.Div).
-                            Where(Function(div) Not String.IsNullOrEmpty(div)))
-
-                    If String.IsNullOrEmpty(narrative) Then narrative = composition.Text?.Div
+                        composition.Section.Select(
+                            Function(s) If(s.Title, "(untitled section)").ToUpperInvariant() & Environment.NewLine & XhtmlToText(s.Text?.Div, s.Title)))
 
                     Dim title As String = If(String.IsNullOrEmpty(composition.Title), "Extracted Composition", composition.Title)
-                    MessageBox.Show(narrative, title, MessageBoxButtons.OK, MessageBoxIcon.Information)
+                    MessageBox.Show(report, title, MessageBoxButtons.OK, MessageBoxIcon.Information)
                 Else
-                    ' No Composition (e.g. a definition-based questionnaire extracts structured
+                    ' No Composition: the template version has no Composition blueprint, so there is
+                    ' nothing to build one from (a definition-based questionnaire extracts structured
                     ' resources like Observation instead). Fall back to what the Bundle contains.
                     Dim summary As String =
                         $"$extract produced a '{bundle.Type}' Bundle with {bundle.Entry.Count} entries, " &
-                        "but no Composition to show a narrative for."
+                        "but no Composition. Does this template version have a Composition blueprint?"
                     MessageBox.Show(summary, "Extract result", MessageBoxButtons.OK, MessageBoxIcon.Information)
                 End If
             End Using
@@ -209,6 +217,48 @@ Public Class Form1
         isClosingConfirmed = True
         Me.Close()
     End Sub
+
+    ''' <summary>
+    ''' Flattens a section's XHTML narrative to text for the MessageBox: a line per paragraph,
+    ''' heading or list item. A real EHR would convert to its own format (RTF, its editor's HTML)
+    ''' instead; this only keeps the demo readable. Generated sections open with their own title
+    ''' as a heading; that line is dropped, since the caller already prints the title.
+    ''' </summary>
+    Private Shared Function XhtmlToText(div As String, sectionTitle As String) As String
+        If String.IsNullOrEmpty(div) Then Return "(empty)"
+        Dim lines As New List(Of String)
+        Dim current As New System.Text.StringBuilder()
+        Dim flush = Sub()
+                        Dim line = current.ToString().Trim()
+                        If line.Length > 0 Then lines.Add(line)
+                        current.Clear()
+                    End Sub
+        Dim blocks As New HashSet(Of String) From {"p", "div", "li", "br", "h1", "h2", "h3", "h4", "h5", "h6", "tr"}
+        Dim walk As Action(Of System.Xml.Linq.XNode) = Nothing
+        walk = Sub(node)
+                   Dim text = TryCast(node, System.Xml.Linq.XText)
+                   If text IsNot Nothing Then
+                       current.Append(text.Value)
+                       Return
+                   End If
+                   Dim element = TryCast(node, System.Xml.Linq.XElement)
+                   If element Is Nothing Then Return
+                   Dim isBlock = blocks.Contains(element.Name.LocalName)
+                   If isBlock Then flush()
+                   For Each child In element.Nodes()
+                       walk(child)
+                   Next
+                   If isBlock Then flush()
+               End Sub
+        Try
+            walk(System.Xml.Linq.XElement.Parse(div))
+        Catch ex As System.Xml.XmlException
+            Return div ' Not well-formed: show it as received rather than lose the section.
+        End Try
+        flush()
+        If lines.Count > 0 AndAlso String.Equals(lines(0), sectionTitle, StringComparison.OrdinalIgnoreCase) Then lines.RemoveAt(0)
+        Return If(lines.Count = 0, "(empty)", String.Join(Environment.NewLine, lines))
+    End Function
 
     Private Sub HandleCloseApplication(sender As Object, e As CloseApplicationEventArgs)
         isClosingConfirmed = True
