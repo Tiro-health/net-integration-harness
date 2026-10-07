@@ -123,11 +123,22 @@ Public Class Form1
         }
 
         ' Any other named resource goes through launchContext, alongside the patient/encounter/
-        ' author shorthand — here a Specimen, which the form reads as %specimen for Weefseltype.
-        ' The field shows type.text, so set it; a coding alone leaves the field empty.
-        Dim specimen As New Specimen() With {
+        ' author shorthand — here the report's specimens, which the form reads as %specimen for
+        ' Weefseltype. The field shows type.text, so set it; a coding alone leaves the field empty.
+        ' Several entries under one name reach the form as a collection (SDC launchContext
+        ' multiplesAllowed): the template picks one with %specimen.where(identifier.value = 'B'),
+        ' or counts them with %specimen.count(). Give each specimen an identifier to select on.
+        Dim specimenA As New Specimen() With {
             .Id = "specimen-1",
+            .Identifier = New List(Of Identifier) From {New Identifier("http://example.org/specimen-label", "A")},
             .Type = New CodeableConcept("http://terminology.hl7.org/CodeSystem/v2-0487", "TISS", "Tissue") With {.Text = "Huid"},
+            .Subject = New ResourceReference("Patient/test-123")
+        }
+
+        Dim specimenB As New Specimen() With {
+            .Id = "specimen-2",
+            .Identifier = New List(Of Identifier) From {New Identifier("http://example.org/specimen-label", "B")},
+            .Type = New CodeableConcept("http://terminology.hl7.org/CodeSystem/v2-0487", "LYMPH", "Lymph node") With {.Text = "Lymfeklier"},
             .Subject = New ResourceReference("Patient/test-123")
         }
 
@@ -140,7 +151,8 @@ Public Class Form1
             encounter:=encounter,
             author:=author,
             launchContext:=New List(Of LaunchContext(Of Resource)) From {
-                New LaunchContext(Of Resource)("specimen", contentResource:=specimen)
+                New LaunchContext(Of Resource)("specimen", contentResource:=specimenA),
+                New LaunchContext(Of Resource)("specimen", contentResource:=specimenB)
             })
     End Sub
 
