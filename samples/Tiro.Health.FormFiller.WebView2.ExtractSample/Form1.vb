@@ -144,9 +144,10 @@ Public Class Form1
 
         ' A pathology report with Macroscopie / Microscopie / Conclusie sections. Its Composition
         ' blueprint (authored with the template) is what makes $extract return one Composition
-        ' section per report section — see HandleFormSubmitted.
+        ' section per report section — see HandleFormSubmitted. No |version: the latest published
+        ' version loads, whose Weefseltype reads %specimen.where(identifier.value = 'B').
         Await TiroFormViewer.SetContextAsync(
-            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a|2.0.5",
+            "http://templates.tiro.health/templates/44ed83d0ee324811a170dd9b4098bb3a",
             patient:=patient,
             encounter:=encounter,
             author:=author,
