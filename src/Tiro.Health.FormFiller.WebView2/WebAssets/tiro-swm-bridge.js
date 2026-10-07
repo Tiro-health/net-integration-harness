@@ -354,9 +354,17 @@
             Promise.resolve(formFiller.updateComplete)
                 .then(() => {
                     if (SmartWebMessaging.context && Array.isArray(SmartWebMessaging.context.launchContext)) {
+                        // Several entries under one name are one launch context holding several
+                        // resources (SDC 4.0 launchContext `multiplesAllowed`): the form reads them
+                        // as a collection, so %specimen.where(...) can pick one. A name sent once
+                        // stays a single resource, so every existing %patient template is unchanged.
                         const launchContext = {};
                         SmartWebMessaging.context.launchContext.forEach(item => {
-                            if (item.name && item.contentResource) launchContext[item.name] = item.contentResource;
+                            if (!item.name || !item.contentResource) return;
+                            const existing = launchContext[item.name];
+                            if (existing === undefined) launchContext[item.name] = item.contentResource;
+                            else if (Array.isArray(existing)) existing.push(item.contentResource);
+                            else launchContext[item.name] = [existing, item.contentResource];
                         });
                         if (Object.keys(launchContext).length > 0)
                             formFiller.setAttribute("launch-context", JSON.stringify(launchContext));

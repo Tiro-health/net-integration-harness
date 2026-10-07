@@ -200,6 +200,24 @@ Await TiroFormViewer.SetContextAsync(
     })
 ```
 
+To pass several resources under one name, add one entry per resource with the same name. Example: every specimen of a report as `specimen`. This follows SDC 4.0, where a launch context declared with `multiplesAllowed` holds several resources. The template reads them as a collection:
+
+```vb
+launchContext:=New List(Of LaunchContext(Of Resource)) From {
+    New LaunchContext(Of Resource)("specimen", contentResource:=specimenA),
+    New LaunchContext(Of Resource)("specimen", contentResource:=specimenB)
+}
+```
+
+```
+%specimen.where(identifier.value = 'B').type.text
+%specimen.count()
+```
+
+A name sent once stays a single resource, so `%specimen.type.text` keeps working when there is only one specimen. When there can be more than one, select a specimen with `where(...)` (or `first()`). Plain `%specimen.type.text` then returns the values of all specimens.
+
+> Prefill through `$populate` (`initialExpression`) needs web-sdk and SDC server support: [atticus-frontend#3100](https://github.com/Tiro-health/atticus-frontend/issues/3100) and [atticus-backend#3747](https://github.com/Tiro-health/atticus-backend/issues/3747). Expressions evaluated in the form (calculated, enableWhen, variables) see every resource without them.
+
 ### Launching a Questionnaire you already hold
 
 `SetContextAsync` also takes the Questionnaire itself, for templates an EHR keeps privately, one assembled or patched at runtime, or a form that has to render without a publish cycle:
