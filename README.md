@@ -200,6 +200,26 @@ Await TiroFormViewer.SetContextAsync(
     })
 ```
 
+To pass several resources under one name, add one entry per resource with the same name. Example: every specimen of a report as `specimen`. This follows SDC 4.0, where a launch context declared with `multiplesAllowed` holds several resources. The template reads them as a collection:
+
+```vb
+launchContext:=New List(Of LaunchContext(Of Resource)) From {
+    New LaunchContext(Of Resource)("specimen", contentResource:=specimenA),
+    New LaunchContext(Of Resource)("specimen", contentResource:=specimenB)
+}
+```
+
+```
+%specimen.where(identifier.value = 'B').type.text
+%specimen.count()
+```
+
+A name sent once stays a single resource, so `%specimen.type.text` keeps working when there is only one specimen. When there can be more than one, select a specimen with `where(...)` (or `first()`). Plain `%specimen.type.text` then returns the values of all specimens.
+
+Each entry counts, so sending the same specimen twice makes `%specimen.count()` 2. Entries that carry only a `contentReference` are not passed to the form. An entry named `patient`, `encounter` or `user` replaces the `patient:=`, `encounter:=` or `author:=` shorthand rather than adding to it.
+
+> Prefill through `$populate` (`initialExpression`) needs web-sdk 0.3.6 or later ([atticus-frontend#3100](https://github.com/Tiro-health/atticus-frontend/issues/3100)) and SDC server v0.9.46 or later ([atticus-backend#3747](https://github.com/Tiro-health/atticus-backend/issues/3747)). With an older web-sdk, a repeated name makes `$populate` fail (422), and nothing is prefilled, `%patient` included. With an older SDC server, prefill uses only the first resource under a name. Expressions evaluated in the form (calculated, enableWhen, variables) see every resource regardless of the server version.
+
 ### Launching a Questionnaire you already hold
 
 `SetContextAsync` also takes the Questionnaire itself, for templates an EHR keeps privately, one assembled or patched at runtime, or a form that has to render without a publish cycle:

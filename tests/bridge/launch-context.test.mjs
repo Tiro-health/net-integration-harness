@@ -87,6 +87,32 @@ test("launch context survives when no sdc.configure precedes the questionnaire",
     assert.deepEqual(element.launchContext.patient, PATIENT);
 });
 
+test("several entries under one name reach the form as a collection", async () => {
+    // SDC 4.0: a launchContext with multiplesAllowed holds several resources under one
+    // name. Collapsing them to the last entry would leave %specimen.where(...) only one
+    // specimen to choose from, with no error anywhere.
+    const SPECIMEN_B = { resourceType: "Specimen", id: "specimen-2" };
+    const SPECIMEN_C = { resourceType: "Specimen", id: "specimen-3" };
+    const element = new FormFillerStub();
+    const { window } = await loadBridge([element]);
+    await flush();
+    deliver(window, "sdc.displayQuestionnaire", {
+        questionnaire: CANONICAL,
+        context: {
+            launchContext: [
+                { name: "patient", contentResource: PATIENT },
+                { name: "specimen", contentResource: SPECIMEN },
+                { name: "specimen", contentResource: SPECIMEN_B },
+                { name: "specimen", contentResource: SPECIMEN_C },
+            ],
+        },
+    });
+    await flush();
+
+    assert.deepEqual(element.launchContext.specimen, [SPECIMEN, SPECIMEN_B, SPECIMEN_C], "all three, in the order sent");
+    assert.deepEqual(element.launchContext.patient, PATIENT, "a name sent once stays a single resource");
+});
+
 test("questionnaire is applied, and only after the launch context is in place", async () => {
     const element = await run("https://sdc-dev.tiro.health/fhir/r5");
 

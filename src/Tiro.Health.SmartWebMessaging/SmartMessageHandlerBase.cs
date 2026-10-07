@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -506,6 +507,8 @@ namespace Tiro.Health.SmartWebMessaging
         /// Appends caller-supplied launch context entries (e.g. coverage, device, or any other
         /// named resource) after the named patient/encounter/user entries. Returns <c>null</c>
         /// when both inputs are empty, so the emitted payload omits the list entirely.
+        /// A caller entry with the same name as a shorthand replaces it: several entries under one
+        /// name are a collection, so keeping both would turn %patient into [P, P].
         /// </summary>
         protected static List<LaunchContext<TResource>> MergeLaunchContext(
             List<LaunchContext<TResource>> named, List<LaunchContext<TResource>> additional)
@@ -514,7 +517,8 @@ namespace Tiro.Health.SmartWebMessaging
                 return named;
 
             var merged = new List<LaunchContext<TResource>>();
-            if (named != null) merged.AddRange(named);
+            if (named != null)
+                merged.AddRange(named.Where(n => !additional.Any(a => a.Name == n.Name)));
             merged.AddRange(additional);
             return merged;
         }

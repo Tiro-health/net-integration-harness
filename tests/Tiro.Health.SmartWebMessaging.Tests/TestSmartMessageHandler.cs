@@ -677,6 +677,44 @@ namespace Tiro.Health.SmartWebMessaging.Tests
         Assert.IsTrue(sentMessage.Contains("\"contentResource\":{\"resourceType\":\"Coverage\",\"id\":\"COV1\""));
     }
 
+    // Several entries under one name are a collection, so a caller entry named like a shorthand
+    // must replace it: keeping both would make %patient [P, P] and break single-patient templates.
+    [TestMethod]
+    public async System.Threading.Tasks.Task TestSendSdcDisplayQuestionnaireAsync_CanonicalUrl_ExplicitEntryReplacesShorthand()
+    {
+        var messageHandler = new SmartMessageHandler();
+        var mockSender = new Mock<SmartMessageHandler.MessageSender>();
+        string sentMessage = null!;
+
+        mockSender.Setup(s => s.Invoke(It.IsAny<string>()))
+                 .Callback<string>(msg => sentMessage = msg)
+                 .Returns(System.Threading.Tasks.Task.CompletedTask);
+
+        messageHandler.SendMessage = mockSender.Object;
+
+        var extraContext = new List<LaunchContext<Resource>>
+        {
+            new LaunchContext<Resource>("patient", contentResource: new Patient { Id = "EXPLICIT" }),
+            new LaunchContext<Resource>("specimen", contentResource: new Specimen { Id = "S1" }),
+            new LaunchContext<Resource>("specimen", contentResource: new Specimen { Id = "S2" })
+        };
+
+        await messageHandler.SendSdcDisplayQuestionnaireAsync(
+            questionnaireCanonicalUrl: "http://example.com/Questionnaire/survey",
+            patient: new Patient { Id = "SHORTHAND" },
+            encounter: new Encounter { Id = "E1" },
+            launchContext: extraContext
+        );
+
+        Assert.IsNotNull(sentMessage);
+        Assert.AreEqual(1, System.Text.RegularExpressions.Regex.Matches(sentMessage, "\"name\":\"patient\"").Count);
+        Assert.IsTrue(sentMessage.Contains("\"id\":\"EXPLICIT\""));
+        Assert.IsFalse(sentMessage.Contains("\"id\":\"SHORTHAND\""));
+        // Other shorthands stay, and repeated caller entries are all kept.
+        Assert.IsTrue(sentMessage.Contains("\"id\":\"E1\""));
+        Assert.AreEqual(2, System.Text.RegularExpressions.Regex.Matches(sentMessage, "\"name\":\"specimen\"").Count);
+    }
+
     // Without any named shorthand supplied, the caller-provided launchContext list is sent as-is.
     [TestMethod]
     public async System.Threading.Tasks.Task TestSendSdcDisplayQuestionnaireAsync_CanonicalUrl_LaunchContextOnly()
