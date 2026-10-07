@@ -216,7 +216,9 @@ launchContext:=New List(Of LaunchContext(Of Resource)) From {
 
 A name sent once stays a single resource, so `%specimen.type.text` keeps working when there is only one specimen. When there can be more than one, select a specimen with `where(...)` (or `first()`). Plain `%specimen.type.text` then returns the values of all specimens.
 
-> Prefill through `$populate` (`initialExpression`) needs web-sdk and SDC server support: [atticus-frontend#3100](https://github.com/Tiro-health/atticus-frontend/issues/3100) and [atticus-backend#3747](https://github.com/Tiro-health/atticus-backend/issues/3747). Expressions evaluated in the form (calculated, enableWhen, variables) see every resource without them.
+Each entry counts, so sending the same specimen twice makes `%specimen.count()` 2. Entries that carry only a `contentReference` are not passed to the form. An entry named `patient`, `encounter` or `user` replaces the `patient:=`, `encounter:=` or `author:=` shorthand rather than adding to it.
+
+> Prefill through `$populate` (`initialExpression`) needs web-sdk 0.3.6 or later ([atticus-frontend#3100](https://github.com/Tiro-health/atticus-frontend/issues/3100)) and SDC server v0.9.46 or later ([atticus-backend#3747](https://github.com/Tiro-health/atticus-backend/issues/3747)). With an older web-sdk, a repeated name makes `$populate` fail (422), and nothing is prefilled, `%patient` included. With an older SDC server, prefill uses only the first resource under a name. Expressions evaluated in the form (calculated, enableWhen, variables) see every resource regardless of the server version.
 
 ### Launching a Questionnaire you already hold
 
