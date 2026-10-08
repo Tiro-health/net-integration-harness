@@ -45,7 +45,7 @@ namespace Tiro.Health.FormFiller.WebView2
         }
         /// <summary>
         /// An HTML fragment from an RTF document, ready to hand to
-        /// <see cref="TiroFormViewer{TResource,TQR,TOO}.AddInsertItem"/> as the formatted
+        /// <see cref="TiroFormViewer{TResource,TQR,TOO}.InsertContentAsync"/> as the formatted
         /// rendition. Body-level markup only — no <c>&lt;html&gt;</c> or <c>&lt;head&gt;</c>
         /// wrapper.
         /// </summary>
