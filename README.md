@@ -1076,9 +1076,11 @@ TiroFormViewer.ResolveTextShortcut =
     End Function
 ```
 
-- **Answer from memory, not a database query.** The user keeps typing after the space; an answer
-  that arrives after the next keystroke is dropped, so the shortcut looks like it failed. Keep the
-  user's RTF snippets in memory (cheap — it's the conversion that is costly) and answer synchronously:
+- **Late answers still land.** The user keeps typing after the space; when the answer arrives,
+  the abbreviation is replaced behind the caret and typing carries on where it was. It is dropped
+  only if the abbreviation was edited, the user left the field, or 10 seconds passed.
+- **Keep it fast anyway**, so the text doesn't change noticeably later. Snippets kept in memory
+  (cheap — it's the conversion that is costly) can be answered synchronously:
 
   ```vb
   TiroFormViewer.ResolveTextShortcut =
@@ -1086,8 +1088,7 @@ TiroFormViewer.ResolveTextShortcut =
   ```
 
 - Matching is still local: only a typed abbreviation reaches the resolver.
-- The resolver runs on the UI thread and may be async. If the user kept typing or left the field
-  before it answers, the text stays as typed. Requests are dropped after 10 seconds.
+- The resolver runs on the UI thread and may be async.
 - A resolver that throws is reported to telemetry; nothing is inserted.
 - Both lists can be combined: preloaded content wins for an abbreviation in both.
 

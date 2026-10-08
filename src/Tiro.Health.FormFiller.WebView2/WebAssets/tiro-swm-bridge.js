@@ -693,8 +693,8 @@
     // The host sends its abbreviations up front, with content (expanded at once) or without
     // (content requested from the host when typed). Matching is local, so only a matched
     // abbreviation ever leaves the page. An abbreviation matches as a whole word
-    // (case-sensitive) when a space follows. The abbreviation and space are replaced through
-    // the insertContent path, so the editor keeps the text and Ctrl+Z restores it.
+    // (case-sensitive) when a space follows. Only the word is replaced, behind the caret, so
+    // a late answer still lands after the user typed on; Ctrl+Z restores the abbreviation.
 
     /** @type {Map<string, {text: string, html: string | null}>} */
     let textShortcuts = new Map();
@@ -760,100 +760,130 @@
     }
 
     /**
-     * True when `loc` still describes the field: same caret, same abbreviation and space.
-     * Guards a replacement that arrives after the user kept typing or moved on.
+     * True when the abbreviation at `loc` is still there, as a whole word followed by
+     * whitespace, in the focused field. The user may have typed on after it: the replacement
+     * happens behind the caret and leaves the caret where it is.
      * @param {any} el @param {any} loc
      */
     function stillAt(el, loc) {
-        if (!el.isConnected || !isTextEditable(el)) return false;
-        if (el.isContentEditable) {
-            const selection = selectionOf(el);
-            return !!selection && selection.rangeCount > 0 && selection.isCollapsed
-                && selection.focusNode === loc.node && selection.focusOffset === loc.end
-                && loc.node.data.slice(loc.start, loc.end - 1) === loc.word;
-        }
-        return deepActiveElement() === el
-            && el.selectionStart === loc.end && el.selectionEnd === loc.end
-            && el.value.slice(loc.start, loc.end) === loc.word + loc.term;
+        if (!el.isConnected || !isTextEditable(el) || deepActiveElement() !== el) return false;
+        const text = el.isContentEditable
+            ? (loc.node.isConnected && el.contains(loc.node) ? loc.node.data : null)
+            : el.value;
+        if (typeof text !== "string") return false;
+        const wordEnd = loc.start + loc.word.length;
+        return text.slice(loc.start, wordEnd) === loc.word
+            && (loc.start === 0 || isBoundary(text[loc.start - 1]))
+            && isWhitespace(text[wordEnd] || "");
     }
 
     /**
-     * Runs `fn` once the editor has seen a selection we just set: after the next
-     * selectionchange (whose handlers run first), or after 50 ms if none comes.
-     * @param {() => void} fn
+     * The caret as its distance from the end of its paragraph (a direct child of `el`), which
+     * a replacement earlier in the paragraph — or in another one — doesn't change.
+     * @param {any} el
      */
-    function afterSelectionSettles(fn) {
-        let done = false;
-        const run = () => {
-            if (done) return;
-            done = true;
-            document.removeEventListener("selectionchange", run, true);
-            setTimeout(fn, 0);
-        };
-        document.addEventListener("selectionchange", run, true);
-        setTimeout(run, 50);
+    function saveCaret(el) {
+        try {
+            const selection = selectionOf(el);
+            if (!selection || selection.rangeCount === 0 || !el.contains(selection.focusNode)) return null;
+            let block = selection.focusNode;
+            while (block.parentNode && block.parentNode !== el) block = block.parentNode;
+            const range = (block.ownerDocument || document).createRange();
+            range.selectNodeContents(block);
+            range.setStart(selection.focusNode, selection.focusOffset);
+            return { block, fromEnd: range.toString().length };
+        } catch (err) {
+            return null; // The expansion still happens; the caret ends after it.
+        }
     }
 
-    /** @param {any} selection @param {any} loc */
-    const selectsShortcut = (selection, loc) => !!selection && selection.rangeCount > 0
-        && selection.anchorNode === loc.node && selection.focusNode === loc.node
-        && Math.min(selection.anchorOffset, selection.focusOffset) === loc.start
-        && Math.max(selection.anchorOffset, selection.focusOffset) === loc.end;
+    /** @param {any} el @param {any} saved */
+    function restoreCaret(el, saved) {
+        if (!saved || !saved.block.isConnected) return;
+        const doc = saved.block.ownerDocument || document;
+        const walker = doc.createTreeWalker(saved.block, 4 /* SHOW_TEXT */);
+        const nodes = [];
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n);
+        let remaining = saved.fromEnd;
+        for (let i = nodes.length - 1; i >= 0; i--) {
+            const length = nodes[i].data.length;
+            if (remaining <= length) {
+                const selection = selectionOf(el);
+                selection.removeAllRanges();
+                const range = doc.createRange();
+                range.setStart(nodes[i], length - remaining);
+                selection.addRange(range);
+                return;
+            }
+            remaining -= length;
+        }
+    }
 
     /** @param {any} el @param {string} mode */
     const reportExpanded = (el, mode) => fire("tiro-text-shortcut-expanded", { mode, target: el });
 
     /**
-     * Replaces the abbreviation and space at `loc` with `content` plus a space. Reports
-     * success through the tiro-text-shortcut-expanded event (no content: it can carry
-     * patient data).
+     * Replaces the abbreviation at `loc` with `content`, keeping the user's space and caret.
+     * Reports success through tiro-text-shortcut-expanded (no content: it can carry patient
+     * data).
      * @param {any} el @param {any} loc @param {{text: string, html: string | null}} content
      */
     function applyShortcut(el, loc, content) {
-        if (!el.isContentEditable) {
-            expandingShortcut = true;
-            try {
-                el.setSelectionRange(loc.start, loc.end);
-                if (insertPlainTextInto(el, content.text + loc.term)) reportExpanded(el, "text");
-            } catch (err) {
-                console.warn("[bridge] text shortcut expansion failed:", err);
-            } finally {
-                expandingShortcut = false;
-            }
-            return;
+        expandingShortcut = true;
+        try {
+            const mode = el.isContentEditable
+                ? replaceInRichText(el, loc, content)
+                : replaceInTextControl(el, loc, content);
+            if (mode) reportExpanded(el, mode);
+        } catch (err) {
+            console.warn("[bridge] text shortcut expansion failed:", err);
+        } finally {
+            expandingShortcut = false;
         }
+    }
 
+    /** @param {any} el @param {any} loc @param {{text: string, html: string | null}} content */
+    function replaceInTextControl(el, loc, content) {
+        const caretStart = el.selectionStart;
+        const caretEnd = el.selectionEnd;
+        const wordEnd = loc.start + loc.word.length;
+        el.setSelectionRange(loc.start, wordEnd);
+        if (!insertPlainTextInto(el, content.text)) return null;
+        const shift = (/** @type {number} */ p) => (p >= wordEnd ? p + content.text.length - loc.word.length : p);
+        el.setSelectionRange(shift(caretStart), shift(caretEnd));
+        return "text";
+    }
+
+    /**
+     * A synthetic beforeinput "insertReplacementText" — what a spellchecker sends — carrying
+     * the content. Lexical reads the DOM selection for beforeinput (not for paste), so it
+     * replaces exactly the selected word, in one undoable step, with HTML kept. It then puts
+     * its caret after the insert, so the user's caret is restored once it has committed.
+     * @param {any} el @param {any} loc @param {{text: string, html: string | null}} content
+     */
+    function replaceInRichText(el, loc, content) {
+        const saved = saveCaret(el);
         const selection = selectionOf(el);
         const range = (loc.node.ownerDocument || document).createRange();
         range.setStart(loc.node, loc.start);
-        range.setEnd(loc.node, loc.end);
+        range.setEnd(loc.node, loc.start + loc.word.length);
         selection.removeAllRanges();
         selection.addRange(range);
 
-        // The editor keeps its own copy of the selection, refreshed on selectionchange. Paste
-        // before that and it inserts at the old caret, leaving the abbreviation in place.
-        afterSelectionSettles(() => {
-            if (!el.isConnected || !selectsShortcut(selectionOf(el), loc)) return;
-            expandingShortcut = true;
-            try {
-                // A paste, plain text included: the editor's paste handler replaces the selection.
-                if (insertHtmlAtCaret(el, content.html, content.text)) {
-                    reportExpanded(el, content.html ? "html" : "text");
-                    // The space waits until the editor has committed the paste, or it is lost.
-                    setTimeout(() => {
-                        if (!el.isConnected) return;
-                        expandingShortcut = true;
-                        try { insertPlainTextInto(el, " "); } finally { expandingShortcut = false; }
-                    }, 0);
-                } else if (insertPlainTextInto(el, content.text + " ")) {
-                    reportExpanded(el, "text");
-                }
-            } catch (err) {
-                console.warn("[bridge] text shortcut expansion failed:", err);
-            } finally {
-                expandingShortcut = false;
-            }
-        });
+        const data = new DataTransfer();
+        data.setData("text/plain", content.text);
+        if (content.html) data.setData("text/html", content.html);
+        const handled = !el.dispatchEvent(new InputEvent("beforeinput", {
+            inputType: "insertReplacementText", dataTransfer: data, bubbles: true, cancelable: true,
+        }));
+        // An editor that ignores it (a plain contenteditable): insert on the selection directly.
+        if (!handled && !insertPlainTextInto(el, content.text)) {
+            restoreCaret(el, saved);
+            return null;
+        }
+        // After the editor's commit (a microtask), before the next keystroke (a task).
+        Promise.resolve().then(() => restoreCaret(el, saved));
+        return handled && content.html ? "html" : "text";
     }
 
     /** Deferred after the space lands; bails if the field lost focus meanwhile. @param {any} el */

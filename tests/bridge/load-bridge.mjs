@@ -176,6 +176,16 @@ export async function loadBridge(formFillers, {
             setData(type, value) { this.data[type] = value; }
             getData(type) { return this.data[type] ?? ""; }
         },
+        // Text shortcuts in rich-text fields send a beforeinput carrying a DataTransfer.
+        InputEvent: class InputEvent {
+            constructor(type, init) {
+                this.type = type;
+                this.inputType = init?.inputType;
+                this.dataTransfer = init?.dataTransfer ?? null;
+                this.bubbles = !!init?.bubbles;
+                this.cancelable = !!init?.cancelable;
+            }
+        },
         ClipboardEvent: class ClipboardEvent {
             constructor(type, init) {
                 this.type = type;

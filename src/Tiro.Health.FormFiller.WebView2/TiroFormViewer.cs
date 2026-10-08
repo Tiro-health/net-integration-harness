@@ -133,9 +133,9 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <see cref="TextShortcutAbbreviations"/>; returns its content, or null for none.
         /// </summary>
         /// <remarks>
-        /// May be async (a database lookup). If the user kept typing or left the field before it
-        /// answers, the page leaves the text as typed; after 10 s the request is dropped. A
-        /// resolver that throws is reported to telemetry and nothing is inserted.
+        /// May be async. A late answer still replaces the abbreviation behind the caret if the
+        /// user typed on; it is dropped if the abbreviation was edited, the field was left, or
+        /// 10 s passed. A resolver that throws is reported to telemetry and nothing is inserted.
         /// </remarks>
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
