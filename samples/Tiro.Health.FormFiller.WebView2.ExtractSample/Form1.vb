@@ -57,8 +57,9 @@ Public Class Form1
             }
         }
 
-        ' The right-click menu, host-side. The harness appends these to the embedded browser's
-        ' own context menu, below its native entries. Because it is the browser's own menu, the
+        ' The right-click menu, host-side. The harness adds these to the embedded browser's own
+        ' context menu (below its native entries by default; BuildContextMenu further down puts
+        ' them on top instead). Because it is the browser's own menu, the
         ' click never leaves the page: the caret stays exactly where the clinician
         ' right-clicked, which is what lets these insert there.
         '
@@ -74,33 +75,37 @@ Public Class Form1
         '
         ' IsVisible = IsEditable on every item: over a checkbox or a read-only score there is
         ' nothing to insert into, so the item stays out of the menu rather than doing nothing.
-        TiroFormViewer.AddInsertItem("Insert patient name",
-                                     Function() patient.Name(0).Text,
-                                     onResult:=AddressOf ShowInsertResult)
-
-        TiroFormViewer.AddInsertItem("Insert ""no known drug allergies""",
-                                     Function() "No known drug allergies.",
-                                     onResult:=AddressOf ShowInsertResult)
-
-        ' The conclusion the EHR holds as RTF, flattened by the RTF parser WinForms already
-        ' contains. Goes into any field; formatting dropped.
-        TiroFormViewer.AddInsertItem("Insert conclusion (plain text)",
-                                     Function() TiroRtf.ToPlainText(ConclusionRtf),
-                                     onResult:=AddressOf ShowInsertResult)
-
-        ' The same conclusion, keeping its formatting. Both renditions come from the harness:
-        ' ToPlainText uses the RTF parser WinForms already has, ToHtml is the harness's own
-        ' converter. The page offers the HTML to the field first and falls back to the plain text
-        ' if the field won't take it; onResult says which happened, so what a given field can
-        ' actually store is visible.
         '
-        ' ToHtml is a convenience, not a full-fidelity converter — it keeps what the field can
-        ' store (emphasis, paragraphs) and flattens the rest. For RTF from arbitrary sources,
-        ' pass your own converter's output here instead; nothing about it is mandatory.
-        TiroFormViewer.AddInsertItem("Insert conclusion (formatted)",
-                                     Function() TiroRtf.ToPlainText(ConclusionRtf),
-                                     Function() TiroRtf.ToHtml(ConclusionRtf),
-                                     onResult:=AddressOf ShowInsertResult)
+        ' The four items are grouped under one Insert submenu. CreateInsertItem builds an item
+        ' without adding it, so it can go into a submenu; AddInsertItem is the same thing added
+        ' at the top level. Each child keeps its editable-only test, and a submenu whose children
+        ' are all hidden is hidden too, so the whole group disappears over a checkbox.
+        TiroFormViewer.ContextMenuItems.Add(TiroContextMenuItem.CreateSubmenu("Insert", New TiroContextMenuItem() {
+            TiroFormViewer.CreateInsertItem("Patient name",
+                                            Function() patient.Name(0).Text,
+                                            onResult:=AddressOf ShowInsertResult),
+            TiroFormViewer.CreateInsertItem("""No known drug allergies""",
+                                            Function() "No known drug allergies.",
+                                            onResult:=AddressOf ShowInsertResult),
+            TiroContextMenuItem.CreateSubmenu("Conclusion", New TiroContextMenuItem() {
+                ConclusionPlainItem(),
+                ConclusionFormattedItem()
+            })
+        }))
+
+        ' Full control of the menu: our Insert submenu on top, then Chromium's own entries
+        ' without Inspect. Match on Name, never Label: the label is translated and carries an
+        ' accelerator ampersand. The loop variable is typed explicitly because an old-style VB
+        ' project compiles with Option Infer Off.
+        TiroFormViewer.BuildContextMenu =
+            Function(menu)
+                Dim result As New List(Of TiroMenuEntry)(menu.HostItems)
+                If result.Count > 0 AndAlso menu.BrowserItems.Count > 0 Then result.Add(TiroMenuEntry.CreateSeparator())
+                For Each native As TiroMenuEntry In menu.BrowserItems
+                    If native.Name <> "inspectElement" Then result.Add(native)
+                Next
+                Return result
+            End Function
 
         ' The clinician writing the report and the visit it belongs to. The form's Klinische
         ' informatie fields prefill from these: Auteur from %user (the author), Datum consult
@@ -171,6 +176,30 @@ Public Class Form1
     ''' Shows what the page managed, in the window title, so the outcome is visible without a
     ''' debugger. The harness calls this on the UI thread, so touching controls is safe.
     ''' </summary>
+    ' The conclusion the EHR holds as RTF, flattened by the RTF parser WinForms already
+    ' contains. Goes into any field; formatting dropped.
+    Private Function ConclusionPlainItem() As TiroContextMenuItem
+        Return TiroFormViewer.CreateInsertItem("Plain text",
+                                               Function() TiroRtf.ToPlainText(ConclusionRtf),
+                                               onResult:=AddressOf ShowInsertResult)
+    End Function
+
+    ' The same conclusion, keeping its formatting. Both renditions come from the harness:
+    ' ToPlainText uses the RTF parser WinForms already has, ToHtml is the harness's own
+    ' converter. The page offers the HTML to the field first and falls back to the plain text
+    ' if the field won't take it; onResult says which happened, so what a given field can
+    ' actually store is visible.
+    '
+    ' ToHtml is a convenience, not a full-fidelity converter — it keeps what the field can
+    ' store (emphasis, paragraphs) and flattens the rest. For RTF from arbitrary sources,
+    ' pass your own converter's output here instead; nothing about it is mandatory.
+    Private Function ConclusionFormattedItem() As TiroContextMenuItem
+        Return TiroFormViewer.CreateInsertItem("Formatted",
+                                               Function() TiroRtf.ToPlainText(ConclusionRtf),
+                                               Function() TiroRtf.ToHtml(ConclusionRtf),
+                                               onResult:=AddressOf ShowInsertResult)
+    End Function
+
     Private Sub ShowInsertResult(result As TextInsertResult)
         Dim summary As String
         If Not result.Inserted Then

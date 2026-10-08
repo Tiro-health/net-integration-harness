@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace Tiro.Health.FormFiller.WebView2
@@ -56,6 +57,28 @@ namespace Tiro.Health.FormFiller.WebView2
         // net48 has no Task.CompletedTask.
         private static readonly Task CompletedTask = Task.FromResult(true);
 
+        private TiroContextMenuItem(string label, IEnumerable<TiroContextMenuItem> children)
+        {
+            if (string.IsNullOrEmpty(label)) throw new ArgumentException("A menu item needs a label.", nameof(label));
+            if (children == null) throw new ArgumentNullException(nameof(children));
+            Label = label;
+            Children = new List<TiroContextMenuItem>(children);
+        }
+
+        /// <summary>
+        /// A submenu grouping <paramref name="children"/> under one entry. Nest further
+        /// submenus as children for deeper levels; there is no limit, but more than one or two
+        /// levels is hard to use in a right-click menu.
+        /// </summary>
+        /// <remarks>
+        /// Each child keeps its own <see cref="IsVisible"/> and <see cref="IsEnabled"/>, tested
+        /// per click like a top-level item. A submenu whose children are all hidden is hidden
+        /// itself, so a group of insert items disappears over a checkbox along with its
+        /// contents. <see cref="Children"/> is read at menu time, so it can be changed later.
+        /// </remarks>
+        public static TiroContextMenuItem CreateSubmenu(string label, IEnumerable<TiroContextMenuItem> children)
+            => new TiroContextMenuItem(label, children);
+
         /// <summary>Convenience ctor for an action that doesn't care what was clicked.</summary>
         public TiroContextMenuItem(string label, Action action)
             : this(label, action == null ? (Action<TiroContextMenuContext>)null : _ => action())
@@ -75,7 +98,17 @@ namespace Tiro.Health.FormFiller.WebView2
         /// to telemetry and swallowed: a failing menu item must not take down the browser's
         /// context-menu event, and there is no user-facing place to report it.
         /// </summary>
+        /// <remarks>Null for a submenu, which opens <see cref="Children"/> instead.</remarks>
         public Func<TiroContextMenuContext, Task> Invoke { get; }
+
+        /// <summary>
+        /// What a submenu opens, in order; null for an ordinary item. Read each time a menu is
+        /// requested, like <see cref="TiroFormViewer{TResource,TQR,TOO}.ContextMenuItems"/>.
+        /// </summary>
+        public IList<TiroContextMenuItem> Children { get; }
+
+        /// <summary>True for an item made with <see cref="CreateSubmenu"/>.</summary>
+        public bool IsSubmenu => Children != null;
 
         /// <summary>
         /// Optional per-click filter. Return false to leave the item out of this menu — e.g.

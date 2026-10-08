@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Tiro.Health.FormFiller.WebView2
 {
@@ -42,6 +43,8 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>The <see cref="Name"/> a harness-created separator carries.</summary>
         public const string SeparatorName = "separator";
 
+        private static readonly IReadOnlyList<TiroMenuEntry> NoChildren = new TiroMenuEntry[0];
+
         private bool _isEnabled;
 
         /// <summary>The browser's own entry, wrapping the object only the browser layer can make.</summary>
@@ -53,6 +56,7 @@ namespace Tiro.Health.FormFiller.WebView2
             _isEnabled = isEnabled;
             BrowserHandle = browserHandle ?? throw new ArgumentNullException(nameof(browserHandle));
             IsFromBrowser = true;
+            Children = NoChildren;
         }
 
         /// <summary>A host entry. The action is already guarded by the viewer.</summary>
@@ -64,6 +68,17 @@ namespace Tiro.Health.FormFiller.WebView2
             Kind = TiroMenuEntryKind.Command;
             Invoke = invoke ?? throw new ArgumentNullException(nameof(invoke));
             _isEnabled = isEnabled;
+            Children = NoChildren;
+        }
+
+        /// <summary>A host submenu. The children have already been checked.</summary>
+        private TiroMenuEntry(string label, IReadOnlyList<TiroMenuEntry> children, bool isEnabled)
+        {
+            Name = CustomName;
+            Label = label;
+            Kind = TiroMenuEntryKind.Submenu;
+            Children = children;
+            _isEnabled = isEnabled;
         }
 
         private TiroMenuEntry()
@@ -71,6 +86,7 @@ namespace Tiro.Health.FormFiller.WebView2
             Name = SeparatorName;
             Kind = TiroMenuEntryKind.Separator;
             _isEnabled = true;
+            Children = NoChildren;
         }
 
         /// <summary>
@@ -80,6 +96,44 @@ namespace Tiro.Health.FormFiller.WebView2
         /// only between groups.
         /// </summary>
         public static TiroMenuEntry CreateSeparator() => new TiroMenuEntry();
+
+        /// <summary>
+        /// A submenu: a host entry that opens <paramref name="children"/> instead of running an
+        /// action. Children may be host entries, separators and further submenus, nested as deep
+        /// as the host likes — though more than one or two levels is hard to use in a
+        /// right-click menu. Every submenu and every child counts toward the embedded browser's
+        /// budget of custom items, so a very large tree costs re-creation on each click.
+        /// </summary>
+        /// <remarks>
+        /// The browser's own entries cannot be moved into a submenu: they stay where the
+        /// browser can render them, at the top level. Null children are skipped. A submenu with
+        /// no children still renders, as an empty submenu — leave it out to hide it.
+        /// </remarks>
+        /// <param name="label">The menu text.</param>
+        /// <param name="children">What the submenu opens, in order. Copied on creation.</param>
+        /// <exception cref="ArgumentException">
+        /// The label is empty, or a child came from the browser.
+        /// </exception>
+        public static TiroMenuEntry CreateSubmenu(string label, IEnumerable<TiroMenuEntry> children)
+            => CreateSubmenu(label, children, isEnabled: true);
+
+        internal static TiroMenuEntry CreateSubmenu(string label, IEnumerable<TiroMenuEntry> children, bool isEnabled)
+        {
+            if (string.IsNullOrEmpty(label)) throw new ArgumentException("A menu entry needs a label.", nameof(label));
+            if (children == null) throw new ArgumentNullException(nameof(children));
+
+            var copied = new List<TiroMenuEntry>();
+            foreach (var child in children)
+            {
+                if (child == null) continue;
+                if (child.IsFromBrowser)
+                    throw new ArgumentException(
+                        "The browser's own entries cannot be placed in a submenu; keep them at the top level.",
+                        nameof(children));
+                copied.Add(child);
+            }
+            return new TiroMenuEntry(label, copied.AsReadOnly(), isEnabled);
+        }
 
         /// <summary>
         /// The unlocalized identity of the entry, and the only thing worth matching on:
@@ -102,6 +156,13 @@ namespace Tiro.Health.FormFiller.WebView2
 
         /// <summary>How the entry renders.</summary>
         public TiroMenuEntryKind Kind { get; }
+
+        /// <summary>
+        /// What a host submenu opens, in order. Empty for every other entry — including the
+        /// browser's own submenus, which are rendered whole and whose contents stay the
+        /// browser's.
+        /// </summary>
+        public IReadOnlyList<TiroMenuEntry> Children { get; }
 
         /// <summary>
         /// True when this came from the embedded browser rather than the host. Such an entry may
@@ -132,7 +193,7 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <summary>The browser layer's own object for this entry; null for a host entry.</summary>
         internal object BrowserHandle { get; }
 
-        /// <summary>The guarded action for a host entry; null for a browser entry or separator.</summary>
+        /// <summary>The guarded action for a host command; null for anything else.</summary>
         internal Action Invoke { get; }
     }
 }

@@ -234,7 +234,16 @@ namespace Tiro.Health.FormFiller.WebView2
                 for (var i = e.MenuItems.Count - 1; i >= 0; i--) e.MenuItems.RemoveAt(i);
             }
 
-            foreach (var step in plan.Steps)
+            AddSteps(e.MenuItems, plan.Steps, environment);
+        }
+
+        /// <summary>Appends <paramref name="steps"/> to a menu level, recursing into submenus.</summary>
+        private void AddSteps(
+            IList<CoreWebView2ContextMenuItem> target,
+            IReadOnlyList<ContextMenuRenderPlan.Step> steps,
+            CoreWebView2Environment environment)
+        {
+            foreach (var step in steps)
             {
                 CoreWebView2ContextMenuItem rendered;
                 switch (step.Kind)
@@ -247,8 +256,20 @@ namespace Tiro.Health.FormFiller.WebView2
                         rendered = SeparatorAt(environment, step.SeparatorIndex);
                         break;
 
+                    case ContextMenuRenderPlan.StepKind.HostSubmenu:
+                        var submenu = CachedItem(environment, step.CacheKey, step.Label, CoreWebView2ContextMenuItemKind.Submenu);
+                        submenu.Native.IsEnabled = step.IsEnabled;
+                        // The cached object still holds the contents of the last menu it was in;
+                        // those may have changed since, so it is refilled from scratch. From the
+                        // end, for the same reason as the top-level clear.
+                        var children = submenu.Native.Children;
+                        for (var i = children.Count - 1; i >= 0; i--) children.RemoveAt(i);
+                        AddSteps(children, step.Children, environment);
+                        rendered = submenu.Native;
+                        break;
+
                     default:
-                        var cached = CachedItem(environment, step.Label, step.Occurrence);
+                        var cached = CachedItem(environment, step.CacheKey, step.Label, CoreWebView2ContextMenuItemKind.Command);
                         cached.Action = step.Invoke;
                         // Legal only because this is a custom item; WebView2 reserves IsEnabled
                         // on its own entries, which is why TiroMenuEntry refuses to set it there.
@@ -257,7 +278,7 @@ namespace Tiro.Health.FormFiller.WebView2
                         break;
                 }
 
-                if (rendered != null) e.MenuItems.Add(rendered);
+                if (rendered != null) target.Add(rendered);
             }
         }
 
@@ -281,11 +302,13 @@ namespace Tiro.Health.FormFiller.WebView2
             return _separatorPool[index];
         }
 
-        private CachedMenuItem CachedItem(CoreWebView2Environment environment, string label, int occurrence)
+        /// <remarks>
+        /// <c>key</c> is the plan's <see cref="ContextMenuRenderPlan.Step.CacheKey"/>: path, kind,
+        /// label and occurrence, so each position in each submenu has an object of its own.
+        /// </remarks>
+        private CachedMenuItem CachedItem(
+            CoreWebView2Environment environment, string key, string label, CoreWebView2ContextMenuItemKind kind)
         {
-            // NUL rather than a printable separator: a label may contain anything the host
-            // types, including whatever character was chosen here, but never a NUL.
-            var key = occurrence.ToString(CultureInfo.InvariantCulture) + "\0" + label;
             if (_menuItemCache.TryGetValue(key, out var existing))
             {
                 existing.LastUsed = _menuBuildSequence;
@@ -296,7 +319,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
             var created = new CachedMenuItem
             {
-                Native = environment.CreateContextMenuItem(label, null, CoreWebView2ContextMenuItemKind.Command),
+                Native = environment.CreateContextMenuItem(label, null, kind),
                 LastUsed = _menuBuildSequence,
             };
             // Held in a field so it can be detached again: the subscription is what keeps the
@@ -357,10 +380,30 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <c>SelectionText</c> is form content — clinical data — so it is not left reachable
         /// once the menu it belonged to is gone.
         /// </summary>
+        /// <remarks>
+        /// A submenu not in this menu is emptied too. Separators are pooled by position across
+        /// the whole tree, so one left inside a submenu from an earlier click may be the same
+        /// object this click placed elsewhere — and an item belongs in one collection at a time.
+        /// </remarks>
         private void ClearActionsNotUsedInCurrentMenu()
         {
             foreach (var cached in _menuItemCache.Values)
-                if (cached.LastUsed != _menuBuildSequence) cached.Action = null;
+            {
+                if (cached.LastUsed == _menuBuildSequence) continue;
+                cached.Action = null;
+                if (cached.Native == null || cached.Native.Kind != CoreWebView2ContextMenuItemKind.Submenu) continue;
+                try
+                {
+                    var children = cached.Native.Children;
+                    for (var i = children.Count - 1; i >= 0; i--) children.RemoveAt(i);
+                }
+                catch (Exception ex)
+                {
+                    // Runs in a finally inside the browser's event; a COM failure here must not
+                    // escape into the message pump.
+                    Debug.Fail("Emptying a stale submenu failed: " + ex.Message);
+                }
+            }
         }
 
         private void OnWebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)

@@ -66,6 +66,19 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         }}";
 
         [TestMethod]
+        public async Task CreateInsertItemBuildsTheSameItemWithoutAddingIt()
+        {
+            await Initialized();
+
+            var item = _viewer.CreateInsertItem("Insert conclusion", () => "text");
+
+            Assert.AreEqual(0, _viewer.ContextMenuItems.Count, "it is for placing in a submenu");
+            Assert.AreEqual("Insert conclusion", item.Label);
+            Assert.IsFalse(item.IsVisible(new TiroContextMenuContext(false, null)),
+                "same editable-only default as AddInsertItem");
+        }
+
+        [TestMethod]
         public async Task TheItemIsAddedWithItsLabel_AndReturnedForFurtherTweaking()
         {
             await Initialized();

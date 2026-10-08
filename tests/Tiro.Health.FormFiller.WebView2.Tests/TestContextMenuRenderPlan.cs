@@ -46,13 +46,37 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             var menu = alreadyPresent.Select(h => h.ToString()).ToList();
             if (plan.ClearExisting) menu.Clear();
 
-            foreach (var step in plan.Steps)
-            {
-                if (step.Kind == Plan.StepKind.Separator) menu.Add("---");
-                else if (step.Kind == Plan.StepKind.BrowserItem) menu.Add(step.BrowserHandle.ToString());
-                else menu.Add("host:" + step.Label + "#" + step.Occurrence);
-            }
+            AddSteps(menu, plan.Steps, "");
             return menu;
+        }
+
+        /// <summary>A submenu's children render indented under it, as "&gt; " per level.</summary>
+        private static void AddSteps(List<string> menu, IReadOnlyList<Plan.Step> steps, string indent)
+        {
+            foreach (var step in steps)
+            {
+                if (step.Kind == Plan.StepKind.Separator) menu.Add(indent + "---");
+                else if (step.Kind == Plan.StepKind.BrowserItem) menu.Add(indent + step.BrowserHandle);
+                else if (step.Kind == Plan.StepKind.HostSubmenu)
+                {
+                    menu.Add(indent + "sub:" + step.Label + "#" + step.Occurrence);
+                    AddSteps(menu, step.Children, indent + "> ");
+                }
+                else menu.Add(indent + "host:" + step.Label + "#" + step.Occurrence);
+            }
+        }
+
+        private static TiroMenuEntry Sub(string label, params TiroMenuEntry[] children)
+            => TiroMenuEntry.CreateSubmenu(label, children);
+
+        /// <summary>Every host step in the tree, depth first.</summary>
+        private static IEnumerable<Plan.Step> HostSteps(IReadOnlyList<Plan.Step> steps)
+        {
+            foreach (var step in steps)
+            {
+                if (step.Kind == Plan.StepKind.HostCommand || step.Kind == Plan.StepKind.HostSubmenu) yield return step;
+                foreach (var child in HostSteps(step.Children)) yield return child;
+            }
         }
 
         private static List<string> Menu(IReadOnlyList<TiroMenuEntry> composed, params object[] handles)
@@ -295,6 +319,125 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             public override bool Equals(object obj) => obj is AlwaysEqual;
             public override int GetHashCode() => 1;
             public override string ToString() => _name;
+        }
+
+        // ---- Submenus ---------------------------------------------------------------------------
+
+        [TestMethod]
+        public void ASubmenuRendersItsChildrenBeneathIt()
+        {
+            object copy = Handle("Copy");
+            var composed = new List<TiroMenuEntry>
+            {
+                Browser(copy), TiroMenuEntry.CreateSeparator(),
+                Sub("Insert", Host("Patient name"), TiroMenuEntry.CreateSeparator(), Host("Conclusion")),
+            };
+
+            var plan = Plan.Create(composed, new[] { copy });
+
+            Assert.IsFalse(plan.ClearExisting, "a submenu after the browser's items is still an append");
+            CollectionAssert.AreEqual(
+                new[] { "Copy", "---", "sub:Insert#0", "> host:Patient name#0", "> ---", "> host:Conclusion#0" },
+                Render(plan, new[] { copy }));
+        }
+
+        [TestMethod]
+        public void TheSameLabelUnderTwoSubmenusGetsTwoCachedObjects()
+        {
+            var plan = Plan.Create(
+                new List<TiroMenuEntry> { Sub("Consult", Host("Conclusion")), Sub("Discharge", Host("Conclusion")) },
+                new object[0]);
+
+            var keys = HostSteps(plan.Steps).Where(st => st.Label == "Conclusion").Select(st => st.CacheKey).ToList();
+
+            Assert.AreEqual(2, keys.Count);
+            Assert.AreNotEqual(keys[0], keys[1],
+                "occurrence alone is 0 in both; only the path tells them apart");
+        }
+
+        [TestMethod]
+        public void ACommandAndASubmenuSharingALabelGetTwoCachedObjects()
+        {
+            // The browser fixes an item's kind when it is created, so a cached command can never
+            // be rendered as a submenu — even on a later click where the label moved.
+            var asCommand = HostSteps(Plan.Create(new List<TiroMenuEntry> { Host("Insert") }, new object[0]).Steps).Single();
+            var asSubmenu = HostSteps(Plan.Create(new List<TiroMenuEntry> { Sub("Insert", Host("A")) }, new object[0]).Steps).First();
+
+            Assert.AreNotEqual(asCommand.CacheKey, asSubmenu.CacheKey);
+        }
+
+        [TestMethod]
+        public void OccurrencesAreCountedPerLevel()
+        {
+            CollectionAssert.AreEqual(
+                new[] { "host:A#0", "sub:Group#0", "> host:A#0", "> host:A#1", "host:A#1" },
+                Menu(new List<TiroMenuEntry> { Host("A"), Sub("Group", Host("A"), Host("A")), Host("A") }));
+        }
+
+        [TestMethod]
+        public void SeparatorsAreNumberedAcrossTheWholeTree()
+        {
+            // One pooled separator object cannot sit in two places, whichever submenu it is in.
+            var plan = Plan.Create(
+                new List<TiroMenuEntry>
+                {
+                    Host("A"), TiroMenuEntry.CreateSeparator(),
+                    Sub("Group", Host("B"), TiroMenuEntry.CreateSeparator(), Host("C")),
+                    TiroMenuEntry.CreateSeparator(), Host("D"),
+                },
+                new object[0]);
+
+            var indices = new List<int>();
+            void Collect(IReadOnlyList<Plan.Step> steps)
+            {
+                foreach (var step in steps)
+                {
+                    if (step.Kind == Plan.StepKind.Separator) indices.Add(step.SeparatorIndex);
+                    Collect(step.Children);
+                }
+            }
+            Collect(plan.Steps);
+
+            CollectionAssert.AreEqual(new[] { 0, 1, 2 }, indices);
+        }
+
+        [TestMethod]
+        public void NestingDepthIsTheHostsChoice()
+        {
+            var entry = Host("Leaf");
+            for (var level = 5; level >= 1; level--) entry = Sub("Level " + level, entry);
+
+            var rendered = Menu(new List<TiroMenuEntry> { entry });
+
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    "sub:Level 1#0", "> sub:Level 2#0", "> > sub:Level 3#0", "> > > sub:Level 4#0",
+                    "> > > > sub:Level 5#0", "> > > > > host:Leaf#0",
+                },
+                rendered);
+            Assert.AreEqual(6, HostSteps(Plan.Create(new List<TiroMenuEntry> { entry }, new object[0]).Steps)
+                .Select(st => st.CacheKey).Distinct().Count());
+        }
+
+        [TestMethod]
+        public void ASubmenuStepCarriesItsEnabledStateAndNestedActions()
+        {
+            var invoked = false;
+            var plan = Plan.Create(
+                new List<TiroMenuEntry>
+                {
+                    TiroMenuEntry.CreateSubmenu("Insert", new[] { Host("Leaf", invoke: () => invoked = true) }, isEnabled: false),
+                },
+                new object[0]);
+
+            var submenu = plan.Steps.Single();
+            Assert.AreEqual(Plan.StepKind.HostSubmenu, submenu.Kind);
+            Assert.IsFalse(submenu.IsEnabled);
+            Assert.IsNull(submenu.Invoke, "a submenu opens; it has nothing to run");
+
+            submenu.Children.Single().Invoke();
+            Assert.IsTrue(invoked);
         }
     }
 }

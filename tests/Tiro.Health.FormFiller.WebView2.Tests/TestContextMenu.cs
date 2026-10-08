@@ -432,5 +432,136 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreNotSame(TiroMenuEntry.CreateSeparator(), TiroMenuEntry.CreateSeparator());
             Assert.AreEqual(TiroMenuEntryKind.Separator, TiroMenuEntry.CreateSeparator().Kind);
         }
+
+        // ---- Submenus ---------------------------------------------------------------------------
+
+        [TestMethod]
+        public async Task ASubmenuOffersItsChildrenAndRunsThem()
+        {
+            await Initialized();
+            var picked = "";
+            _viewer.ContextMenuItems.Add(TiroContextMenuItem.CreateSubmenu("Insert", new[]
+            {
+                new TiroContextMenuItem("Patient name", () => picked = "name"),
+                new TiroContextMenuItem("Conclusion", () => picked = "conclusion"),
+            }));
+
+            var shown = _browser.RequestContextMenu();
+
+            Assert.AreEqual(1, shown.Count);
+            Assert.AreEqual(TiroMenuEntryKind.Submenu, shown[0].Kind);
+            CollectionAssert.AreEqual(new[] { "Patient name", "Conclusion" }, Labels(shown[0].Children));
+
+            shown[0].Children[1].Invoke();
+            Assert.AreEqual("conclusion", picked);
+        }
+
+        [TestMethod]
+        public async Task SubmenusNestAsDeepAsTheHostLikes()
+        {
+            await Initialized();
+            var picked = false;
+            var item = new TiroContextMenuItem("Leaf", () => picked = true);
+            for (var level = 5; level >= 1; level--)
+                item = TiroContextMenuItem.CreateSubmenu("Level " + level, new[] { item });
+            _viewer.ContextMenuItems.Add(item);
+
+            var entry = _browser.RequestContextMenu().Single();
+            for (var level = 1; level <= 5; level++)
+            {
+                Assert.AreEqual("Level " + level, entry.Label);
+                entry = entry.Children.Single();
+            }
+
+            entry.Invoke();
+            Assert.IsTrue(picked);
+        }
+
+        [TestMethod]
+        public async Task ChildrenKeepTheirOwnVisibilityAndEnabledTests()
+        {
+            await Initialized();
+            _viewer.ContextMenuItems.Add(TiroContextMenuItem.CreateSubmenu("Insert", new[]
+            {
+                new TiroContextMenuItem("Everywhere", () => { }),
+                new TiroContextMenuItem("Editable only", () => { }) { IsVisible = ctx => ctx.IsEditable },
+                new TiroContextMenuItem("Greyed", () => { }) { IsEnabled = _ => false },
+            }));
+
+            var children = _browser.RequestContextMenu(isEditable: false).Single().Children;
+
+            CollectionAssert.AreEqual(new[] { "Everywhere", "Greyed" }, Labels(children));
+            Assert.IsFalse(children[1].IsEnabled);
+        }
+
+        [TestMethod]
+        public async Task ASubmenuWhoseChildrenAreAllHiddenIsHidden()
+        {
+            await Initialized();
+            _viewer.AddInsertItem("Top-level insert", () => "x");
+            _viewer.ContextMenuItems.Add(TiroContextMenuItem.CreateSubmenu("Insert", new[]
+            {
+                _viewer.CreateInsertItem("Patient name", () => "name"),
+                _viewer.CreateInsertItem("Conclusion", () => "conclusion"),
+            }));
+
+            Assert.AreEqual(0, _browser.RequestContextMenu(isEditable: false).Count,
+                "an empty submenu over a checkbox reads as broken");
+            Assert.AreEqual(2, _browser.RequestContextMenu(isEditable: true).Count);
+        }
+
+        [TestMethod]
+        public async Task ASubmenuThatContainsItselfIsLeftOutAndReported()
+        {
+            await Initialized();
+            var children = new List<TiroContextMenuItem> { new TiroContextMenuItem("Leaf", () => { }) };
+            var loop = TiroContextMenuItem.CreateSubmenu("Loop", children);
+            loop.Children.Add(loop);
+            _viewer.ContextMenuItems.Add(loop);
+
+            var shown = _browser.RequestContextMenu();
+
+            CollectionAssert.AreEqual(new[] { "Leaf" }, Labels(shown.Single().Children),
+                "the repeat is dropped instead of recursing until the stack overflows");
+            Assert.AreEqual(1, _sink.CapturedExceptions.Count);
+        }
+
+        [TestMethod]
+        public async Task TheBuilderCanGroupHostItemsIntoASubmenu()
+        {
+            await Initialized();
+            _browser.BrowserItems.Add(FakeEmbeddedBrowser.BrowserItem("copy", "&Copy"));
+            _viewer.ContextMenuItems.Add(new TiroContextMenuItem("Insert conclusion", () => { }));
+            _viewer.BuildContextMenu = menu => new List<TiroMenuEntry>
+            {
+                TiroMenuEntry.CreateSubmenu("Snippets", menu.HostItems),
+                TiroMenuEntry.CreateSeparator(),
+                menu.BrowserItems[0],
+            };
+
+            var shown = _browser.RequestContextMenu();
+
+            CollectionAssert.AreEqual(new[] { "Snippets", "---", "&Copy" }, Labels(shown));
+            CollectionAssert.AreEqual(new[] { "Insert conclusion" }, Labels(shown[0].Children));
+        }
+
+        [TestMethod]
+        public void ABrowserEntryCannotBeMovedIntoASubmenu()
+        {
+            var native = FakeEmbeddedBrowser.BrowserItem("copy", "&Copy");
+
+            Assert.ThrowsException<ArgumentException>(() => TiroMenuEntry.CreateSubmenu("Group", new[] { native }));
+        }
+
+        [TestMethod]
+        public void ASubmenuRequiresALabelAndChildren()
+        {
+            Assert.ThrowsException<ArgumentException>(
+                () => TiroContextMenuItem.CreateSubmenu("", new TiroContextMenuItem[0]));
+            Assert.ThrowsException<ArgumentNullException>(
+                () => TiroContextMenuItem.CreateSubmenu("Group", null));
+            Assert.ThrowsException<ArgumentNullException>(
+                () => TiroMenuEntry.CreateSubmenu("Group", null));
+        }
     }
 }

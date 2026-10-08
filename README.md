@@ -661,6 +661,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
   - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` and `TiroRtf.ToHtml` for both renditions of an RTF document
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's content, resolved per click, inserted at the caret; see [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu)
+  - Submenus, nested as deep as the host likes, via `TiroContextMenuItem.CreateSubmenu` and `TiroMenuEntry.CreateSubmenu`; see [Submenus](#submenus)
   - Full control of that menu via `BuildContextMenu`, which hands over the browser's own entries (`TiroMenuEntry`) alongside the host's and renders back whatever list it returns — reorder, hide **Inspect element**, interleave — while WebView2 still draws the menu, so the caret survives; see [Taking over the whole menu](#taking-over-the-whole-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
@@ -968,8 +969,42 @@ For RTF from arbitrary sources — Word imports, embedded logos, tracked changes
 library such as [RtfPipe](https://github.com/erdomke/RtfPipe) will do better. Pass its output as
 the `html` provider instead; nothing about `TiroRtf.ToHtml` is mandatory.
 
-Worked example: the Extract sample's four **Insert ...** items in `Form1_Load` — two plain
-snippets, and two derived from an RTF constant through `TiroRtf`.
+Worked example: the Extract sample's **Insert** submenu in `Form1_Load` — two plain snippets,
+and a nested **Conclusion** submenu with two items derived from an RTF constant through
+`TiroRtf`.
+
+#### Submenus
+
+Group items under one entry with `TiroContextMenuItem.CreateSubmenu`. `CreateInsertItem` builds
+the same item as `AddInsertItem` without adding it anywhere, so it can go into a group:
+
+```vb
+TiroFormViewer.ContextMenuItems.Add(TiroContextMenuItem.CreateSubmenu("Insert", New TiroContextMenuItem() {
+    TiroFormViewer.CreateInsertItem("Patient name", Function() patient.Name(0).Text),
+    TiroContextMenuItem.CreateSubmenu("Conclusion", New TiroContextMenuItem() {
+        TiroFormViewer.CreateInsertItem("Plain text", Function() TiroRtf.ToPlainText(conclusionRtf)),
+        TiroFormViewer.CreateInsertItem("Formatted", Function() TiroRtf.ToPlainText(conclusionRtf),
+                                                     Function() TiroRtf.ToHtml(conclusionRtf))
+    })
+}))
+```
+
+- **Each child keeps its own `IsVisible` and `IsEnabled`**, tested on every right-click like a
+  top-level item. A submenu whose children are all hidden is hidden too, so a group of insert
+  items disappears over a checkbox instead of opening onto nothing.
+- **Nesting depth is yours to choose.** The harness sets no limit. More than one or two levels is
+  hard to use in a right-click menu, though: every level is another hover across a narrow strip.
+- **Every submenu and every child is a custom menu item**, and the harness caches up to 256 of
+  them (WebView2 allows 1000 per process). A tree larger than that still works, but its items are
+  recreated on each right-click.
+- `Children` is read on every right-click, like `ContextMenuItems`, so it can change later.
+
+Inside `BuildContextMenu`, build one with `TiroMenuEntry.CreateSubmenu(label, entries)` — for
+example `TiroMenuEntry.CreateSubmenu("Snippets", menu.HostItems)`. Children may be host entries,
+separators and further submenus. The browser's own entries (Copy, Paste …) cannot be moved into
+a submenu, and trying throws `ArgumentException`: WebView2 only renders them where it offered
+them. The browser's own submenus can be reordered or left out like any other browser entry, but
+their contents are the browser's.
 
 #### Taking over the whole menu
 

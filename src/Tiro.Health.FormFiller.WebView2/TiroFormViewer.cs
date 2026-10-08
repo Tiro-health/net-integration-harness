@@ -188,6 +188,45 @@ namespace Tiro.Health.FormFiller.WebView2
             Func<string> html = null,
             Action<TextInsertResult> onResult = null)
         {
+            var item = CreateInsertItem(label, text, html, onResult);
+            ContextMenuItems.Add(item);
+            return item;
+        }
+
+        /// <summary>
+        /// Builds a right-click item that inserts content at the caret, without adding it
+        /// anywhere — for placing it in a submenu (<see cref="TiroContextMenuItem.CreateSubmenu"/>)
+        /// or handing it to <see cref="TiroContextMenuRequest.CreateEntry"/>. Everything else is
+        /// as <see cref="AddInsertItem"/>.
+        /// </summary>
+        /// <param name="label">The menu text.</param>
+        /// <param name="text">
+        /// Plain-text rendition, required. It is what a string-typed answer receives, and the
+        /// fallback for a field that declines the HTML.
+        /// </param>
+        /// <param name="html">
+        /// Optional body-level HTML fragment, for content whose formatting matters. From RTF,
+        /// convert with your own library; <see cref="TiroRtf.ToPlainText"/> covers the plain
+        /// rendition.
+        /// </param>
+        /// <param name="onResult">
+        /// Optional. Called with what the page managed, on the UI thread, so it can update a
+        /// status label directly. Worth supplying at least for
+        /// <see cref="TextInsertResult.Inserted"/> being false — nothing was focused, and the
+        /// item otherwise looks broken. Omit it to insert silently.
+        /// <para>
+        /// Also called with <see cref="TextInsertResult.NotInserted"/> when the insert fails
+        /// outright — the page didn't answer in time, or the viewer was disposed mid-flight —
+        /// so a status label never sits showing the previous click's outcome. The exception
+        /// itself still reaches telemetry.
+        /// </para>
+        /// </param>
+        public TiroContextMenuItem CreateInsertItem(
+            string label,
+            Func<string> text,
+            Func<string> html = null,
+            Action<TextInsertResult> onResult = null)
+        {
             if (text == null) throw new ArgumentNullException(nameof(text));
 
             // An async lambda, so the task it returns is the one TiroContextMenuItem stores and
@@ -216,7 +255,6 @@ namespace Tiro.Health.FormFiller.WebView2
             });
             item.IsVisible = context => context.IsEditable;
 
-            ContextMenuItems.Add(item);
             return item;
         }
 
@@ -1458,7 +1496,9 @@ namespace Tiro.Health.FormFiller.WebView2
             try
             {
                 requested = builder(new TiroContextMenuRequest(
-                    context, browserItems, hostItems, item => CreateContextMenuEntry(item, context)));
+                    context, browserItems, hostItems,
+                    item => CreateContextMenuEntry(item, context)
+                            ?? TiroMenuEntry.CreateSubmenu(item.Label, new TiroMenuEntry[0])));
             }
             catch (Exception ex)
             {
@@ -1510,12 +1550,21 @@ namespace Tiro.Health.FormFiller.WebView2
         /// applied, the enabled test resolved, and the action wrapped in the telemetry guard.
         /// </summary>
         private IReadOnlyList<TiroMenuEntry> ResolveHostItems(TiroContextMenuContext context)
+            => ResolveHostItems(ContextMenuItems, context, new HashSet<TiroContextMenuItem>());
+
+        /// <remarks>
+        /// <c>ancestors</c> holds the submenus being resolved above this level. A submenu listed
+        /// among its own descendants would otherwise recurse until the stack overflowed — which
+        /// no handler can catch, so a right-click would end the process.
+        /// </remarks>
+        private IReadOnlyList<TiroMenuEntry> ResolveHostItems(
+            IEnumerable<TiroContextMenuItem> source, TiroContextMenuContext context, HashSet<TiroContextMenuItem> ancestors)
         {
             var resolved = new List<TiroMenuEntry>();
 
             // Snapshot: the host owns this list and may hold it from another thread. A copy
             // costs nothing at menu scale and can't throw mid-enumeration.
-            var items = new List<TiroContextMenuItem>(ContextMenuItems);
+            var items = new List<TiroContextMenuItem>(source);
             foreach (var item in items)
             {
                 if (item == null) continue;
@@ -1531,17 +1580,27 @@ namespace Tiro.Health.FormFiller.WebView2
                     continue;
                 }
 
-                resolved.Add(CreateContextMenuEntry(item, context));
+                var entry = CreateContextMenuEntry(item, context, ancestors);
+                // A group whose children are all hidden has nothing to open, and an empty
+                // submenu reads as broken — the group goes with its contents.
+                if (entry == null || (entry.Kind == TiroMenuEntryKind.Submenu && entry.Children.Count == 0)) continue;
+                resolved.Add(entry);
             }
             return resolved;
         }
+
+        private TiroMenuEntry CreateContextMenuEntry(TiroContextMenuItem item, TiroContextMenuContext context)
+            => CreateContextMenuEntry(item, context, new HashSet<TiroContextMenuItem>());
 
         /// <summary>
         /// Wraps one item as an entry: resolves its enabled test and binds its action to this
         /// click's context through the guard. An enabled test that throws leaves the item
         /// enabled — a visible item that reports its own failure beats one silently greyed out.
+        /// A submenu's children are resolved the same way, visibility tests included. Null
+        /// only for a submenu that contains itself, which is reported and left out.
         /// </summary>
-        private TiroMenuEntry CreateContextMenuEntry(TiroContextMenuItem item, TiroContextMenuContext context)
+        private TiroMenuEntry CreateContextMenuEntry(
+            TiroContextMenuItem item, TiroContextMenuContext context, HashSet<TiroContextMenuItem> ancestors)
         {
             var isEnabled = true;
             try
@@ -1554,7 +1613,26 @@ namespace Tiro.Health.FormFiller.WebView2
             }
 
             var captured = item;
-            return new TiroMenuEntry(captured.Label, () => InvokeContextMenuItem(captured, context), isEnabled);
+            if (!captured.IsSubmenu)
+                return new TiroMenuEntry(captured.Label, () => InvokeContextMenuItem(captured, context), isEnabled);
+
+            if (!ancestors.Add(captured))
+            {
+                // No label in the message: it is host-authored and may name the patient.
+                _telemetry.CaptureException(new InvalidOperationException(
+                    "A context menu submenu contains itself, directly or through a nested submenu. " +
+                    "The repeated submenu is left out of the menu."));
+                return null;
+            }
+            try
+            {
+                var children = ResolveHostItems(captured.Children, context, ancestors);
+                return TiroMenuEntry.CreateSubmenu(captured.Label, children, isEnabled);
+            }
+            finally
+            {
+                ancestors.Remove(captured);
+            }
         }
 
         /// <summary>

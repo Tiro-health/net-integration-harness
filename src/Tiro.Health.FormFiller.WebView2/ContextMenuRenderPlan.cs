@@ -26,6 +26,12 @@ namespace Tiro.Health.FormFiller.WebView2
 
             /// <summary>Add the separator at <see cref="Step.SeparatorIndex"/> in the pool.</summary>
             Separator,
+
+            /// <summary>
+            /// Add a host submenu, rendered from a cached item keyed like a command, with
+            /// <see cref="Step.Children"/> as its contents.
+            /// </summary>
+            HostSubmenu,
         }
 
         internal sealed class Step
@@ -35,16 +41,28 @@ namespace Tiro.Health.FormFiller.WebView2
             /// <summary><see cref="StepKind.BrowserItem"/>: the browser's own object.</summary>
             public object BrowserHandle;
 
-            /// <summary><see cref="StepKind.HostCommand"/>: the menu text.</summary>
+            /// <summary>Host steps: the menu text.</summary>
             public string Label;
 
             /// <summary>
-            /// <see cref="StepKind.HostCommand"/>: how many earlier steps in this same menu
-            /// already used <see cref="Label"/>. Together with the label it identifies the
-            /// cached object to render from, so two entries sharing a label in one menu get two
-            /// objects instead of one added twice.
+            /// Host steps: how many earlier steps at this same level already used
+            /// <see cref="Label"/>. Together with the label it identifies the cached object to
+            /// render from, so two entries sharing a label in one menu get two objects instead
+            /// of one added twice.
             /// </summary>
             public int Occurrence;
+
+            /// <summary>
+            /// Host steps: the identity of the cached object to render from — the kind, label
+            /// and occurrence of this step and of every submenu above it. The path is what
+            /// lets "Patient name" under two different submenus be two objects; the kind is
+            /// what stops a command and a submenu sharing a label from sharing one, since the
+            /// browser fixes an item's kind when it is created.
+            /// </summary>
+            public string CacheKey;
+
+            /// <summary><see cref="StepKind.HostSubmenu"/>: what it opens, in order.</summary>
+            public IReadOnlyList<Step> Children = NoSteps;
 
             public bool IsEnabled;
             public Action Invoke;
@@ -52,6 +70,8 @@ namespace Tiro.Health.FormFiller.WebView2
             /// <summary><see cref="StepKind.Separator"/>: index into the separator pool.</summary>
             public int SeparatorIndex;
         }
+
+        private static readonly IReadOnlyList<Step> NoSteps = new Step[0];
 
         private ContextMenuRenderPlan(bool clearExisting, IReadOnlyList<Step> steps)
         {
@@ -112,29 +132,60 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 var entry = usable[i];
                 if (entry.IsFromBrowser)
-                {
                     steps.Add(new Step { Kind = StepKind.BrowserItem, BrowserHandle = entry.BrowserHandle });
-                }
-                else if (entry.Kind == TiroMenuEntryKind.Separator)
-                {
-                    steps.Add(new Step { Kind = StepKind.Separator, SeparatorIndex = separators++ });
-                }
                 else
-                {
-                    occurrences.TryGetValue(entry.Label, out var occurrence);
-                    occurrences[entry.Label] = occurrence + 1;
-                    steps.Add(new Step
-                    {
-                        Kind = StepKind.HostCommand,
-                        Label = entry.Label,
-                        Occurrence = occurrence,
-                        IsEnabled = entry.IsEnabled,
-                        Invoke = entry.Invoke,
-                    });
-                }
+                    steps.Add(PlanHostEntry(entry, "", occurrences, ref separators));
             }
 
             return new ContextMenuRenderPlan(clearExisting, steps);
+        }
+
+        /// <summary>
+        /// Plans one host entry, and a submenu's contents beneath it. <c>parentKey</c> is the
+        /// submenu path above this level (empty at the top) and <c>occurrences</c> counts labels
+        /// at this level only. <c>separators</c> is shared by the whole tree: the pool is indexed
+        /// globally because one separator object cannot sit in two places, whichever submenus
+        /// they are in.
+        /// </summary>
+        private static Step PlanHostEntry(
+            TiroMenuEntry entry, string parentKey, Dictionary<string, int> occurrences, ref int separators)
+        {
+            if (entry.Kind == TiroMenuEntryKind.Separator)
+                return new Step { Kind = StepKind.Separator, SeparatorIndex = separators++ };
+
+            occurrences.TryGetValue(entry.Label, out var occurrence);
+            occurrences[entry.Label] = occurrence + 1;
+
+            var isSubmenu = entry.Kind == TiroMenuEntryKind.Submenu;
+            // NUL-separated rather than a printable separator: a label may contain anything the
+            // host types, but never a NUL.
+            var key = parentKey + (isSubmenu ? "S" : "C")
+                + occurrence.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\0" + entry.Label + "\0";
+
+            var step = new Step
+            {
+                Kind = isSubmenu ? StepKind.HostSubmenu : StepKind.HostCommand,
+                Label = entry.Label,
+                Occurrence = occurrence,
+                CacheKey = key,
+                IsEnabled = entry.IsEnabled,
+                Invoke = entry.Invoke,
+            };
+
+            if (isSubmenu)
+            {
+                var children = new List<Step>(entry.Children.Count);
+                var childOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (var child in entry.Children)
+                {
+                    // TiroMenuEntry.CreateSubmenu already refuses these; a browser item can
+                    // only be rendered where the browser offered it.
+                    if (child == null || child.IsFromBrowser) continue;
+                    children.Add(PlanHostEntry(child, key, childOccurrences, ref separators));
+                }
+                step.Children = children;
+            }
+            return step;
         }
 
         /// <summary>
