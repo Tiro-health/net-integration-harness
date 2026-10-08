@@ -7,15 +7,20 @@ namespace Tiro.Health.SmartWebMessaging.Message.Payload
     /// </summary>
     public class FormTextShortcuts : RequestPayload
     {
+        /// <summary>Abbreviations with their content, expanded at once.</summary>
         public List<TextShortcutEntry> Shortcuts { get; set; } = new List<TextShortcutEntry>();
+
+        /// <summary>Abbreviations whose content the page requests when typed.</summary>
+        public List<string> Abbreviations { get; set; } = new List<string>();
 
         public FormTextShortcuts()
         {
         }
 
-        public FormTextShortcuts(List<TextShortcutEntry> shortcuts)
+        public FormTextShortcuts(List<TextShortcutEntry> shortcuts, List<string> abbreviations = null)
         {
             Shortcuts = shortcuts ?? new List<TextShortcutEntry>();
+            Abbreviations = abbreviations ?? new List<string>();
         }
     }
 

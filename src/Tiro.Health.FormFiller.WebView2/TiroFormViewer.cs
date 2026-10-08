@@ -120,6 +120,28 @@ namespace Tiro.Health.FormFiller.WebView2
         public IList<TiroTextShortcut> TextShortcuts { get; } = new List<TiroTextShortcut>();
 
         /// <summary>
+        /// Abbreviations whose content <see cref="ResolveTextShortcut"/> supplies when typed —
+        /// for a list too large to load up front. Sent like <see cref="TextShortcuts"/>, which
+        /// wins for an abbreviation in both.
+        /// </summary>
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public IList<string> TextShortcutAbbreviations { get; } = new List<string>();
+
+        /// <summary>
+        /// Called on the UI thread when the user types one of
+        /// <see cref="TextShortcutAbbreviations"/>; returns its content, or null for none.
+        /// </summary>
+        /// <remarks>
+        /// May be async (a database lookup). If the user kept typing or left the field before it
+        /// answers, the page leaves the text as typed; after 10 s the request is dropped. A
+        /// resolver that throws is reported to telemetry and nothing is inserted.
+        /// </remarks>
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public Func<string, Task<TiroTextShortcut>> ResolveTextShortcut { get; set; }
+
+        /// <summary>
         /// Full control of the form's right-click menu. Called on every right-click with the
         /// browser's own entries and the host's; returns the menu to show, in order. Null (the
         /// default) keeps the standard layout — the browser's entries, a separator, then
@@ -557,6 +579,7 @@ namespace Tiro.Health.FormFiller.WebView2
             _smartWebMessageHandler.FormSubmitted += OnFormSubmitted;
             _smartWebMessageHandler.CloseApplication += OnCloseApplication;
             _smartWebMessageHandler.FormDirtyChanged += OnFormDirtyChanged;
+            _smartWebMessageHandler.TextShortcutRequested += OnTextShortcutRequested;
 
             _browser.MessageReceived += OnBrowserMessageReceived;
             // Wired unconditionally rather than when the first item is added: the collection is
@@ -991,6 +1014,42 @@ namespace Tiro.Health.FormFiller.WebView2
             CloseApplication?.Invoke(this, e);
         }
 
+        /// <summary>
+        /// Resolves a typed abbreviation through <see cref="ResolveTextShortcut"/> and answers
+        /// the page. Always answers, so the page can drop its pending request. Async void:
+        /// every failure is caught here, as there is no caller to report to.
+        /// </summary>
+        private async void OnTextShortcutRequested(object sender, TextShortcutRequestedEventArgs e)
+        {
+            TiroTextShortcut resolved = null;
+            try
+            {
+                var resolver = ResolveTextShortcut;
+                if (resolver != null && !string.IsNullOrEmpty(e?.Abbreviation))
+                {
+                    var pending = resolver(e.Abbreviation);
+                    if (pending != null) resolved = await pending;
+                }
+            }
+            catch (Exception ex)
+            {
+                _telemetry.CaptureException(ex);
+            }
+
+            if (State == TiroFormViewerState.Disposed) return;
+            try
+            {
+                await _smartWebMessageHandler.SendResolveTextShortcutAsync(
+                    e?.RequestId, resolved?.Text, resolved?.Html, cancellationToken: _lifetimeCts.Token);
+            }
+            catch (OperationCanceledException) { /* disposed meanwhile */ }
+            catch (ObjectDisposedException) { /* disposed meanwhile */ }
+            catch (Exception ex)
+            {
+                _telemetry.CaptureException(ex);
+            }
+        }
+
         private void OnFormDirtyChanged(object sender, FormDirtyChangedEventArgs e)
         {
             IsDirty = e.IsDirty;
@@ -1216,7 +1275,7 @@ namespace Tiro.Health.FormFiller.WebView2
                     }
 
                     // Before the questionnaire, so they're active once the user can type.
-                    if (TextShortcuts.Count > 0)
+                    if (TextShortcuts.Count > 0 || TextShortcutAbbreviations.Count > 0)
                         await SendTextShortcutsAsync(linkedCts.Token, cancellationToken);
 
                     var wrappedHandler = WrapForRoundTrip("sdc.displayQuestionnaire", span, cancellationToken, originalHandler: null);
@@ -1469,13 +1528,19 @@ namespace Tiro.Health.FormFiller.WebView2
                 });
             }
 
+            var abbreviations = new List<string>();
+            foreach (var abbreviation in new List<string>(TextShortcutAbbreviations))
+                if (!string.IsNullOrEmpty(abbreviation)) abbreviations.Add(abbreviation);
+
             var span = _session?.StartTransaction("ui.form.configureTextShortcuts", "swm.send");
             span?.SetTag("messageType", "ui.form.configureTextShortcuts");
             span?.SetTag("shortcut_count", entries.Count.ToString(CultureInfo.InvariantCulture));
+            span?.SetTag("resolvable_count", abbreviations.Count.ToString(CultureInfo.InvariantCulture));
             try
             {
                 await _smartWebMessageHandler.SendFormTextShortcutsAsync(
                     entries,
+                    abbreviations,
                     WrapForRoundTrip("ui.form.configureTextShortcuts", span, userToken, originalHandler: null),
                     linkedToken);
             }

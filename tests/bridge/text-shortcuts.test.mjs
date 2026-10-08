@@ -291,3 +291,107 @@ test("the page is told an expansion happened, without its content", async () => 
     assert.equal(event.detail.target, input);
     assert.ok(!("text" in event.detail) && !("abbreviation" in event.detail));
 });
+
+// ---- Resolved on demand: abbreviations without content -----------------------------------
+
+async function resolvingBridge() {
+    const h = await loadBridge([new FormFillerStub()], { host: true });
+    await flush();
+    deliver(h.window, "ui.form.configureTextShortcuts", {
+        shortcuts: [{ abbreviation: "µnka", text: "No known drug allergies." }],
+        abbreviations: ["µpat", "µnka"],
+    });
+    return h;
+}
+
+test("a resolvable abbreviation asks the host, and only for that word", async () => {
+    const h = await resolvingBridge();
+    const input = field({ value: "Patient µpat " });
+    h.focus(input);
+
+    h.type(input);
+    await settle();
+
+    const [request] = h.sent("ui.form.textShortcutRequested");
+    assert.equal(plain(request.payload).abbreviation, "µpat");
+    assert.ok(request.payload.requestId);
+    assert.equal(h.execCommands.length, 0, "nothing replaced until the host answers");
+
+    const other = field({ value: "Patient " });
+    h.focus(other);
+    h.type(other);
+    await settle();
+    assert.equal(h.sent("ui.form.textShortcutRequested").length, 1, "ordinary words never leave the page");
+});
+
+test("the host's answer replaces the abbreviation", async () => {
+    const h = await resolvingBridge();
+    const input = field({ value: "Patient µpat " });
+    h.focus(input);
+    h.type(input);
+    await settle();
+    const { requestId } = h.sent("ui.form.textShortcutRequested")[0].payload;
+
+    const ack = deliver(h.window, "ui.form.resolveTextShortcut", { requestId, text: "Leonardo da Vinci" });
+
+    assert.deepEqual(plain(ack), { expanded: true });
+    assert.deepEqual(input.selections.at(-1), [8, 13]);
+    assert.deepEqual(h.execCommands.map(c => c.value), ["Leonardo da Vinci "]);
+});
+
+test("an answer that arrives after the user kept typing is dropped", async () => {
+    const h = await resolvingBridge();
+    const input = field({ value: "µpat " });
+    h.focus(input);
+    h.type(input);
+    await settle();
+    const { requestId } = h.sent("ui.form.textShortcutRequested")[0].payload;
+
+    input.value = "µpat more";
+    input.selectionStart = input.selectionEnd = input.value.length;
+    const ack = deliver(h.window, "ui.form.resolveTextShortcut", { requestId, text: "Leonardo da Vinci" });
+
+    assert.deepEqual(plain(ack), { expanded: false });
+    assert.equal(h.execCommands.length, 0);
+});
+
+test("no text in the answer, or an unknown request, changes nothing", async () => {
+    const h = await resolvingBridge();
+    const input = field({ value: "µpat " });
+    h.focus(input);
+    h.type(input);
+    await settle();
+    const { requestId } = h.sent("ui.form.textShortcutRequested")[0].payload;
+
+    assert.deepEqual(plain(deliver(h.window, "ui.form.resolveTextShortcut", { requestId: "nope", text: "x" })), { expanded: false });
+    assert.deepEqual(plain(deliver(h.window, "ui.form.resolveTextShortcut", { requestId })), { expanded: false });
+    assert.equal(h.execCommands.length, 0);
+});
+
+test("preloaded content wins over resolving", async () => {
+    const h = await resolvingBridge();
+    const input = field({ value: "µnka " });
+    h.focus(input);
+
+    h.type(input);
+    await settle();
+
+    assert.equal(h.sent("ui.form.textShortcutRequested").length, 0);
+    assert.deepEqual(h.execCommands.map(c => c.value), ["No known drug allergies. "]);
+});
+
+test("a resolved snippet in a rich-text field goes in as a paste", async () => {
+    const h = await resolvingBridge();
+    const { el, range } = contentEditable("µpat ", { consumesPaste: true });
+    h.focus(el);
+    h.type(el);
+    await settle();
+    const { requestId } = h.sent("ui.form.textShortcutRequested")[0].payload;
+
+    deliver(h.window, "ui.form.resolveTextShortcut", { requestId, text: "Leonardo", html: "<b>Leonardo</b>" });
+    await settle();
+
+    assert.deepEqual([range.start, range.end], [0, 5]);
+    assert.equal(el.events.find(e => e.type === "paste").clipboardData.getData("text/html"), "<b>Leonardo</b>");
+    assert.deepEqual(h.execCommands.map(c => c.value), [" "]);
+});

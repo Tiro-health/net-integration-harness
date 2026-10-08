@@ -103,10 +103,19 @@ Public Class Form1
                                      onResult:=AddressOf ShowInsertResult)
 
         ' Text shortcuts: typing "µnka" then a space in a text field replaces it with the snippet.
-        ' A real EHR loads the user's own list here, with placeholders already filled in.
+        ' Preloaded: content known up front, expanded at once.
         TiroFormViewer.TextShortcuts.Add(New TiroTextShortcut("µnka", "No known drug allergies."))
-        TiroFormViewer.TextShortcuts.Add(New TiroTextShortcut("µpat", patient.Name(0).Text))
         TiroFormViewer.TextShortcuts.Add(TiroTextShortcut.FromRtf("µconc", ConclusionRtf))
+
+        ' Resolved on demand: only the abbreviation up front, content fetched when typed — for
+        ' lists too large to load. The delay stands in for a database lookup.
+        TiroFormViewer.TextShortcutAbbreviations.Add("µpat")
+        TiroFormViewer.ResolveTextShortcut =
+            Async Function(abbreviation)
+                Await System.Threading.Tasks.Task.Delay(200)
+                If abbreviation = "µpat" Then Return New TiroTextShortcut(abbreviation, patient.Name(0).Text)
+                Return Nothing
+            End Function
 
         ' The clinician writing the report and the visit it belongs to. The form's Klinische
         ' informatie fields prefill from these: Auteur from %user (the author), Datum consult

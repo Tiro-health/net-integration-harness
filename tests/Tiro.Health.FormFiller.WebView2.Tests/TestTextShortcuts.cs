@@ -109,6 +109,79 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
                 Assert.IsFalse(message.Contains("Jan Peeters") || message.Contains("µpat"));
         }
 
+        // ---- Resolved on demand -------------------------------------------------------------------
+
+        private static string ShortcutRequest(string requestId, string abbreviation) => $@"{{
+            ""messageId"": ""req-{requestId}"",
+            ""messagingHandle"": ""smart-web-messaging"",
+            ""messageType"": ""ui.form.textShortcutRequested"",
+            ""payload"": {{ ""requestId"": ""{requestId}"", ""abbreviation"": ""{abbreviation}"" }}
+        }}";
+
+        private async Task<JsonElement> AnswerTo(string abbreviation)
+        {
+            _browser.RaiseMessageReceived(ShortcutRequest("ts-1", abbreviation));
+            await PollFor(() => IndexOfPosted("ui.form.resolveTextShortcut") >= 0, TimeSpan.FromSeconds(5));
+            return JsonDocument.Parse(_browser.PostedMessages[IndexOfPosted("ui.form.resolveTextShortcut")])
+                .RootElement.GetProperty("payload");
+        }
+
+        [TestMethod]
+        public async Task ResolvableAbbreviationsAreSentWithoutContent()
+        {
+            _viewer.TextShortcutAbbreviations.Add("µpat");
+
+            await DisplayForm();
+
+            var payload = JsonDocument.Parse(_browser.PostedMessages[IndexOfPosted("ui.form.configureTextShortcuts")])
+                .RootElement.GetProperty("payload");
+            Assert.AreEqual("µpat", payload.GetProperty("abbreviations")[0].GetString());
+            Assert.AreEqual(0, payload.GetProperty("shortcuts").GetArrayLength());
+        }
+
+        [TestMethod]
+        public async Task TheResolverAnswersTheRequest()
+        {
+            string asked = null;
+            _viewer.ResolveTextShortcut = async abbreviation =>
+            {
+                asked = abbreviation;
+                await Task.Yield();
+                return new TiroTextShortcut(abbreviation, "Leonardo da Vinci", "<b>Leonardo</b>");
+            };
+            await DisplayForm();
+
+            var answer = await AnswerTo("µpat");
+
+            Assert.AreEqual("µpat", asked);
+            Assert.AreEqual("ts-1", answer.GetProperty("requestId").GetString());
+            Assert.AreEqual("Leonardo da Vinci", answer.GetProperty("text").GetString());
+            Assert.AreEqual("<b>Leonardo</b>", answer.GetProperty("html").GetString());
+        }
+
+        [TestMethod]
+        public async Task NoSnippetStillAnswers_SoThePageCanLetGo()
+        {
+            _viewer.ResolveTextShortcut = _ => Task.FromResult<TiroTextShortcut>(null);
+            await DisplayForm();
+
+            var answer = await AnswerTo("µunknown");
+
+            Assert.IsFalse(answer.TryGetProperty("text", out _));
+        }
+
+        [TestMethod]
+        public async Task AThrowingResolverIsReportedAndAnswersWithNothing()
+        {
+            _viewer.ResolveTextShortcut = _ => throw new InvalidOperationException("database down");
+            await DisplayForm();
+
+            var answer = await AnswerTo("µpat");
+
+            Assert.IsFalse(answer.TryGetProperty("text", out _));
+            Assert.AreEqual(1, _sink.CapturedExceptions.Count);
+        }
+
         [TestMethod]
         public void AnAbbreviationNeedsNoWhitespaceAndATextRendition()
         {

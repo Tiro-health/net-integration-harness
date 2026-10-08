@@ -661,7 +661,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
   - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` and `TiroRtf.ToHtml` for both renditions of an RTF document
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's content, resolved per click, inserted at the caret; see [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu)
-  - Text shortcuts via `TextShortcuts` (`TiroTextShortcut`): typed abbreviations such as `µnka` expand into the EHR's snippets; see [Text shortcuts](#text-shortcuts)
+  - Text shortcuts via `TextShortcuts` (`TiroTextShortcut`), or `TextShortcutAbbreviations` + `ResolveTextShortcut` for large lists: typed abbreviations such as `µnka` expand into the EHR's snippets; see [Text shortcuts](#text-shortcuts)
   - Full control of that menu via `BuildContextMenu`, which hands over the browser's own entries (`TiroMenuEntry`) alongside the host's and renders back whatever list it returns — reorder, hide **Inspect element**, interleave — while WebView2 still draws the menu, so the caret survives; see [Taking over the whole menu](#taking-over-the-whole-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
@@ -1059,10 +1059,30 @@ Next
   paragraphs survive; tables, fonts, colours and lists flatten. Plain `<input>` fields get the
   plain text.
 - **Ctrl+Z restores the abbreviation.**
-- **Changing the list mid-session** (another user takes over): update `TextShortcuts`, then call
+- **Changing the list mid-session** (another user takes over): update the lists, then call
   `UpdateTextShortcutsAsync()`.
 
-Worked example: the Extract sample's `µnka`, `µpat` and `µconc`.
+**Large lists: resolve on demand.** Converting thousands of RTF snippets at launch takes seconds.
+Send only the abbreviations and supply the content when one is typed:
+
+```vb
+For Each abbreviation In davinci.GetAbbreviations(userId)
+    TiroFormViewer.TextShortcutAbbreviations.Add(abbreviation)
+Next
+TiroFormViewer.ResolveTextShortcut =
+    Async Function(abbreviation)
+        Dim rtf = Await davinci.GetSnippetRtfAsync(userId, abbreviation)
+        Return If(rtf Is Nothing, Nothing, TiroTextShortcut.FromRtf(abbreviation, rtf))
+    End Function
+```
+
+- Matching is still local: only a typed abbreviation reaches the resolver.
+- The resolver runs on the UI thread and may be async. If the user kept typing or left the field
+  before it answers, the text stays as typed. Requests are dropped after 10 seconds.
+- A resolver that throws is reported to telemetry; nothing is inserted.
+- Both lists can be combined: preloaded content wins for an abbreviation in both.
+
+Worked example: the Extract sample's `µnka` and `µconc` (preloaded) and `µpat` (resolved).
 
 ### Frontend version compatibility
 
