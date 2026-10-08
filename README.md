@@ -1076,6 +1076,15 @@ TiroFormViewer.ResolveTextShortcut =
     End Function
 ```
 
+- **Answer from memory, not a database query.** The user keeps typing after the space; an answer
+  that arrives after the next keystroke is dropped, so the shortcut looks like it failed. Keep the
+  user's RTF snippets in memory (cheap — it's the conversion that is costly) and answer synchronously:
+
+  ```vb
+  TiroFormViewer.ResolveTextShortcut =
+      Function(abbreviation) Task.FromResult(MySnippetCache.Lookup(abbreviation))   ' returns a TiroTextShortcut or Nothing
+  ```
+
 - Matching is still local: only a typed abbreviation reaches the resolver.
 - The resolver runs on the UI thread and may be async. If the user kept typing or left the field
   before it answers, the text stays as typed. Requests are dropped after 10 seconds.

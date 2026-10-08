@@ -30,11 +30,16 @@ function field({ tagName = "INPUT", type = "text", value = "" } = {}) {
 
 /** A contenteditable with the caret at the end of one text node. */
 function contentEditable(text, { consumesPaste = false } = {}) {
-    const range = { setStart(node, offset) { this.start = offset; }, setEnd(node, offset) { this.end = offset; } };
+    const range = { setStart(node, offset) { this.node = node; this.start = offset; }, setEnd(node, offset) { this.end = offset; } };
     const textNode = { nodeType: 3, data: text, ownerDocument: { createRange: () => range } };
     const selection = {
-        rangeCount: 1, isCollapsed: true, focusNode: textNode, focusOffset: text.length, added: null,
-        removeAllRanges() {}, addRange(r) { this.added = r; },
+        rangeCount: 1, isCollapsed: true, added: null,
+        anchorNode: textNode, focusNode: textNode, anchorOffset: text.length, focusOffset: text.length,
+        removeAllRanges() {},
+        addRange(r) {
+            this.added = r;
+            Object.assign(this, { anchorNode: r.node, focusNode: r.node, anchorOffset: r.start, focusOffset: r.end, isCollapsed: false });
+        },
     };
     const el = {
         nodeType: 1, tagName: "DIV", isContentEditable: true, isConnected: true, events: [],
@@ -59,7 +64,10 @@ async function bridge(shortcuts = SHORTCUTS) {
 }
 
 /** The expansion runs one task after the space. */
-const settle = () => new Promise(resolve => setTimeout(resolve, 5));
+const settle = (ms = 5) => new Promise(resolve => setTimeout(resolve, ms));
+
+/** Rich-text fields paste after the selection settles: on selectionchange, or after 50 ms. */
+const settleRich = () => settle(80);
 
 test("an abbreviation followed by a space is replaced, keeping the space", async () => {
     const h = await bridge();
@@ -127,7 +135,7 @@ test("an invisible placeholder before the abbreviation counts as a boundary", as
     h.focus(el);
 
     h.type(el);
-    await settle();
+    await settleRich();
 
     assert.deepEqual([range.start, range.end], [1, 6], "the placeholder stays");
     assert.deepEqual(h.execCommands.map(c => c.value), ["No known drug allergies. "]);
@@ -220,7 +228,7 @@ test("in a rich-text field the HTML goes in as a paste, then the space", async (
     h.focus(el);
 
     h.type(el);
-    await settle();
+    await settleRich();
 
     assert.equal(selection.added, range);
     assert.deepEqual([range.start, range.end], [6, 10], "the abbreviation and the stored space");
@@ -235,7 +243,7 @@ test("in a rich-text field a plain snippet also goes in as a paste", async () =>
     h.focus(el);
 
     h.type(el);
-    await settle();
+    await settleRich();
 
     assert.deepEqual([range.start, range.end], [0, 5]);
     const paste = el.events.find(e => e.type === "paste");
@@ -261,8 +269,8 @@ test("the space after a pasted snippet waits for the editor, and doesn't re-trig
 
     h.type(el);
     assert.equal(h.execCommands.length, 0, "nothing yet: the expansion is deferred");
-    await settle();
-    await settle();
+    await settleRich();
+    await settleRich();
 
     assert.deepEqual(h.execCommands.map(c => c.value), [" "], "one space, no second expansion");
 });
@@ -273,7 +281,7 @@ test("a rich-text field that declines the paste gets the plain text", async () =
     h.focus(el);
 
     h.type(el);
-    await settle();
+    await settleRich();
 
     assert.deepEqual(h.execCommands.map(c => c.value), ["Follow-up in 6 weeks. "]);
 });
@@ -385,13 +393,42 @@ test("a resolved snippet in a rich-text field goes in as a paste", async () => {
     const { el, range } = contentEditable("µpat ", { consumesPaste: true });
     h.focus(el);
     h.type(el);
-    await settle();
+    await settleRich();
     const { requestId } = h.sent("ui.form.textShortcutRequested")[0].payload;
 
     deliver(h.window, "ui.form.resolveTextShortcut", { requestId, text: "Leonardo", html: "<b>Leonardo</b>" });
-    await settle();
+    await settleRich();
 
     assert.deepEqual([range.start, range.end], [0, 5]);
     assert.equal(el.events.find(e => e.type === "paste").clipboardData.getData("text/html"), "<b>Leonardo</b>");
     assert.deepEqual(h.execCommands.map(c => c.value), [" "]);
+});
+
+test("in a rich-text field the paste waits until the editor has seen the new selection", async () => {
+    const h = await bridge();
+    const { el } = contentEditable("µnka\u00a0", { consumesPaste: true });
+    h.focus(el);
+    h.type(el);
+    await settle();
+
+    assert.equal(el.events.filter(e => e.type === "paste").length, 0, "not before selectionchange");
+    h.selectionChange();
+    await settle();
+
+    assert.equal(el.events.filter(e => e.type === "paste").length, 1);
+});
+
+test("no paste when the selection moved before it settled", async () => {
+    const h = await bridge();
+    const { el, selection } = contentEditable("µnka\u00a0", { consumesPaste: true });
+    h.focus(el);
+    h.type(el);
+    await settle();
+
+    Object.assign(selection, { anchorOffset: 5, focusOffset: 5, isCollapsed: true });
+    h.selectionChange();
+    await settle();
+
+    assert.equal(el.events.filter(e => e.type === "paste").length, 0);
+    assert.equal(h.execCommands.length, 0);
 });

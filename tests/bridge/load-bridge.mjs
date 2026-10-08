@@ -91,6 +91,10 @@ export async function loadBridge(formFillers, {
             forType.push(listener);
             documentListeners.set(type, forType);
         },
+        removeEventListener(type, listener) {
+            const forType = documentListeners.get(type) || [];
+            documentListeners.set(type, forType.filter(fn => fn !== listener));
+        },
         execCommand(name, showUi, value) {
             execCommands.push({ name, showUi, value });
             return execCommandResult;
@@ -245,6 +249,10 @@ export async function loadBridge(formFillers, {
         type: (el, data = " ", init = {}) => {
             (documentListeners.get("input") || []).forEach(fn =>
                 fn({ target: el, composedPath: () => [el], inputType: "insertText", data, isComposing: false, ...init }));
+        },
+        /** Simulate the browser reporting a selection change. */
+        selectionChange: () => {
+            (documentListeners.get("selectionchange") || []).slice().forEach(fn => fn({ type: "selectionchange" }));
         },
         /** Simulate a host -> page envelope arriving over the transport. */
         receive: message => {

@@ -778,14 +778,49 @@
     }
 
     /**
-     * Replaces the abbreviation and space at `loc` with `content` plus a space.
-     * @param {any} el @param {any} loc @param {{text: string, html: string | null}} content
-     * @returns {string | null} the mode used, or null when nothing was inserted
+     * Runs `fn` once the editor has seen a selection we just set: after the next
+     * selectionchange (whose handlers run first), or after 50 ms if none comes.
+     * @param {() => void} fn
      */
-    function replaceShortcut(el, loc, content) {
+    function afterSelectionSettles(fn) {
+        let done = false;
+        const run = () => {
+            if (done) return;
+            done = true;
+            document.removeEventListener("selectionchange", run, true);
+            setTimeout(fn, 0);
+        };
+        document.addEventListener("selectionchange", run, true);
+        setTimeout(run, 50);
+    }
+
+    /** @param {any} selection @param {any} loc */
+    const selectsShortcut = (selection, loc) => !!selection && selection.rangeCount > 0
+        && selection.anchorNode === loc.node && selection.focusNode === loc.node
+        && Math.min(selection.anchorOffset, selection.focusOffset) === loc.start
+        && Math.max(selection.anchorOffset, selection.focusOffset) === loc.end;
+
+    /** @param {any} el @param {string} mode */
+    const reportExpanded = (el, mode) => fire("tiro-text-shortcut-expanded", { mode, target: el });
+
+    /**
+     * Replaces the abbreviation and space at `loc` with `content` plus a space. Reports
+     * success through the tiro-text-shortcut-expanded event (no content: it can carry
+     * patient data).
+     * @param {any} el @param {any} loc @param {{text: string, html: string | null}} content
+     */
+    function applyShortcut(el, loc, content) {
         if (!el.isContentEditable) {
-            el.setSelectionRange(loc.start, loc.end);
-            return insertPlainTextInto(el, content.text + loc.term) ? "text" : null;
+            expandingShortcut = true;
+            try {
+                el.setSelectionRange(loc.start, loc.end);
+                if (insertPlainTextInto(el, content.text + loc.term)) reportExpanded(el, "text");
+            } catch (err) {
+                console.warn("[bridge] text shortcut expansion failed:", err);
+            } finally {
+                expandingShortcut = false;
+            }
+            return;
         }
 
         const selection = selectionOf(el);
@@ -795,33 +830,30 @@
         selection.removeAllRanges();
         selection.addRange(range);
 
-        // Always a paste first, plain text included: the editor's paste handler reads the
-        // selection we just set, whereas insertText may still see the old caret.
-        if (insertHtmlAtCaret(el, content.html, content.text)) {
-            // The space waits until the editor has committed the paste, or it is lost.
-            setTimeout(() => {
-                if (!el.isConnected) return;
-                expandingShortcut = true;
-                try { insertPlainTextInto(el, " "); } finally { expandingShortcut = false; }
-            }, 0);
-            return content.html ? "html" : "text";
-        }
-        return insertPlainTextInto(el, content.text + " ") ? "text" : null;
-    }
-
-    /** @param {any} el @param {any} loc @param {{text: string, html: string | null}} content */
-    function applyShortcut(el, loc, content) {
-        expandingShortcut = true;
-        let mode = null;
-        try {
-            mode = replaceShortcut(el, loc, content);
-        } catch (err) {
-            console.warn("[bridge] text shortcut expansion failed:", err);
-        } finally {
-            expandingShortcut = false;
-        }
-        // No content in the event: it can carry patient data.
-        if (mode) fire("tiro-text-shortcut-expanded", { mode, target: el });
+        // The editor keeps its own copy of the selection, refreshed on selectionchange. Paste
+        // before that and it inserts at the old caret, leaving the abbreviation in place.
+        afterSelectionSettles(() => {
+            if (!el.isConnected || !selectsShortcut(selectionOf(el), loc)) return;
+            expandingShortcut = true;
+            try {
+                // A paste, plain text included: the editor's paste handler replaces the selection.
+                if (insertHtmlAtCaret(el, content.html, content.text)) {
+                    reportExpanded(el, content.html ? "html" : "text");
+                    // The space waits until the editor has committed the paste, or it is lost.
+                    setTimeout(() => {
+                        if (!el.isConnected) return;
+                        expandingShortcut = true;
+                        try { insertPlainTextInto(el, " "); } finally { expandingShortcut = false; }
+                    }, 0);
+                } else if (insertPlainTextInto(el, content.text + " ")) {
+                    reportExpanded(el, "text");
+                }
+            } catch (err) {
+                console.warn("[bridge] text shortcut expansion failed:", err);
+            } finally {
+                expandingShortcut = false;
+            }
+        });
     }
 
     /** Deferred after the space lands; bails if the field lost focus meanwhile. @param {any} el */
