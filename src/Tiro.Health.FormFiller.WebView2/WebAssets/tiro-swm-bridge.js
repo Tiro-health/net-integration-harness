@@ -757,7 +757,12 @@
         // Always a paste first, plain text included: the editor's paste handler reads the
         // selection we just set, whereas insertText may still see the old caret.
         if (insertHtmlAtCaret(el, shortcut.html, shortcut.text)) {
-            insertPlainTextInto(el, " ");
+            // The space waits until the editor has committed the paste, or it is lost.
+            setTimeout(() => {
+                if (!el.isConnected) return;
+                expandingShortcut = true;
+                try { insertPlainTextInto(el, " "); } finally { expandingShortcut = false; }
+            }, 0);
             return { word, mode: shortcut.html ? "html" : "text" };
         }
         return insertPlainTextInto(el, shortcut.text + " ") ? { word, mode: "text" } : null;

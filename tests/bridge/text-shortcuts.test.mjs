@@ -245,6 +245,28 @@ test("in a rich-text field a plain snippet also goes in as a paste", async () =>
     assert.equal(h.fired("tiro-text-shortcut-expanded")[0].detail.mode, "text");
 });
 
+test("the space after a pasted snippet waits for the editor, and doesn't re-trigger", async () => {
+    const h = await bridge();
+    const { el } = contentEditable("µconc\u00a0", { consumesPaste: true });
+    deliver(h.window, "ui.form.configureTextShortcuts", {
+        shortcuts: [{ abbreviation: "µconc", text: "See µconc", html: "<p>See µconc</p>" }],
+    });
+    // Our own space must not expand the abbreviation the snippet ends with.
+    h.document.execCommand = (name, ui, value) => {
+        h.execCommands.push({ name, value });
+        h.type(el, value);
+        return true;
+    };
+    h.focus(el);
+
+    h.type(el);
+    assert.equal(h.execCommands.length, 0, "nothing yet: the expansion is deferred");
+    await settle();
+    await settle();
+
+    assert.deepEqual(h.execCommands.map(c => c.value), [" "], "one space, no second expansion");
+});
+
 test("a rich-text field that declines the paste gets the plain text", async () => {
     const h = await bridge();
     const { el } = contentEditable("µfu ");
