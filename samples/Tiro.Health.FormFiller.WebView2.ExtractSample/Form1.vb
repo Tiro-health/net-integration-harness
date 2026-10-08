@@ -19,9 +19,27 @@ Public Class Form1
     ' re-trigger on that same close.
     Private isClosingConfirmed As Boolean = False
 
+    ' Which right-click menu the form gets over a text field:
+    '
+    '  - True: the EHR draws it, as a WinForms ContextMenuStrip (see OnFormContextMenuOpening).
+    '    Any submenus, icons or styling, but the browser's own entries are gone — Copy, Paste and
+    '    spelling suggestions cannot be rebuilt from outside the browser. Ctrl+C / Ctrl+V still
+    '    work.
+    '  - False: WebView2 draws it, with the AddInsertItem entries below appended to its own.
+    '
+    ' Away from a text field the browser's own menu shows either way.
+    Private Const DrawMenuInHost As Boolean = True
+
+    ' Read by the host-drawn menu when an item is picked.
+    Private _patient As Patient
+
+    ' The host-drawn menu, rebuilt on every right-click. Kept so the previous one can be disposed.
+    Private _formMenu As ContextMenuStrip
+
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AddHandler TiroFormViewer.FormSubmitted, AddressOf HandleFormSubmitted
         AddHandler TiroFormViewer.CloseApplication, AddressOf HandleCloseApplication
+        AddHandler TiroFormViewer.ContextMenuOpening, AddressOf OnFormContextMenuOpening
 
         ' Serve the form page bundled with this sample (WebContent\index.html) instead of the
         ' viewer's built-in assets — the light-blue page makes it obvious the host is supplying
@@ -56,6 +74,7 @@ Public Class Form1
                 }
             }
         }
+        _patient = patient
 
         ' The right-click menu, host-side. The harness appends these to the embedded browser's
         ' own context menu, below its native entries. Because it is the browser's own menu, the
@@ -74,6 +93,9 @@ Public Class Form1
         '
         ' IsVisible = IsEditable on every item: over a checkbox or a read-only score there is
         ' nothing to insert into, so the item stays out of the menu rather than doing nothing.
+        '
+        ' With DrawMenuInHost on, these never show: over a text field the EHR draws its own menu,
+        ' and a click it handles skips ContextMenuItems.
         TiroFormViewer.AddInsertItem("Insert patient name",
                                      Function() patient.Name(0).Text,
                                      onResult:=AddressOf ShowInsertResult)
@@ -182,6 +204,57 @@ Public Class Form1
         End If
         Me.Text = "Extract sample — " & summary
     End Sub
+
+    ''' <summary>
+    ''' The form's right-click menu, drawn by the EHR. Inserting still lands at the caret: the
+    ''' menu takes focus out of the page, but the page remembers the field and caret the
+    ''' clinician right-clicked in.
+    ''' </summary>
+    Private Sub OnFormContextMenuOpening(sender As Object, e As TiroContextMenuOpeningEventArgs)
+        ' Only take over where there is something to insert into. Elsewhere — a checkbox, a
+        ' label, a selection to copy — the browser's own menu is the useful one.
+        If Not DrawMenuInHost OrElse Not e.Context.IsEditable Then Return
+        e.Handled = True
+
+        _formMenu?.Dispose()
+        _formMenu = New ContextMenuStrip()
+
+        Dim insertMenu As New ToolStripMenuItem("Insert")
+        insertMenu.DropDownItems.Add(InsertMenuItem("Patient name", Function() _patient.Name(0).Text))
+        insertMenu.DropDownItems.Add(InsertMenuItem("""No known drug allergies""", Function() "No known drug allergies."))
+
+        ' Submenus nest as deep as the EHR likes — it's a plain WinForms menu.
+        Dim conclusionMenu As New ToolStripMenuItem("Conclusion")
+        conclusionMenu.DropDownItems.Add(InsertMenuItem("Plain text", Function() TiroRtf.ToPlainText(ConclusionRtf)))
+        conclusionMenu.DropDownItems.Add(InsertMenuItem("Formatted",
+                                                        Function() TiroRtf.ToPlainText(ConclusionRtf),
+                                                        Function() TiroRtf.ToHtml(ConclusionRtf)))
+        insertMenu.DropDownItems.Add(conclusionMenu)
+
+        _formMenu.Items.Add(insertMenu)
+        _formMenu.Show(TiroFormViewer, e.Location)
+    End Sub
+
+    ''' <summary>
+    ''' One menu item that inserts at the caret. The content is resolved when the item is
+    ''' picked, not when the menu is built.
+    ''' </summary>
+    Private Function InsertMenuItem(label As String, text As Func(Of String), Optional html As Func(Of String) = Nothing) As ToolStripMenuItem
+        Dim item As New ToolStripMenuItem(label)
+        AddHandler item.Click,
+            Async Sub(s As Object, args As EventArgs)
+                Try
+                    Dim result As TextInsertResult =
+                        Await TiroFormViewer.InsertContentAsync(text(), If(html Is Nothing, Nothing, html()))
+                    ShowInsertResult(result)
+                Catch ex As Exception
+                    ' An Async Sub has no caller to report to; catch here so a failed insert
+                    ' can't crash the sample.
+                    Me.Text = "Extract sample — insert failed: " & ex.Message
+                End Try
+            End Sub
+        Return item
+    End Function
 
     ''' <summary>
     ''' The conclusion as the EHR holds it: RTF. Real integrations read this from their own

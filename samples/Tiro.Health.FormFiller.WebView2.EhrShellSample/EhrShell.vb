@@ -1,6 +1,5 @@
 Imports System.IO
 Imports Hl7.Fhir.Model
-Imports Tiro.Health.FormFiller.WebView2
 Imports Tiro.Health.FormFiller.WebView2.Fhir.R5
 Imports Tiro.Health.SmartWebMessaging.Events
 
@@ -31,10 +30,6 @@ Public Class EhrShell
     Private _activeEncounter As Encounter
     Private _activeEncounterLabel As String
     Private _activeTemplate As TemplateOption
-
-    ' The EHR's own right-click menu for the form, rebuilt on every right-click (see
-    ' OnFormContextMenuOpening). Kept so the previous one can be disposed.
-    Private _formMenu As ContextMenuStrip
 
     Private Sub EhrShell_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         UserLabel.Text = $"Logged in as: {_practitioner.Name.First.Text}"
@@ -250,8 +245,6 @@ Public Class EhrShell
         _viewer.WebContentFolder = Path.Combine(AppContext.BaseDirectory, "WebContent", "Form")
         AddHandler _viewer.FormSubmitted, AddressOf OnFormSubmitted
         AddHandler _viewer.CloseApplication, AddressOf OnCloseApplication
-        ' The EHR draws the form's right-click menu itself. See OnFormContextMenuOpening.
-        AddHandler _viewer.ContextMenuOpening, AddressOf OnFormContextMenuOpening
 
         ' Show the Form tab (it lives unparented when no session is alive) and
         ' set the context banner so the user sees what they're filling out.
@@ -335,72 +328,7 @@ Public Class EhrShell
         UpdateNewReportButton()
     End Sub
 
-    ' ------------------------------------------------------------
-    ' The form's right-click menu, drawn by the EHR
-    ' ------------------------------------------------------------
-
-    ' Two ways to customise the form's right-click menu:
-    '
-    '  - ContextMenuItems / BuildContextMenu (the Extract sample) add to WebView2's own menu.
-    '    Copy, Paste and spelling suggestions stay.
-    '  - ContextMenuOpening (here) replaces the menu with a WinForms ContextMenuStrip: any
-    '    submenus, icons, shortcut text or styling the EHR wants. The browser's own entries
-    '    are gone, though — Copy, Paste and spelling suggestions cannot be rebuilt from outside
-    '    the browser. Ctrl+C / Ctrl+V still work.
-    '
-    ' Inserting still lands at the caret: the menu takes focus out of the page, but the page
-    ' remembers the field and caret the clinician right-clicked in.
-    Private Sub OnFormContextMenuOpening(sender As Object, e As TiroContextMenuOpeningEventArgs)
-        ' Only take over where there is something to insert into. Elsewhere — a checkbox, a
-        ' label, a selection to copy — the browser's own menu is the useful one.
-        If Not e.Context.IsEditable OrElse _activePatient Is Nothing Then Return
-        e.Handled = True
-
-        _formMenu?.Dispose()
-        _formMenu = New ContextMenuStrip()
-
-        Dim patient = _activePatient
-        Dim insertMenu As New ToolStripMenuItem("Insert")
-        insertMenu.DropDownItems.Add(InsertMenuItem("Patient name", Function() patient.Name.First.Text))
-        insertMenu.DropDownItems.Add(InsertMenuItem("Date of birth", Function() patient.BirthDate))
-        insertMenu.DropDownItems.Add(InsertMenuItem("Encounter", Function() _activeEncounterLabel))
-        insertMenu.DropDownItems.Add(InsertMenuItem("Author", Function() _practitioner.Name.First.Text))
-
-        ' Submenus nest as deep as the EHR likes — it's a plain WinForms menu.
-        Dim phrases As New ToolStripMenuItem("Standard phrases")
-        Dim allergies As New ToolStripMenuItem("Allergies")
-        allergies.DropDownItems.Add(InsertMenuItem("No known drug allergies", Function() "No known drug allergies."))
-        allergies.DropDownItems.Add(InsertMenuItem("Penicillin allergy", Function() "Allergic to penicillin (rash)."))
-        phrases.DropDownItems.Add(allergies)
-        phrases.DropDownItems.Add(InsertMenuItem("Follow-up in 6 weeks", Function() "Follow-up consultation in 6 weeks."))
-
-        _formMenu.Items.Add(insertMenu)
-        _formMenu.Items.Add(phrases)
-        _formMenu.Show(_viewer, e.Location)
-    End Sub
-
-    ' One menu item that inserts at the caret. The text is resolved when the item is picked,
-    ' not when the menu is built.
-    Private Function InsertMenuItem(label As String, text As Func(Of String)) As ToolStripMenuItem
-        Dim item As New ToolStripMenuItem(label)
-        AddHandler item.Click, Async Sub(s, args)
-                                   Dim viewer = _viewer
-                                   If viewer Is Nothing Then Return
-                                   Try
-                                       Dim result = Await viewer.InsertContentAsync(text())
-                                       If Not result.Inserted Then ContextLabel.Text = "Click in a text field first."
-                                   Catch ex As Exception
-                                       ' An Async Sub has no caller to report to; catch here so
-                                       ' a failed insert can't crash the EHR.
-                                       ContextLabel.Text = $"Insert failed: {ex.Message}"
-                                   End Try
-                               End Sub
-        Return item
-    End Function
-
     Private Sub DisposeViewer()
-        _formMenu?.Dispose()
-        _formMenu = Nothing
         If _viewer Is Nothing Then Return
         FormTab.Controls.Remove(_viewer)
         _viewer.Dispose()

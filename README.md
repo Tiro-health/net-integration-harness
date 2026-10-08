@@ -1068,8 +1068,9 @@ Your items insert with `InsertContentAsync`, as anywhere else in the EHR's UI.
 - `e.Context` is the same `TiroContextMenuContext` the other menu APIs get: `IsEditable` and
   `SelectionText`.
 
-Worked example: the EhrShell sample's `OnFormContextMenuOpening`, with an **Insert** submenu and
-nested **Standard phrases**.
+Worked example: the Extract sample's `OnFormContextMenuOpening`, with an **Insert** submenu and
+a nested **Conclusion** submenu. Its `DrawMenuInHost` constant switches back to the WebView2-drawn
+menu for comparison.
 
 ### Frontend version compatibility
 
