@@ -661,6 +661,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
   - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` and `TiroRtf.ToHtml` for both renditions of an RTF document
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's content, resolved per click, inserted at the caret; see [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu)
+  - Or a menu the EHR draws itself — a WinForms `ContextMenuStrip` with any submenus, icons or styling — via the `ContextMenuOpening` event; see [Drawing the menu yourself](#drawing-the-menu-yourself)
   - Full control of that menu via `BuildContextMenu`, which hands over the browser's own entries (`TiroMenuEntry`) alongside the host's and renders back whatever list it returns — reorder, hide **Inspect element**, interleave — while WebView2 still draws the menu, so the caret survives; see [Taking over the whole menu](#taking-over-the-whole-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
@@ -997,9 +998,9 @@ TiroFormViewer.BuildContextMenu =
     End Function
 ```
 
-The menu is still drawn by WebView2 — only reordered and filtered. That matters: suppressing it
-to show a WinForms `ContextMenuStrip` instead would move focus out of the page and lose the caret,
-and inserting at the caret is the whole feature.
+The menu is still drawn by WebView2 — only reordered and filtered — so Copy, Paste and spelling
+suggestions keep working. To draw the menu yourself instead, see
+[Drawing the menu yourself](#drawing-the-menu-yourself).
 
 **What you can and can't do to an entry:**
 
@@ -1035,6 +1036,40 @@ standard layout. Throw, and you also get the standard layout, with the exception
 clinician mid-consult keeps Copy and Paste even if the EHR's layout code is broken. Both
 `ContextMenuItems` and `BuildContextMenu` work together: the former arrives as `menu.HostItems`,
 already filtered by each item's `IsVisible`.
+
+#### Drawing the menu yourself
+
+When WebView2's menu can't show what you need — icons, deep submenus, the EHR's own styling —
+handle `ContextMenuOpening`, set `Handled`, and show any WinForms menu at `e.Location`:
+
+```vb
+AddHandler TiroFormViewer.ContextMenuOpening,
+    Sub(sender, e)
+        If Not e.Context.IsEditable Then Return     ' elsewhere, keep the browser's menu
+        e.Handled = True
+        myContextMenuStrip.Show(TiroFormViewer, e.Location)
+    End Sub
+```
+
+Your items insert with `InsertContentAsync`, as anywhere else in the EHR's UI.
+
+- **The browser's menu goes entirely.** Copy, Paste and spelling suggestions disappear, and they
+  cannot be rebuilt from outside the browser. Ctrl+C and Ctrl+V still work. That is why the
+  example only takes over over editable fields: elsewhere — a selection to copy, a checkbox —
+  the browser's menu is the useful one. `ContextMenuItems` and `BuildContextMenu` are not
+  applied to a click you handle.
+- **The caret survives.** Your menu takes focus out of the page, but the page remembers the field
+  and caret that were right-clicked and inserts there — the same mechanism that serves a toolbar
+  button elsewhere in the EHR.
+- **Decide synchronously.** The event is raised inside the browser's own, on the UI thread.
+  `ContextMenuStrip.Show` returns at once, which is all a handler needs.
+- **A handler that throws** is reported to telemetry and the browser's menu is shown — unless the
+  handler had already set `Handled`, so it never appears on top of your own.
+- `e.Context` is the same `TiroContextMenuContext` the other menu APIs get: `IsEditable` and
+  `SelectionText`.
+
+Worked example: the EhrShell sample's `OnFormContextMenuOpening`, with an **Insert** submenu and
+nested **Standard phrases**.
 
 ### Frontend version compatibility
 

@@ -432,5 +432,79 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
             Assert.AreNotSame(TiroMenuEntry.CreateSeparator(), TiroMenuEntry.CreateSeparator());
             Assert.AreEqual(TiroMenuEntryKind.Separator, TiroMenuEntry.CreateSeparator().Kind);
         }
+
+        // ---- The host draws its own menu: ContextMenuOpening ---------------------------------------
+
+        [TestMethod]
+        public async Task WithoutAHandlerTheBrowserKeepsItsMenu()
+        {
+            await Initialized();
+
+            Assert.IsNotNull(_browser.ContextMenuInterceptor, "wired at init, like the builder");
+            Assert.IsFalse(_browser.InterceptContextMenu());
+        }
+
+        [TestMethod]
+        public async Task AnUnhandledEventLeavesTheBrowsersMenu()
+        {
+            await Initialized();
+            var raised = 0;
+            _viewer.ContextMenuOpening += (s, e) => raised++;
+
+            Assert.IsFalse(_browser.InterceptContextMenu());
+            Assert.AreEqual(1, raised);
+        }
+
+        [TestMethod]
+        public async Task AHandledEventSuppressesTheBrowsersMenu()
+        {
+            await Initialized();
+            TiroContextMenuOpeningEventArgs seen = null;
+            _viewer.ContextMenuOpening += (s, e) => { seen = e; e.Handled = true; };
+
+            Assert.IsTrue(_browser.InterceptContextMenu(isEditable: false, selectionText: "dyspnoea", x: 40, y: 25));
+
+            Assert.IsFalse(seen.Context.IsEditable);
+            Assert.AreEqual("dyspnoea", seen.Context.SelectionText);
+            Assert.AreEqual(new System.Drawing.Point(40, 25), seen.Location,
+                "without window handles the browser's coordinates pass through unchanged");
+        }
+
+        [TestMethod]
+        public async Task AThrowingHandlerIsReportedAndTheBrowsersMenuShown()
+        {
+            await Initialized();
+            _viewer.ContextMenuOpening += (s, e) => throw new InvalidOperationException("broken handler");
+
+            Assert.IsFalse(_browser.InterceptContextMenu(), "Copy and Paste survive a broken handler");
+            Assert.AreEqual(1, _sink.CapturedExceptions.Count);
+        }
+
+        [TestMethod]
+        public async Task AHandlerThatThrowsAfterHandlingKeepsItsMenu()
+        {
+            await Initialized();
+            _viewer.ContextMenuOpening += (s, e) =>
+            {
+                e.Handled = true;
+                throw new InvalidOperationException("failed after showing its menu");
+            };
+
+            Assert.IsTrue(_browser.InterceptContextMenu(),
+                "the host's menu may already be open; the browser's must not appear on top of it");
+            Assert.AreEqual(1, _sink.CapturedExceptions.Count);
+        }
+
+        [TestMethod]
+        public async Task ADisposedViewerNeverIntercepts()
+        {
+            await Initialized();
+            _viewer.ContextMenuOpening += (s, e) => e.Handled = true;
+            var intercept = _browser.ContextMenuInterceptor;
+
+            _viewer.Dispose();
+
+            Assert.IsFalse(intercept(new TiroContextMenuContext(true, null), System.Drawing.Point.Empty));
+        }
     }
 }

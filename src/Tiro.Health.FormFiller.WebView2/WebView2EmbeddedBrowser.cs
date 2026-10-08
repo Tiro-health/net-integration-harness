@@ -15,7 +15,7 @@ namespace Tiro.Health.FormFiller.WebView2
     /// served from <see cref="TrustedMicrophoneOriginHost"/>; other origins fall through
     /// to WebView2's default-deny behaviour.
     /// </summary>
-    public sealed class WebView2EmbeddedBrowser : IEmbeddedBrowser, IContextMenuCapableBrowser
+    public sealed class WebView2EmbeddedBrowser : IEmbeddedBrowser, IContextMenuCapableBrowser, IContextMenuInterceptingBrowser
     {
         // Must match TiroFormViewer.VirtualHostName — that's the host the viewer maps to
         // its content folder and navigates to. Hardcoded both sides because there is one
@@ -156,17 +156,21 @@ namespace Tiro.Health.FormFiller.WebView2
         /// <inheritdoc />
         public Func<TiroContextMenuContext, IReadOnlyList<TiroMenuEntry>, IReadOnlyList<TiroMenuEntry>> ContextMenuBuilder { get; set; }
 
+        /// <inheritdoc />
+        public Func<TiroContextMenuContext, System.Drawing.Point, bool> ContextMenuInterceptor { get; set; }
+
         /// <summary>
         /// Hands WebView2's own entries to the builder and renders back whatever menu it
         /// returns. <c>Handled</c> is left false on purpose: WebView2 then shows its native menu
         /// — reordered and filtered, but still its own — so the click never leaves the page, the
-        /// caret stays where the user right-clicked, and Ctrl+V still pastes there. Suppressing
-        /// the menu to show a WinForms one instead would take focus out of the browser and lose
-        /// that, which is why the host composes a list rather than drawing a menu.
+        /// caret stays where the user right-clicked, and Ctrl+V still pastes there. A host that
+        /// wants to draw its own menu instead goes through <see cref="ContextMenuInterceptor"/>,
+        /// which is asked first.
         /// </summary>
         private void OnContextMenuRequested(object sender, CoreWebView2ContextMenuRequestedEventArgs e)
         {
             if (_disposed) return;
+            if (Intercepted(e)) return;
             var builder = ContextMenuBuilder;
             if (builder == null) return;
 
@@ -189,11 +193,7 @@ namespace Tiro.Health.FormFiller.WebView2
                 IReadOnlyList<TiroMenuEntry> final;
                 try
                 {
-                    var target = e.ContextMenuTarget;
-                    var context = new TiroContextMenuContext(
-                        target != null && target.IsEditable,
-                        target != null && target.HasSelection ? target.SelectionText : null);
-                    final = builder(context, offered);
+                    final = builder(ContextOf(e), offered);
                 }
                 catch (Exception ex)
                 {
@@ -222,6 +222,39 @@ namespace Tiro.Health.FormFiller.WebView2
             {
                 ClearActionsNotUsedInCurrentMenu();
             }
+        }
+
+        /// <summary>
+        /// Offers the click to <see cref="ContextMenuInterceptor"/>, and suppresses the menu when
+        /// the host takes it over. Setting <c>Handled</c> is WebView2's documented way for an app
+        /// to show its own menu: nothing is drawn, and the page keeps the focus and caret the
+        /// right-click gave it until the host's menu takes focus.
+        /// </summary>
+        private bool Intercepted(CoreWebView2ContextMenuRequestedEventArgs e)
+        {
+            var interceptor = ContextMenuInterceptor;
+            if (interceptor == null) return false;
+            try
+            {
+                if (!interceptor(ContextOf(e), e.Location)) return false;
+                e.Handled = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // The interceptor is the viewer's, which already guards the host's handler. If
+                // something still escapes, the browser's own menu is the safe outcome.
+                Debug.Fail("Context menu interceptor threw: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static TiroContextMenuContext ContextOf(CoreWebView2ContextMenuRequestedEventArgs e)
+        {
+            var target = e.ContextMenuTarget;
+            return new TiroContextMenuContext(
+                target != null && target.IsEditable,
+                target != null && target.HasSelection ? target.SelectionText : null);
         }
 
         private void Render(
@@ -397,6 +430,7 @@ namespace Tiro.Health.FormFiller.WebView2
                 _webView2.CoreWebView2.ContextMenuRequested -= OnContextMenuRequested;
             }
             ContextMenuBuilder = null;
+            ContextMenuInterceptor = null;
             // Clearing the dictionary alone would drop only this side of the reference: the
             // native item keeps its event sink, which keeps the action, which closes over the
             // viewer and the last click's selected clinical text. Detach each one first.

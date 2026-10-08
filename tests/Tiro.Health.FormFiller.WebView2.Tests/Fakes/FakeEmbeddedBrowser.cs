@@ -10,7 +10,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
     /// (posted messages, init scripts, virtual host mappings, navigations) and exposes
     /// <see cref="RaiseMessageReceived"/> so tests can simulate inbound page→host messages.
     /// </summary>
-    public sealed class FakeEmbeddedBrowser : IEmbeddedBrowser, IContextMenuCapableBrowser
+    public sealed class FakeEmbeddedBrowser : IEmbeddedBrowser, IContextMenuCapableBrowser, IContextMenuInterceptingBrowser
     {
         private readonly Control _control = new Control();
 
@@ -41,6 +41,16 @@ namespace Tiro.Health.FormFiller.WebView2.Tests.Fakes
         public static TiroMenuEntry BrowserItem(
             string name, string label = null, TiroMenuEntryKind kind = TiroMenuEntryKind.Command, bool isEnabled = true)
             => new TiroMenuEntry(name, label ?? name, kind, isEnabled, new object());
+
+        public Func<TiroContextMenuContext, System.Drawing.Point, bool> ContextMenuInterceptor { get; set; }
+
+        /// <summary>
+        /// Whether a right-click at <paramref name="x"/>,<paramref name="y"/> would be taken over
+        /// by the host — the browser's menu suppressed.
+        /// </summary>
+        public bool InterceptContextMenu(bool isEditable = true, string selectionText = null, int x = 0, int y = 0)
+            => ContextMenuInterceptor != null
+               && ContextMenuInterceptor(new TiroContextMenuContext(isEditable, selectionText), new System.Drawing.Point(x, y));
 
         /// <summary>The menu a right-click on the given target would show.</summary>
         public IReadOnlyList<TiroMenuEntry> RequestContextMenu(bool isEditable = true, string selectionText = null)

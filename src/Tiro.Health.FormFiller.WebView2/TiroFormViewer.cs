@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Collections.Generic;
 using System.Globalization;
 using System.ComponentModel;
+using System.Drawing;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -141,6 +142,39 @@ namespace Tiro.Health.FormFiller.WebView2
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public Func<TiroContextMenuRequest, IReadOnlyList<TiroMenuEntry>> BuildContextMenu { get; set; }
+
+        /// <summary>
+        /// Raised on every right-click in the form, before the embedded browser shows its menu.
+        /// Set <see cref="TiroContextMenuOpeningEventArgs.Handled"/> and show a menu of your own
+        /// — a WinForms <c>ContextMenuStrip</c> with any submenus, icons or styling — at
+        /// <see cref="TiroContextMenuOpeningEventArgs.Location"/>. Leave it unhandled for the
+        /// browser's menu, with <see cref="ContextMenuItems"/> and <see cref="BuildContextMenu"/>
+        /// applied as usual.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Handling it replaces the whole menu. The browser's entries go with it — Copy, Paste,
+        /// spelling suggestions — and cannot be reproduced from outside the browser, so prefer
+        /// <see cref="BuildContextMenu"/> unless you need something its menu cannot draw.
+        /// </para>
+        /// <para>
+        /// <see cref="InsertContentAsync"/> still works from your menu's items. Your menu takes
+        /// focus out of the page, but the page remembers the field and caret the clinician
+        /// right-clicked and inserts there.
+        /// </para>
+        /// <para>
+        /// Raised on the UI thread inside the browser's context-menu event, so decide
+        /// synchronously; <c>ContextMenuStrip.Show</c> returns at once, which is all a handler
+        /// needs. A handler that throws is reported to telemetry, and the browser's menu is
+        /// shown unless the handler had already set <c>Handled</c>.
+        /// </para>
+        /// <para>
+        /// Requires an <see cref="IEmbeddedBrowser"/> that implements
+        /// <see cref="IContextMenuInterceptingBrowser"/> (WebView2 does); with anything else the
+        /// event is never raised.
+        /// </para>
+        /// </remarks>
+        public event EventHandler<TiroContextMenuOpeningEventArgs> ContextMenuOpening;
         /// <summary>
         /// Adds a right-click item that inserts content at the caret, and returns it.
         /// </summary>
@@ -550,6 +584,8 @@ namespace Tiro.Health.FormFiller.WebView2
             // holds something.
             if (_browser is IContextMenuCapableBrowser contextMenuBrowser)
                 contextMenuBrowser.ContextMenuBuilder = ComposeContextMenu;
+            if (_browser is IContextMenuInterceptingBrowser interceptingBrowser)
+                interceptingBrowser.ContextMenuInterceptor = InterceptContextMenu;
             _browser.Control.Dock = DockStyle.Fill;
             this.Controls.Add(_browser.Control);
 
@@ -1434,6 +1470,51 @@ namespace Tiro.Health.FormFiller.WebView2
             }
             catch (ObjectDisposedException) { /* lost the race with Dispose */ }
             catch (InvalidOperationException) { /* handle went away between the check and the call */ }
+        }
+
+        /// <summary>
+        /// Raises <see cref="ContextMenuOpening"/> for one right-click, and reports whether the
+        /// host took the menu over. Never throws: it runs inside the browser's event.
+        /// </summary>
+        private bool InterceptContextMenu(TiroContextMenuContext context, Point browserLocation)
+        {
+            if (State == TiroFormViewerState.Disposed) return false;
+            var handler = ContextMenuOpening;
+            if (handler == null) return false;
+
+            var args = new TiroContextMenuOpeningEventArgs(context, ToViewerClient(browserLocation));
+            try
+            {
+                handler(this, args);
+            }
+            catch (Exception ex)
+            {
+                // Handled is still honoured: a handler that showed its menu and then threw
+                // would otherwise get the browser's menu on top of its own.
+                _telemetry.CaptureException(ex);
+            }
+            return args.Handled;
+        }
+
+        /// <summary>
+        /// The browser control fills the viewer, so the two coordinate spaces usually coincide;
+        /// converting through the screen keeps it right if a subclass ever lays it out
+        /// differently. Without handles there is no screen to convert through.
+        /// </summary>
+        private Point ToViewerClient(Point browserLocation)
+        {
+            var control = _browser.Control;
+            if (control == null || control == this || !IsHandleCreated || !control.IsHandleCreated) return browserLocation;
+            try
+            {
+                return PointToClient(control.PointToScreen(browserLocation));
+            }
+            catch (Exception)
+            {
+                // A handle torn down between the check and the call. The browser's own
+                // coordinates are the best remaining answer.
+                return browserLocation;
+            }
         }
 
         /// <summary>
