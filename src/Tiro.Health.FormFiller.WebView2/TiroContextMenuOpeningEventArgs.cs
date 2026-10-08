@@ -27,8 +27,7 @@ namespace Tiro.Health.FormFiller.WebView2
 
         /// <summary>
         /// Set to true to suppress the browser's menu entirely: no Copy, no Paste, no spelling
-        /// suggestions, and <see cref="TiroFormViewer{TResource,TQR,TOO}.BuildContextMenu"/>
-        /// is not called. Leave false to let the browser show its menu as usual.
+        /// suggestions. Leave false to let the browser show its menu as usual.
         /// </summary>
         public bool Handled { get; set; }
     }

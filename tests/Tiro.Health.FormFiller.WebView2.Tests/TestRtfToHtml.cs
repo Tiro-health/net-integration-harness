@@ -191,7 +191,7 @@ namespace Tiro.Health.FormFiller.WebView2.Tests
         [TestMethod]
         public void TheOutputIsAFragment_NotAWholeDocument()
         {
-            // AddInsertItem and the page both expect body-level markup.
+            // InsertContentAsync and the page both expect body-level markup.
             var html = TiroRtf.ToHtml(Preamble + @"text\par}");
 
             Assert.IsFalse(html.Contains("<html"), "no document wrapper");

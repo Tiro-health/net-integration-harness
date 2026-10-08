@@ -659,10 +659,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Optional consumer-supplied `WebContentFolder` for hosting your own `index.html`; the shipped one is a working sample with a visible banner prompting integrators to override it for production
   - Host-configured `<tiro-form-filler>` endpoints via `SdcEndpointAddress` / `DataEndpointAddress`; the bridge applies them on the page so the .NET host and embedded JS always agree on which FHIR servers to hit
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
-  - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` and `TiroRtf.ToHtml` for both renditions of an RTF document
-  - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's content, resolved per click, inserted at the caret; see [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu)
-  - Or a menu the EHR draws itself — a WinForms `ContextMenuStrip` with any submenus, icons or styling — via the `ContextMenuOpening` event; see [Drawing the menu yourself](#drawing-the-menu-yourself)
-  - Full control of that menu via `BuildContextMenu`, which hands over the browser's own entries (`TiroMenuEntry`) alongside the host's and renders back whatever list it returns — reorder, hide **Inspect element**, interleave — while WebView2 still draws the menu, so the caret survives; see [Taking over the whole menu](#taking-over-the-whole-menu)
+  - The form's right-click menu drawn by the EHR — a WinForms `ContextMenuStrip` with any submenus, icons or styling — via the `ContextMenuOpening` event, with `InsertContentAsync` putting content at the caret, plus `TiroRtf.ToPlainText` and `TiroRtf.ToHtml` for both renditions of an RTF document; see [The form's right-click menu](#the-forms-right-click-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
 ### `Tiro.Health.FormFiller.WebView2.Fhir.R5` / `Tiro.Health.FormFiller.WebView2.Fhir.R4`
@@ -752,7 +749,7 @@ Drain `_pending` on app exit (`Await Task.WhenAll(_pending)` with a timeout) so 
 WinForms demos.
 
 - **`Sample`** — single-form, single-patient demo bound to FHIR **R5**. The smallest possible "see the API working" reference: native Submit button, default `index.html`, no persistence. Shows the submitted QR's XHTML narrative (`Text.Div`) in a `MessageBox` — for a richer rendering or the plain-text alternative-format extension, see the `EhrShellSample`'s `QuestionnaireResponseHelper`.
-- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows it section by section — each `Section.Title` with its `Section.Text.Div` flattened to text — in a `MessageBox`. The form is a pathology report whose template carries a Composition blueprint, so the sections are Macroscopie, Microscopie and Conclusie; an EHR would file each into its own field. (The server never sets `Composition.Text`; the joined text is `QuestionnaireResponse.Text`, which the plain `Sample` shows.) Falls back to a Bundle summary if there is no Composition — a template version without a blueprint, or a definition-based questionnaire extracting `Observation`s. Its `WebContent/index.html` also shows the **Magic Clipboard** — a `<tiro-magic-clipboard>` pane beside the form that autofills it from pasted clinical notes via SDC `$populate`, with no host-side wiring at all. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard). `Form1_Load` adds the host-side counterpart: four **right-click menu items** that insert a configured snippet at the caret — one of them starting from RTF, as a real EHR would. See [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu).
+- **`ExtractSample`** — same shape as `Sample`, but instead of showing the response narrative it demonstrates the **SDC `$extract` client**. On submit it constructs an `SdcClient` from the viewer's `SdcEndpointAddress` (so the extract targets the same SDC server the form rendered against), runs `$extract` over the completed QR to get the transaction `Bundle` of structured resources, pulls the `Composition` out of the Bundle, and shows it section by section — each `Section.Title` with its `Section.Text.Div` flattened to text — in a `MessageBox`. The form is a pathology report whose template carries a Composition blueprint, so the sections are Macroscopie, Microscopie and Conclusie; an EHR would file each into its own field. (The server never sets `Composition.Text`; the joined text is `QuestionnaireResponse.Text`, which the plain `Sample` shows.) Falls back to a Bundle summary if there is no Composition — a template version without a blueprint, or a definition-based questionnaire extracting `Observation`s. Its `WebContent/index.html` also shows the **Magic Clipboard** — a `<tiro-magic-clipboard>` pane beside the form that autofills it from pasted clinical notes via SDC `$populate`, with no host-side wiring at all. See [AI autofill with the Magic Clipboard](#ai-autofill-with-the-magic-clipboard). `OnFormContextMenuOpening` adds the host-side counterpart: a **right-click menu** the EHR draws itself, whose items insert a configured snippet at the caret — two of them starting from RTF, as a real EHR would. See [The form's right-click menu](#the-forms-right-click-menu).
 - **`EhrShellSample`** — dummy EHR shell bound to FHIR **R5**. Demonstrates the integration patterns a real EHR is going to need:
   - **Practitioner identity** (top status strip) passed through as the `author` in `LaunchContext`.
   - **Patient / encounter / template selection** — three hardcoded patients with their own encounters in the left sidebar; three canonical templates verified live on the default SDC server, picked via a modal `TemplatePickerDialog` from the **+ New report** button.
@@ -828,25 +825,60 @@ Unlike `<tiro-form-filler>`, the bridge does **not** wire it: it's page-owned, s
 
 Worked example: `samples/Tiro.Health.FormFiller.WebView2.ExtractSample/WebContent/index.html` — the clipboard in the left pane (dictation on), the form on the right, a status line driven by those events, and the host side (`Form1.vb`) untouched apart from a comment.
 
-### Host snippets in the form's right-click menu
+### The form's right-click menu
 
-The EHR offers labelled entries in the form's context menu. Clicking one puts its content into
-the field the clinician right-clicked, at the caret — one action, and nothing goes near the
-Windows clipboard:
+The EHR draws the form's right-click menu itself, as an ordinary WinForms `ContextMenuStrip`, and
+its items put content into the field the clinician right-clicked, at the caret — one action, and
+nothing goes near the Windows clipboard. Handle `ContextMenuOpening`, set `Handled`, and show the
+menu at `e.Location`:
 
 ```vb
-' In Form_Load, or wherever the EHR knows its data.
-TiroFormViewer.AddInsertItem("Insert patient name",
-                             Function() patient.Name(0).Text)
+Private _formMenu As ContextMenuStrip
 
-TiroFormViewer.AddInsertItem("Insert conclusion",
-                             Function() TiroRtf.ToPlainText(conclusionRtf),   ' required
-                             Function() YourConverter(conclusionRtf),         ' optional HTML
-                             onResult:=Sub(r) If Not r.Inserted Then StatusLabel.Text = "Click in a field first")
+Private Sub OnFormContextMenuOpening(sender As Object, e As TiroContextMenuOpeningEventArgs) _
+        Handles TiroFormViewer.ContextMenuOpening
+    If Not e.Context.IsEditable Then Return     ' elsewhere, keep the browser's menu
+    e.Handled = True
+
+    _formMenu?.Dispose()
+    _formMenu = New ContextMenuStrip()
+    Dim insertMenu As New ToolStripMenuItem("Insert")
+    Dim patientName As ToolStripItem = insertMenu.DropDownItems.Add("Patient name")
+    AddHandler patientName.Click,
+        Async Sub(s As Object, args As EventArgs)
+            Try
+                Dim result As TextInsertResult = Await TiroFormViewer.InsertContentAsync(patient.Name(0).Text)
+                If Not result.Inserted Then StatusLabel.Text = "Click in a field first"
+            Catch ex As Exception
+                StatusLabel.Text = "Insert failed: " & ex.Message
+            End Try
+        End Sub
+    _formMenu.Items.Add(insertMenu)
+    _formMenu.Show(TiroFormViewer, e.Location)
+End Sub
 ```
 
-Right-click inside the form and the items appear below WebView2's own entries, separated from
-them.
+- **It is the EHR's menu.** Submenus, icons, shortcut text, styling, items built from the EHR's
+  own configuration on every right-click — whatever WinForms can draw.
+- **The browser's menu goes entirely.** Copy, Paste and spelling suggestions disappear, and they
+  cannot be rebuilt from outside the browser. Ctrl+C and Ctrl+V still work. That is why the
+  example only takes over over editable fields: elsewhere — a selection to copy, a checkbox —
+  the browser's menu is the useful one, and leaving the event unhandled shows it.
+- **The caret survives.** Your menu takes focus out of the page, but the page remembers the field
+  and caret that were right-clicked and inserts there — the same mechanism that serves a toolbar
+  button elsewhere in the EHR.
+- **Decide synchronously.** The event is raised inside the browser's own, on the UI thread.
+  `ContextMenuStrip.Show` returns at once, which is all a handler needs.
+- **A handler that throws** is reported to telemetry and the browser's menu is shown — unless the
+  handler had already set `Handled`, so it never appears on top of your own.
+- `e.Context` carries `IsEditable` (was the click in something typeable?) and `SelectionText`
+  (what the user had selected — useful for a "look up this term" item, and clinical content, so
+  treat it accordingly).
+- **Catch in an `Async Sub` click handler.** It has no caller to report to, so an insert that
+  fails (the page didn't answer in time, the viewer was disposed) would otherwise escape.
+
+`InsertContentAsync(text, html)` takes the plain text, required, and optionally an HTML fragment
+for content whose formatting matters.
 
 **How the content gets in.** Two mechanisms, picked per click:
 
@@ -867,7 +899,7 @@ target: there is no linkId to address, and the host needs no knowledge of the qu
 structure.
 
 **The outcome is measured, not assumed.** The editor calls `preventDefault()` on a paste it
-handles, so the page can tell whether the HTML actually landed. `onResult` receives a
+handles, so the page can tell whether the HTML actually landed. `InsertContentAsync` returns a
 `TextInsertResult`:
 
 | | |
@@ -886,62 +918,12 @@ reads the value back rather than assuming the write stuck. A controlled componen
 it is reported as not inserted, so the EHR is never told an answer landed when the next render
 will drop it.
 
-**Configuring from the EHR.** `ContextMenuItems` is a plain `IList` you fill in code, and the
-harness reads it *on every right-click* — so nothing is baked in at startup:
-
-- Build it from the EHR's own configuration (a settings table, a per-department list, a user's
-  saved phrases) with an ordinary loop; the harness never parses config of its own.
-- Add, remove or relabel items whenever you like — when the patient changes, when a report
-  reaches a state that makes a snippet meaningful.
-- The **content** is resolved at click time. Both parameters are `Func(Of String)`, not strings,
-  so a lambda closing over the EHR's current state always inserts what is current.
-- `IsVisible` decides per click, from a `TiroContextMenuContext` carrying `IsEditable` (was the
-  click in something typeable?) and `SelectionText` (what the user had selected — useful for a
-  "look up this term" item, and clinical content, so treat it accordingly).
-
-- `IsEnabled` decides per click too, but greys the item instead of hiding it — the better choice
-  when its absence would read as a broken build ("Insert conclusion" missing) rather than as
-  "not applicable here".
-
-For anything other than inserting, construct the item directly: `New TiroContextMenuItem(label,
-action)`, where the action is `Action`, `Action(Of TiroContextMenuContext)`, or a
-`Func(Of TiroContextMenuContext, Task)` for async work — hand back the task rather than writing
-an `Async Sub` lambda, so the harness can observe a failure instead of it escaping as an
-unhandled async-void exception.
-
-**`AddInsertItem` does the wiring for you.** An insert item always needs the same three things,
-two of which are easy to get wrong, so there is a shorthand:
-
-```vb
-TiroFormViewer.AddInsertItem(
-    "Insert conclusion",
-    Function() TiroRtf.ToPlainText(conclusionRtf),   ' plain rendition, required
-    Function() YourConverter(conclusionRtf),         ' optional HTML, for formatting
-    onResult:=Sub(r) If Not r.Inserted Then StatusLabel.Text = "Click in a field first")
-```
-
-It builds the item, sets `IsVisible` to editable targets only, and adds it to
-`ContextMenuItems` — returning the item, so you can widen the visibility test if you want it
-everywhere.
-
-- **The visibility default is the point.** An insert item over a checkbox or a read-only score
-  has nowhere to put its content, so without the test it appears in the menu and silently does
-  nothing.
-- **`onResult` is optional but worth passing**, at least to catch `Inserted = False` — nothing
-  was focused, and the item otherwise looks broken. It runs on the UI thread, so it can touch
-  controls directly. It also fires with `TextInsertResult.NotInserted` when the insert fails
-  outright (the page didn't answer in time, the viewer was disposed mid-flight, your own content
-  provider threw), so a status label never sits showing the previous click's outcome. The
-  exception still reaches telemetry either way.
-- Both providers run when the item is picked, not when it is added.
-
 **RTF helpers.** Most WinForms EHRs hold their content as RTF, so both renditions are available
 without writing a converter:
 
 ```vb
-TiroFormViewer.AddInsertItem("Insert conclusion",
-                             Function() TiroRtf.ToPlainText(conclusionRtf),
-                             Function() TiroRtf.ToHtml(conclusionRtf))
+Await TiroFormViewer.InsertContentAsync(TiroRtf.ToPlainText(conclusionRtf),
+                                        TiroRtf.ToHtml(conclusionRtf))
 ```
 
 - **`TiroRtf.ToPlainText`** uses the RTF parser WinForms already contains, so that direction
@@ -969,108 +951,8 @@ For RTF from arbitrary sources — Word imports, embedded logos, tracked changes
 library such as [RtfPipe](https://github.com/erdomke/RtfPipe) will do better. Pass its output as
 the `html` provider instead; nothing about `TiroRtf.ToHtml` is mandatory.
 
-Worked example: the Extract sample's four **Insert ...** items in `Form1_Load` — two plain
-snippets, and two derived from an RTF constant through `TiroRtf`.
-
-#### Taking over the whole menu
-
-`ContextMenuItems` always appends below WebView2's own entries. When that isn't enough — snippets
-at the top, no **Inspect element** in production, the browser's entries interleaved with yours —
-set `BuildContextMenu`. It is called on every right-click with the browser's entries *and* yours,
-and the list it returns **is** the menu:
-
-```vb
-TiroFormViewer.BuildContextMenu =
-    Function(menu)
-        Dim result As New List(Of TiroMenuEntry)
-
-        result.AddRange(menu.HostItems)                      ' our snippets, on top
-        result.Add(TiroMenuEntry.CreateSeparator())
-
-        ' Then Chromium's, minus Inspect. The loop variable is typed explicitly because an
-        ' old-style VB project compiles with Option Infer Off, where `For Each native In ...`
-        ' is a compile error.
-        For Each native As TiroMenuEntry In menu.BrowserItems
-            If native.Name <> "inspectElement" Then result.Add(native)
-        Next
-
-        Return result
-    End Function
-```
-
-The menu is still drawn by WebView2 — only reordered and filtered — so Copy, Paste and spelling
-suggestions keep working. To draw the menu yourself instead, see
-[Drawing the menu yourself](#drawing-the-menu-yourself).
-
-**What you can and can't do to an entry:**
-
-| | Browser entries (Copy, Paste, spelling suggestions, Inspect) | Your entries |
-|---|---|---|
-| Reorder | yes | yes |
-| Hide (leave out of the list) | yes | yes |
-| Disable (grey out) | no — WebView2 reserves this | yes, via `IsEnabled` |
-| Relabel | no — `Label` is the browser's, and localised | yes |
-
-`IsEnabled` comes in two shapes, for the two ways you reach an item. On `TiroContextMenuItem`
-it is a per-click test (`Function(ctx) conclusion IsNot Nothing`), resolved before the builder
-runs. On a `TiroMenuEntry` inside the builder it is a plain `Boolean` you set. Setting it on a
-browser entry throws — omit the entry to hide it instead.
-
-**Match on `Name`, never `Label`.** `Name` is unlocalized and stable (`"copy"`, `"paste"`,
-`"inspectElement"`, `"saveAs"`); `Label` is translated and carries an `&` before the
-keyboard-accelerator character, so `"&Copy"` is `"&Kopiëren"` on Dutch Windows. `Name` is *not*
-unique either — every spelling suggestion is `"spellCheck"` and every host entry is `"custom"` —
-which is why the menu is a list and not a dictionary. Filter with it; don't key on it.
-
-**Browser entries can be reused, not invented.** There is no constructor for one: the only way to
-get the Copy entry is to take it out of `menu.BrowserItems` for that click. Which entries exist
-depends on what was clicked — Copy is absent without a selection, and spelling suggestions are
-generated fresh, with the suggested words as their labels — so an entry cached across clicks is
-stale and gets dropped (with a note to telemetry, so it isn't a silent disappearance). The same
-goes for one returned twice: a browser entry is a single object and cannot occupy two positions,
-so it appears at its first and the repeat is dropped and reported. To repeat a command, add a
-host item.
-
-**Failure modes are deliberately dull.** Return `Nothing` for "no opinion" and you get the
-standard layout. Throw, and you also get the standard layout, with the exception captured — a
-clinician mid-consult keeps Copy and Paste even if the EHR's layout code is broken. Both
-`ContextMenuItems` and `BuildContextMenu` work together: the former arrives as `menu.HostItems`,
-already filtered by each item's `IsVisible`.
-
-#### Drawing the menu yourself
-
-When WebView2's menu can't show what you need — icons, deep submenus, the EHR's own styling —
-handle `ContextMenuOpening`, set `Handled`, and show any WinForms menu at `e.Location`:
-
-```vb
-AddHandler TiroFormViewer.ContextMenuOpening,
-    Sub(sender, e)
-        If Not e.Context.IsEditable Then Return     ' elsewhere, keep the browser's menu
-        e.Handled = True
-        myContextMenuStrip.Show(TiroFormViewer, e.Location)
-    End Sub
-```
-
-Your items insert with `InsertContentAsync`, as anywhere else in the EHR's UI.
-
-- **The browser's menu goes entirely.** Copy, Paste and spelling suggestions disappear, and they
-  cannot be rebuilt from outside the browser. Ctrl+C and Ctrl+V still work. That is why the
-  example only takes over over editable fields: elsewhere — a selection to copy, a checkbox —
-  the browser's menu is the useful one. `ContextMenuItems` and `BuildContextMenu` are not
-  applied to a click you handle.
-- **The caret survives.** Your menu takes focus out of the page, but the page remembers the field
-  and caret that were right-clicked and inserts there — the same mechanism that serves a toolbar
-  button elsewhere in the EHR.
-- **Decide synchronously.** The event is raised inside the browser's own, on the UI thread.
-  `ContextMenuStrip.Show` returns at once, which is all a handler needs.
-- **A handler that throws** is reported to telemetry and the browser's menu is shown — unless the
-  handler had already set `Handled`, so it never appears on top of your own.
-- `e.Context` is the same `TiroContextMenuContext` the other menu APIs get: `IsEditable` and
-  `SelectionText`.
-
-Worked example: the Extract sample's `OnFormContextMenuOpening`, with an **Insert** submenu and
-a nested **Conclusion** submenu. Its `DrawMenuInHost` constant switches back to the WebView2-drawn
-menu for comparison.
+Worked example: the Extract sample's `OnFormContextMenuOpening` — an **Insert** submenu with two
+plain snippets and a nested **Conclusion** submenu derived from an RTF constant through `TiroRtf`.
 
 ### Frontend version compatibility
 

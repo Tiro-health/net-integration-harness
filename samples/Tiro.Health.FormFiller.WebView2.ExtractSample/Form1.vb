@@ -19,21 +19,10 @@ Public Class Form1
     ' re-trigger on that same close.
     Private isClosingConfirmed As Boolean = False
 
-    ' Which right-click menu the form gets over a text field:
-    '
-    '  - True: the EHR draws it, as a WinForms ContextMenuStrip (see OnFormContextMenuOpening).
-    '    Any submenus, icons or styling, but the browser's own entries are gone — Copy, Paste and
-    '    spelling suggestions cannot be rebuilt from outside the browser. Ctrl+C / Ctrl+V still
-    '    work.
-    '  - False: WebView2 draws it, with the AddInsertItem entries below appended to its own.
-    '
-    ' Away from a text field the browser's own menu shows either way.
-    Private Const DrawMenuInHost As Boolean = True
-
-    ' Read by the host-drawn menu when an item is picked.
+    ' Read by the right-click menu when an item is picked.
     Private _patient As Patient
 
-    ' The host-drawn menu, rebuilt on every right-click. Kept so the previous one can be disposed.
+    ' The form's right-click menu, rebuilt on every right-click. Kept so the previous one can be disposed.
     Private _formMenu As ContextMenuStrip
 
     Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
@@ -75,54 +64,6 @@ Public Class Form1
             }
         }
         _patient = patient
-
-        ' The right-click menu, host-side. The harness appends these to the embedded browser's
-        ' own context menu, below its native entries. Because it is the browser's own menu, the
-        ' click never leaves the page: the caret stays exactly where the clinician
-        ' right-clicked, which is what lets these insert there.
-        '
-        ' A real EHR would build this list from its own configuration: it's read fresh on every
-        ' right-click, and each item's value is resolved when it's picked (these close over
-        ' `patient` and the constants below rather than over a copy made now), so items can be
-        ' added, removed or relabelled per patient without touching the harness.
-        '
-        ' Nothing here touches the Windows clipboard. The content goes straight into the field
-        ' that was right-clicked, so the clinician needs one click instead of a copy and a
-        ' Ctrl+V, whatever they had copied is left alone, and no patient text is ever put on a
-        ' machine-wide surface.
-        '
-        ' IsVisible = IsEditable on every item: over a checkbox or a read-only score there is
-        ' nothing to insert into, so the item stays out of the menu rather than doing nothing.
-        '
-        ' With DrawMenuInHost on, these never show: over a text field the EHR draws its own menu,
-        ' and a click it handles skips ContextMenuItems.
-        TiroFormViewer.AddInsertItem("Insert patient name",
-                                     Function() patient.Name(0).Text,
-                                     onResult:=AddressOf ShowInsertResult)
-
-        TiroFormViewer.AddInsertItem("Insert ""no known drug allergies""",
-                                     Function() "No known drug allergies.",
-                                     onResult:=AddressOf ShowInsertResult)
-
-        ' The conclusion the EHR holds as RTF, flattened by the RTF parser WinForms already
-        ' contains. Goes into any field; formatting dropped.
-        TiroFormViewer.AddInsertItem("Insert conclusion (plain text)",
-                                     Function() TiroRtf.ToPlainText(ConclusionRtf),
-                                     onResult:=AddressOf ShowInsertResult)
-
-        ' The same conclusion, keeping its formatting. Both renditions come from the harness:
-        ' ToPlainText uses the RTF parser WinForms already has, ToHtml is the harness's own
-        ' converter. The page offers the HTML to the field first and falls back to the plain text
-        ' if the field won't take it; onResult says which happened, so what a given field can
-        ' actually store is visible.
-        '
-        ' ToHtml is a convenience, not a full-fidelity converter — it keeps what the field can
-        ' store (emphasis, paragraphs) and flattens the rest. For RTF from arbitrary sources,
-        ' pass your own converter's output here instead; nothing about it is mandatory.
-        TiroFormViewer.AddInsertItem("Insert conclusion (formatted)",
-                                     Function() TiroRtf.ToPlainText(ConclusionRtf),
-                                     Function() TiroRtf.ToHtml(ConclusionRtf),
-                                     onResult:=AddressOf ShowInsertResult)
 
         ' The clinician writing the report and the visit it belongs to. The form's Klinische
         ' informatie fields prefill from these: Auteur from %user (the author), Datum consult
@@ -213,7 +154,7 @@ Public Class Form1
     Private Sub OnFormContextMenuOpening(sender As Object, e As TiroContextMenuOpeningEventArgs)
         ' Only take over where there is something to insert into. Elsewhere — a checkbox, a
         ' label, a selection to copy — the browser's own menu is the useful one.
-        If Not DrawMenuInHost OrElse Not e.Context.IsEditable Then Return
+        If Not e.Context.IsEditable Then Return
         e.Handled = True
 
         _formMenu?.Dispose()
@@ -223,7 +164,11 @@ Public Class Form1
         insertMenu.DropDownItems.Add(InsertMenuItem("Patient name", Function() _patient.Name(0).Text))
         insertMenu.DropDownItems.Add(InsertMenuItem("""No known drug allergies""", Function() "No known drug allergies."))
 
-        ' Submenus nest as deep as the EHR likes — it's a plain WinForms menu.
+        ' The conclusion the EHR holds as RTF, plain or keeping its formatting. With both, the page
+        ' offers the HTML to the field first and falls back to the plain text if the field won't
+        ' take it; the window title says which happened. ToHtml keeps what a field can store
+        ' (emphasis, paragraphs) and flattens the rest — pass your own converter's output if you
+        ' have one. Submenus nest as deep as the EHR likes: it's a plain WinForms menu.
         Dim conclusionMenu As New ToolStripMenuItem("Conclusion")
         conclusionMenu.DropDownItems.Add(InsertMenuItem("Plain text", Function() TiroRtf.ToPlainText(ConclusionRtf)))
         conclusionMenu.DropDownItems.Add(InsertMenuItem("Formatted",
