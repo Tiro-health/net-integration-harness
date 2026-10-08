@@ -120,6 +120,19 @@ test("an abbreviation at the start of the field matches", async () => {
     assert.equal(h.execCommands.length, 1);
 });
 
+test("an invisible placeholder before the abbreviation counts as a boundary", async () => {
+    // A rich editor may keep a zero-width space in an empty block.
+    const h = await bridge();
+    const { el, range } = contentEditable("\u200Bµnka\u00a0");
+    h.focus(el);
+
+    h.type(el);
+    await settle();
+
+    assert.deepEqual([range.start, range.end], [1, 6], "the placeholder stays");
+    assert.deepEqual(h.execCommands.map(c => c.value), ["No known drug allergies. "]);
+});
+
 test("only a typed space triggers it", async () => {
     const h = await bridge();
     const input = field({ value: "µnka " });

@@ -703,10 +703,14 @@
     /** @param {string} ch */
     const isWhitespace = ch => /\s/.test(ch);
 
+    // Word boundary: whitespace, or a zero-width character — editors keep one in an empty block.
+    /** @param {string} ch */
+    const isBoundary = ch => /[\s\u200B-\u200D\u2060]/.test(ch);
+
     /** The word ending just before the space at `termPos`. @param {string} text @param {number} termPos */
     function wordBefore(text, termPos) {
         let start = termPos;
-        while (start > 0 && !isWhitespace(text[start - 1])) start--;
+        while (start > 0 && !isBoundary(text[start - 1])) start--;
         return { word: text.slice(start, termPos), start };
     }
 
