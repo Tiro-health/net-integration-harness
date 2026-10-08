@@ -102,6 +102,12 @@ Public Class Form1
                                      Function() TiroRtf.ToHtml(ConclusionRtf),
                                      onResult:=AddressOf ShowInsertResult)
 
+        ' Text shortcuts: typing "µnka" then a space in a text field replaces it with the snippet.
+        ' A real EHR loads the user's own list here, with placeholders already filled in.
+        TiroFormViewer.TextShortcuts.Add(New TiroTextShortcut("µnka", "No known drug allergies."))
+        TiroFormViewer.TextShortcuts.Add(New TiroTextShortcut("µpat", patient.Name(0).Text))
+        TiroFormViewer.TextShortcuts.Add(TiroTextShortcut.FromRtf("µconc", ConclusionRtf))
+
         ' The clinician writing the report and the visit it belongs to. The form's Klinische
         ' informatie fields prefill from these: Auteur from %user (the author), Datum consult
         ' from %encounter. Leave either out and its field stays empty.

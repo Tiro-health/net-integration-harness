@@ -238,6 +238,14 @@ export async function loadBridge(formFillers, {
                 fn({ target: el, composedPath: () => [el] }));
             document.activeElement = activeAfter;
         },
+        /**
+         * Simulate the user typing `data` into `el`: the `input` event that follows, as the
+         * capture listener on document sees it. Pass `init` to vary inputType/isComposing.
+         */
+        type: (el, data = " ", init = {}) => {
+            (documentListeners.get("input") || []).forEach(fn =>
+                fn({ target: el, composedPath: () => [el], inputType: "insertText", data, isComposing: false, ...init }));
+        },
         /** Simulate a host -> page envelope arriving over the transport. */
         receive: message => {
             if (!hostMessageListener) throw new Error("no host transport installed (pass { host: true })");

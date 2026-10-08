@@ -15,10 +15,13 @@
  *                                              forwards user submissions to host
  *   - host content insertion                — ui.form.insertContent puts host-supplied text
  *                                              or HTML into the focused field at the caret
+ *   - text shortcuts                        — ui.form.configureTextShortcuts: typed
+ *                                              abbreviations expand into host snippets
  *   - document CustomEvents (status hooks)  — tiro-connected, tiro-submitted,
  *                                              tiro-submit-error, tiro-cancelled,
  *                                              tiro-disconnected, tiro-sdk-error,
- *                                              tiro-sdk-collision, tiro-content-inserted
+ *                                              tiro-sdk-collision, tiro-content-inserted,
+ *                                              tiro-text-shortcut-expanded
  *   - window.SmartWebMessaging              — lower-level API for advanced consumers
  *                                              (sendRequest/sendEvent/on); the documented
  *                                              path is the hooks above.
@@ -681,6 +684,98 @@
         }
     }
 
+
+    // ------------------------------------------------------------
+    // Text shortcuts (ui.form.configureTextShortcuts)
+    // ------------------------------------------------------------
+    //
+    // The host sends the whole list up front; the page expands locally, so typed text never
+    // leaves it. An abbreviation matches as a whole word (case-sensitive) when a space follows.
+    // The abbreviation and space are selected and replaced through the insertContent path,
+    // so the editor keeps the text and Ctrl+Z restores the abbreviation.
+
+    /** @type {Map<string, {text: string, html: string | null}>} */
+    let textShortcuts = new Map();
+
+    /** Set while expanding, so our own input events don't re-trigger. */
+    let expandingShortcut = false;
+
+    /** @param {string} ch */
+    const isWhitespace = ch => /\s/.test(ch);
+
+    /** The word ending just before the space at `termPos`. @param {string} text @param {number} termPos */
+    function wordBefore(text, termPos) {
+        let start = termPos;
+        while (start > 0 && !isWhitespace(text[start - 1])) start--;
+        return { word: text.slice(start, termPos), start };
+    }
+
+    /** Expands the abbreviation before the caret of an <input>/<textarea>. @param {any} el */
+    function expandInTextControl(el) {
+        const caret = el.selectionStart;
+        if (typeof caret !== "number" || caret !== el.selectionEnd || caret < 1) return null;
+        const value = el.value;
+        const termPos = caret - 1;
+        if (!isWhitespace(value[termPos])) return null;
+        const { word, start } = wordBefore(value, termPos);
+        const shortcut = word && textShortcuts.get(word);
+        if (!shortcut) return null;
+
+        el.setSelectionRange(start, caret);
+        return insertPlainTextInto(el, shortcut.text + value[termPos]) ? { word, mode: "text" } : null;
+    }
+
+    /** Expands the abbreviation before the caret of a contenteditable, within its text node. @param {any} el */
+    function expandInContentEditable(el) {
+        const root = typeof el.getRootNode === "function" ? el.getRootNode() : document;
+        const selection = typeof root.getSelection === "function"
+            ? root.getSelection()
+            : (typeof document.getSelection === "function" ? document.getSelection() : null);
+        if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null;
+        const node = selection.focusNode;
+        const offset = selection.focusOffset;
+        if (!node || node.nodeType !== 3 || !el.contains(node) || offset < 1) return null;
+
+        const text = node.data;
+        const termPos = offset - 1;
+        // Editors may store the space as U+00A0; \s covers it.
+        if (!isWhitespace(text[termPos])) return null;
+        const { word, start } = wordBefore(text, termPos);
+        const shortcut = word && textShortcuts.get(word);
+        if (!shortcut) return null;
+
+        const range = (node.ownerDocument || document).createRange();
+        range.setStart(node, start);
+        range.setEnd(node, offset);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        if (shortcut.html && insertHtmlAtCaret(el, shortcut.html, shortcut.text)) {
+            insertPlainTextInto(el, " ");
+            return { word, mode: "html" };
+        }
+        return insertPlainTextInto(el, shortcut.text + " ") ? { word, mode: "text" } : null;
+    }
+
+    /** Deferred after the space lands; bails if the field lost focus meanwhile. @param {any} el */
+    function expandShortcutBeforeCaret(el) {
+        if (textShortcuts.size === 0 || expandingShortcut) return;
+        if (!el || !el.isConnected || !isTextEditable(el)) return;
+        if (!el.isContentEditable && deepActiveElement() !== el) return;
+
+        expandingShortcut = true;
+        let expanded = null;
+        try {
+            expanded = el.isContentEditable ? expandInContentEditable(el) : expandInTextControl(el);
+        } catch (err) {
+            console.warn("[bridge] text shortcut expansion failed:", err);
+        } finally {
+            expandingShortcut = false;
+        }
+        // No content in the event: it can carry patient data.
+        if (expanded) fire("tiro-text-shortcut-expanded", { mode: expanded.mode, target: el });
+    }
+
     function installContentInsertion() {
         // composedPath()[0] rather than e.target: a focus event crossing a shadow boundary
         // is retargeted to the host element (<tiro-form-filler>), and the path's first entry
@@ -703,6 +798,33 @@
             if (!el || el !== lastEditable || !el.isContentEditable) return;
             lastRange = selectionRangeIn(el);
         }, true);
+
+        // Text shortcuts: only a typed space triggers (not paste, IME, or our own insert).
+        document.addEventListener("input", event => {
+            if (textShortcuts.size === 0 || expandingShortcut) return;
+            const input = /** @type {any} */ (event);
+            if (input.isComposing || input.inputType !== "insertText" || input.data !== " ") return;
+            const el = originOf(event);
+            if (!isTextEditable(el)) return;
+            // Deferred so the editor has committed the space.
+            setTimeout(() => expandShortcutBeforeCaret(el), 0);
+        }, true);
+
+        SmartWebMessaging.on("ui.form.configureTextShortcuts", payload => {
+            const list = payload && Array.isArray(payload.shortcuts) ? payload.shortcuts : [];
+            const next = new Map();
+            for (const entry of list) {
+                const abbreviation = entry && entry.abbreviation;
+                const text = entry && entry.text;
+                if (typeof abbreviation !== "string" || abbreviation.length === 0) continue;
+                if (/\s/.test(abbreviation)) continue;
+                if (typeof text !== "string" || text.length === 0) continue;
+                const html = typeof entry.html === "string" && entry.html.length > 0 ? entry.html : null;
+                next.set(abbreviation, { text, html });
+            }
+            textShortcuts = next;
+            return { count: next.size };
+        });
 
         SmartWebMessaging.on("ui.form.insertContent", payload => {
             const text = payload && payload.text;

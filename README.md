@@ -661,6 +661,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
   - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` and `TiroRtf.ToHtml` for both renditions of an RTF document
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's content, resolved per click, inserted at the caret; see [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu)
+  - Text shortcuts via `TextShortcuts` (`TiroTextShortcut`): typed abbreviations such as `µnka` expand into the EHR's snippets; see [Text shortcuts](#text-shortcuts)
   - Full control of that menu via `BuildContextMenu`, which hands over the browser's own entries (`TiroMenuEntry`) alongside the host's and renders back whatever list it returns — reorder, hide **Inspect element**, interleave — while WebView2 still draws the menu, so the caret survives; see [Taking over the whole menu](#taking-over-the-whole-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
@@ -1035,6 +1036,33 @@ standard layout. Throw, and you also get the standard layout, with the exception
 clinician mid-consult keeps Copy and Paste even if the EHR's layout code is broken. Both
 `ContextMenuItems` and `BuildContextMenu` work together: the former arrives as `menu.HostItems`,
 already filtered by each item's `IsVisible`.
+
+#### Text shortcuts
+
+Clinicians used to an EHR's text expansion can keep it: typing an abbreviation followed by a
+space replaces it with a snippet. Load the user's list before `SetContextAsync`:
+
+```vb
+For Each row In davinci.GetShortcutsForUser(userId)
+    TiroFormViewer.TextShortcuts.Add(TiroTextShortcut.FromRtf(row.Abbreviation, row.Rtf))
+Next
+```
+
+- **The page matches locally.** The whole list is sent once, so expansion is instant and typed
+  text never leaves the page. Telemetry records only the number of shortcuts.
+- **Abbreviations are whole words, case-sensitive, without whitespace.** A prefix such as `µ` is
+  just part of the abbreviation; the harness imposes none. Later duplicates win.
+- **Content is inserted as given.** Resolve placeholders (patient, date, author) before adding
+  the shortcut.
+- **RTF**: `FromRtf` converts through `TiroRtf`, so the same formatting limits apply as for
+  [insert items](#host-snippets-in-the-forms-right-click-menu): bold, italic, underline and
+  paragraphs survive; tables, fonts, colours and lists flatten. Plain `<input>` fields get the
+  plain text.
+- **Ctrl+Z restores the abbreviation.**
+- **Changing the list mid-session** (another user takes over): update `TextShortcuts`, then call
+  `UpdateTextShortcutsAsync()`.
+
+Worked example: the Extract sample's `µnka`, `µpat` and `µconc`.
 
 ### Frontend version compatibility
 

@@ -106,6 +106,20 @@ namespace Tiro.Health.FormFiller.WebView2
         public IList<TiroContextMenuItem> ContextMenuItems { get; } = new List<TiroContextMenuItem>();
 
         /// <summary>
+        /// Abbreviations the form expands as the user types: <c>µnka</c> + space becomes
+        /// "No known drug allergies. ". Sent by <c>SetContextAsync</c>; after a mid-session
+        /// change, call <see cref="UpdateTextShortcutsAsync"/>.
+        /// </summary>
+        /// <remarks>
+        /// Load the user's whole list up front; the page matches locally, so typed text never
+        /// leaves it. Content is inserted as given — resolve placeholders first. Matches whole
+        /// words in free-text fields; Ctrl+Z restores the abbreviation; later duplicates win.
+        /// </remarks>
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public IList<TiroTextShortcut> TextShortcuts { get; } = new List<TiroTextShortcut>();
+
+        /// <summary>
         /// Full control of the form's right-click menu. Called on every right-click with the
         /// browser's own entries and the host's; returns the menu to show, in order. Null (the
         /// default) keeps the standard layout — the browser's entries, a separator, then
@@ -1201,6 +1215,10 @@ namespace Tiro.Health.FormFiller.WebView2
                         }
                     }
 
+                    // Before the questionnaire, so they're active once the user can type.
+                    if (TextShortcuts.Count > 0)
+                        await SendTextShortcutsAsync(linkedCts.Token, cancellationToken);
+
                     var wrappedHandler = WrapForRoundTrip("sdc.displayQuestionnaire", span, cancellationToken, originalHandler: null);
 
                     // Two overloads rather than the object one, because these merge the
@@ -1413,6 +1431,63 @@ namespace Tiro.Health.FormFiller.WebView2
                     _telemetry.CaptureException(ex);
                     throw;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Resends <see cref="TextShortcuts"/>, replacing the page's list (e.g. after a user
+        /// switch). An empty list turns expansion off.
+        /// </summary>
+        public async Task UpdateTextShortcutsAsync(CancellationToken cancellationToken = default)
+        {
+            GuardCanInsertText();
+            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
+            {
+                linkedCts.CancelAfter(HandshakeTimeoutMs);
+                await _initializationTask.WaitAsync(linkedCts.Token);
+                await WaitForHandshakeAsync(null, linkedCts.Token, cancellationToken,
+                    timeoutMessage: "Handshake timeout while updating text shortcuts.");
+                await SendTextShortcutsAsync(linkedCts.Token, cancellationToken);
+            }
+        }
+
+        /// <summary>
+        /// Sends <see cref="TextShortcuts"/>. Telemetry gets the count only — snippets can name a patient.
+        /// </summary>
+        private async Task SendTextShortcutsAsync(CancellationToken linkedToken, CancellationToken userToken)
+        {
+            // Snapshot: the host may change the list meanwhile.
+            var entries = new List<TextShortcutEntry>();
+            foreach (var shortcut in new List<TiroTextShortcut>(TextShortcuts))
+            {
+                if (shortcut == null) continue;
+                entries.Add(new TextShortcutEntry
+                {
+                    Abbreviation = shortcut.Abbreviation,
+                    Text = shortcut.Text,
+                    Html = shortcut.Html,
+                });
+            }
+
+            var span = _session?.StartTransaction("ui.form.configureTextShortcuts", "swm.send");
+            span?.SetTag("messageType", "ui.form.configureTextShortcuts");
+            span?.SetTag("shortcut_count", entries.Count.ToString(CultureInfo.InvariantCulture));
+            try
+            {
+                await _smartWebMessageHandler.SendFormTextShortcutsAsync(
+                    entries,
+                    WrapForRoundTrip("ui.form.configureTextShortcuts", span, userToken, originalHandler: null),
+                    linkedToken);
+            }
+            catch (OperationCanceledException)
+            {
+                span?.Finish(TelemetrySpanStatus.Cancelled);
+                throw;
+            }
+            catch
+            {
+                span?.Finish(TelemetrySpanStatus.InternalError);
+                throw;
             }
         }
 
