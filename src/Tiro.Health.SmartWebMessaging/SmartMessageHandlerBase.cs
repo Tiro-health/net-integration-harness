@@ -35,6 +35,7 @@ namespace Tiro.Health.SmartWebMessaging
         public event EventHandler<CloseApplicationEventArgs> CloseApplication;
         public event EventHandler<FormSubmittedEventArgs<TQuestionnaireResponse, TOperationOutcome>> FormSubmitted;
         public event EventHandler<FormDirtyChangedEventArgs> FormDirtyChanged;
+        public event EventHandler<TextShortcutRequestedEventArgs> TextShortcutRequested;
 
         private readonly ConcurrentDictionary<string, Func<SmartMessageResponse, Task>> _responseListeners
             = new ConcurrentDictionary<string, Func<SmartMessageResponse, Task>>();
@@ -188,6 +189,14 @@ namespace Tiro.Health.SmartWebMessaging
                         _logger.LogDebug("Handling ui.form.dirtyChanged.");
                         var dirtyPayload = JsonSerializer.Deserialize<FormDirtyChange>(payloadJson, SerializeOptions);
                         response = HandleFormDirtyChanged(message, dirtyPayload);
+                        break;
+
+                    case "ui.form.textShortcutRequested":
+                        _logger.LogDebug("Handling ui.form.textShortcutRequested.");
+                        var shortcutPayload = JsonSerializer.Deserialize<TextShortcutRequest>(payloadJson, SerializeOptions);
+                        TextShortcutRequested?.Invoke(this,
+                            new TextShortcutRequestedEventArgs(shortcutPayload?.RequestId, shortcutPayload?.Abbreviation));
+                        response = new SmartMessageResponse(Guid.NewGuid().ToString(), message.MessageId, false, new ResponsePayload());
                         break;
 
                     default:
@@ -377,6 +386,35 @@ namespace Tiro.Health.SmartWebMessaging
             CancellationToken cancellationToken = default)
         {
             return SendMessageAsync("ui.form.insertContent", new FormInsertContent(text, html),
+                responseHandler, cancellationToken);
+        }
+
+        /// <summary>
+        /// Sends <c>ui.form.configureTextShortcuts</c>. The page acks with <c>count</c> accepted.
+        /// </summary>
+        public Task SendFormTextShortcutsAsync(
+            List<TextShortcutEntry> shortcuts,
+            List<string> abbreviations = null,
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
+        {
+            return SendMessageAsync("ui.form.configureTextShortcuts", new FormTextShortcuts(shortcuts, abbreviations),
+                responseHandler, cancellationToken);
+        }
+
+        /// <summary>
+        /// Sends <c>ui.form.resolveTextShortcut</c>: the answer to <see cref="TextShortcutRequested"/>.
+        /// Null <paramref name="text"/> means no snippet.
+        /// </summary>
+        public Task SendResolveTextShortcutAsync(
+            string requestId,
+            string text,
+            string html = null,
+            Func<SmartMessageResponse, Task> responseHandler = null,
+            CancellationToken cancellationToken = default)
+        {
+            return SendMessageAsync("ui.form.resolveTextShortcut",
+                new ResolveTextShortcut { RequestId = requestId, Text = text, Html = html },
                 responseHandler, cancellationToken);
         }
 

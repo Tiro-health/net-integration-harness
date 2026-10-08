@@ -8,6 +8,8 @@ namespace Tiro.Health.SmartWebMessaging.Message.Payload
     [JsonDerivedType(typeof(SdcConfigure), typeDiscriminator: "sdcConfigure")]
     [JsonDerivedType(typeof(FormRequestSubmit), typeDiscriminator: "formRequestSubmit")]
     [JsonDerivedType(typeof(FormInsertContent), typeDiscriminator: "formInsertContent")]
+    [JsonDerivedType(typeof(FormTextShortcuts), typeDiscriminator: "formTextShortcuts")]
+    [JsonDerivedType(typeof(ResolveTextShortcut), typeDiscriminator: "resolveTextShortcut")]
     public class RequestPayload
     {
         [JsonExtensionData]
