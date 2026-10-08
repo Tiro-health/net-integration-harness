@@ -229,6 +229,22 @@ test("in a rich-text field the HTML goes in as a paste, then the space", async (
     assert.deepEqual(h.execCommands.map(c => c.value), [" "]);
 });
 
+test("in a rich-text field a plain snippet also goes in as a paste", async () => {
+    const h = await bridge();
+    const { el, range } = contentEditable("µnka\u00a0", { consumesPaste: true });
+    h.focus(el);
+
+    h.type(el);
+    await settle();
+
+    assert.deepEqual([range.start, range.end], [0, 5]);
+    const paste = el.events.find(e => e.type === "paste");
+    assert.equal(paste.clipboardData.getData("text/plain"), "No known drug allergies.");
+    assert.equal(paste.clipboardData.getData("text/html"), "", "no HTML for a plain snippet");
+    assert.deepEqual(h.execCommands.map(c => c.value), [" "]);
+    assert.equal(h.fired("tiro-text-shortcut-expanded")[0].detail.mode, "text");
+});
+
 test("a rich-text field that declines the paste gets the plain text", async () => {
     const h = await bridge();
     const { el } = contentEditable("µfu ");

@@ -659,7 +659,7 @@
      * to fall back rather than silently dropping the content.
      *
      * @param {any} target the focused, already-refocused field
-     * @param {string} html body-level fragment
+     * @param {string | null} html body-level fragment; null pastes plain text only
      * @param {string} text plain-text rendition, offered on the same DataTransfer
      * @returns {boolean} true when the editor consumed the paste
      */
@@ -667,7 +667,7 @@
         if (typeof DataTransfer !== "function" || typeof ClipboardEvent !== "function") return false;
         try {
             const data = new DataTransfer();
-            data.setData("text/html", html);
+            if (html) data.setData("text/html", html);
             // Same DataTransfer carries the plain rendition, so an editor that prefers text
             // (or a page field that reads only text) still gets something sensible.
             if (text) data.setData("text/plain", text);
@@ -754,9 +754,11 @@
         selection.removeAllRanges();
         selection.addRange(range);
 
-        if (shortcut.html && insertHtmlAtCaret(el, shortcut.html, shortcut.text)) {
+        // Always a paste first, plain text included: the editor's paste handler reads the
+        // selection we just set, whereas insertText may still see the old caret.
+        if (insertHtmlAtCaret(el, shortcut.html, shortcut.text)) {
             insertPlainTextInto(el, " ");
-            return { word, mode: "html" };
+            return { word, mode: shortcut.html ? "html" : "text" };
         }
         return insertPlainTextInto(el, shortcut.text + " ") ? { word, mode: "text" } : null;
     }
