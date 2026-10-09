@@ -661,6 +661,7 @@ Reusable WinForms `UserControl` that hosts a WebView2 browser and wires it to th
   - Host-configured view-only rendering via `ReadOnly`, applied before the form initializes so no second `index.html` is needed for read-only roles
   - `AddInsertItem` shorthand for a snippet item (visibility default, async wiring and result callback handled), plus `TiroRtf.ToPlainText` and `TiroRtf.ToHtml` for both renditions of an RTF document
   - Host-supplied right-click menu entries via `ContextMenuItems` (`TiroContextMenuItem`), appended to the embedded browser's own context menu through the optional `IContextMenuCapableBrowser` capability — the EHR's labels, the EHR's content, resolved per click, inserted at the caret; see [Host snippets in the form's right-click menu](#host-snippets-in-the-forms-right-click-menu)
+  - Text shortcuts via `TextShortcutTriggers` + `ResolveTextShortcut`: typed abbreviations such as `µnka` expand into the EHR's snippets; see [Text shortcuts](#text-shortcuts)
   - Full control of that menu via `BuildContextMenu`, which hands over the browser's own entries (`TiroMenuEntry`) alongside the host's and renders back whatever list it returns — reorder, hide **Inspect element**, interleave — while WebView2 still draws the menu, so the caret survives; see [Taking over the whole menu](#taking-over-the-whole-menu)
   - SDC server version check on the first `SetContextAsync`, reported through telemetry when the configured server is older than `SdcCompatibility.MinimumSdcVersion` — see [SDC server version compatibility](#sdc-server-version-compatibility)
 
@@ -1035,6 +1036,43 @@ standard layout. Throw, and you also get the standard layout, with the exception
 clinician mid-consult keeps Copy and Paste even if the EHR's layout code is broken. Both
 `ContextMenuItems` and `BuildContextMenu` work together: the former arrives as `menu.HostItems`,
 already filtered by each item's `IsVisible`.
+
+#### Text shortcuts
+
+Clinicians used to an EHR's text expansion can keep it: typing an abbreviation followed by a
+space replaces it with a snippet. Two members: the triggers (just the words) and a function
+that returns the snippet when one is typed.
+
+```vb
+TiroFormViewer.TextShortcutTriggers = davinci.GetAbbreviations(userId)   ' e.g. {"µnka", "µpat", …}
+TiroFormViewer.ResolveTextShortcut =
+    Async Function(abbreviation)
+        Return TiroSnippet.FromRtf(Await davinci.GetSnippetRtfAsync(userId, abbreviation))   ' Nothing: no snippet
+    End Function
+```
+
+- **Matching happens in the form.** Only a typed trigger reaches `ResolveTextShortcut`; other
+  text never leaves the page. Triggers are whole words, case-sensitive, without whitespace; a
+  prefix such as `µ` is just part of each word.
+- **The user never waits.** The abbreviation is marked (dotted underline) while the snippet is
+  fetched, and typing carries on. The snippet replaces it behind the caret — also if the user
+  moved to another field. It is dropped if the abbreviation was edited or removed, or if no
+  answer comes within 10 seconds; returning `Nothing` or throwing leaves the text as typed
+  (exceptions reach telemetry).
+- **Don't block.** `ResolveTextShortcut` runs on the UI thread: `Await` a database lookup, or
+  answer from memory. A synchronous query freezes the EHR for its duration.
+- **Content is inserted as given.** Fill in placeholders (patient, date, author) first.
+- **RTF:** `TiroSnippet.FromRtf` converts through `TiroRtf` — bold, italic, underline and
+  paragraphs survive; tables, fonts, colours and lists flatten. Plain `<input>` fields get the
+  plain text. For another converter, use `New TiroSnippet(text, html)`.
+- **Ctrl+Z** restores the abbreviation.
+- **Changing the triggers** (another user takes over): assign `TextShortcutTriggers` again; once
+  the form is shown, the new list is sent at once.
+
+Matching, the pending marker and the replacement are implemented by the embedded web-sdk's
+`<tiro-form-filler>`; the harness forwards the triggers and the snippets.
+
+Worked example: the Extract sample's `µnka`, `µconc` and `µpat`.
 
 ### Frontend version compatibility
 

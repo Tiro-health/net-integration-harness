@@ -15,10 +15,14 @@
  *                                              forwards user submissions to host
  *   - host content insertion                — ui.form.insertContent puts host-supplied text
  *                                              or HTML into the focused field at the caret
+ *   - text shortcuts                        — ui.form.configureTextShortcuts: forwarded
+ *                                              to <tiro-form-filler>, which expands typed
+ *                                              abbreviations into host snippets
  *   - document CustomEvents (status hooks)  — tiro-connected, tiro-submitted,
  *                                              tiro-submit-error, tiro-cancelled,
  *                                              tiro-disconnected, tiro-sdk-error,
- *                                              tiro-sdk-collision, tiro-content-inserted
+ *                                              tiro-sdk-collision, tiro-content-inserted,
+ *                                              tiro-text-shortcut-expanded
  *   - window.SmartWebMessaging              — lower-level API for advanced consumers
  *                                              (sendRequest/sendEvent/on); the documented
  *                                              path is the hooks above.
@@ -286,6 +290,7 @@
     // declared directly on TiroFormFiller, so the submit() contract is still checked.
     /** @param {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement & LitElementLike} formFiller */
     function wireFormFiller(formFiller) {
+        applyTextShortcuts(formFiller);
         // Endpoint config is driven by the protocol's sdc.configure message (per the SDC
         // SMART Web Messaging dialect — see github.com/brianpos/sdc-smart-web-messaging).
         // The host sends sdc.configure after handshake; we stash the payload here and
@@ -656,7 +661,7 @@
      * to fall back rather than silently dropping the content.
      *
      * @param {any} target the focused, already-refocused field
-     * @param {string} html body-level fragment
+     * @param {string | null} html body-level fragment; null pastes plain text only
      * @param {string} text plain-text rendition, offered on the same DataTransfer
      * @returns {boolean} true when the editor consumed the paste
      */
@@ -664,7 +669,7 @@
         if (typeof DataTransfer !== "function" || typeof ClipboardEvent !== "function") return false;
         try {
             const data = new DataTransfer();
-            data.setData("text/html", html);
+            if (html) data.setData("text/html", html);
             // Same DataTransfer carries the plain rendition, so an editor that prefers text
             // (or a page field that reads only text) still gets something sensible.
             if (text) data.setData("text/plain", text);
@@ -679,6 +684,74 @@
             console.warn("[bridge] rich insert failed; falling back to plain text:", err);
             return false;
         }
+    }
+
+
+    // ------------------------------------------------------------
+    // Text shortcuts (ui.form.configureTextShortcuts)
+    // ------------------------------------------------------------
+    //
+    // Matching and replacement live in the web-sdk: <tiro-form-filler> watches its free-text
+    // fields for the abbreviations in `textShortcuts`, marks a typed one pending, asks
+    // `resolveTextShortcut` for its content, and replaces it behind the caret when the answer
+    // arrives. The bridge only forwards the host's triggers and carries each request to the
+    // host (ui.form.textShortcutRequested) and its answer back (ui.form.resolveTextShortcut).
+
+    /** The host's triggers: abbreviations only, content comes from the host when typed. */
+    let shortcutTriggers = /** @type {string[]} */ ([]);
+
+    /** Requests awaiting the host's answer, by requestId. */
+    const pendingShortcutAnswers = new Map();
+    let shortcutRequestCounter = 0;
+
+    // The web-sdk gives up after 10 s as well; this only releases the entry.
+    const SHORTCUT_ANSWER_TIMEOUT_MS = 10000;
+
+    /**
+     * The `resolveTextShortcut` the web-sdk calls: asks the host and resolves with its answer,
+     * or null when it has none or doesn't answer in time.
+     * @param {string} abbreviation
+     */
+    function resolveShortcutViaHost(abbreviation) {
+        return new Promise(resolve => {
+            const requestId = "ts-" + (++shortcutRequestCounter);
+            pendingShortcutAnswers.set(requestId, resolve);
+            setTimeout(() => {
+                if (pendingShortcutAnswers.delete(requestId)) resolve(null);
+            }, SHORTCUT_ANSWER_TIMEOUT_MS);
+            SmartWebMessaging.sendEvent("ui.form.textShortcutRequested", { requestId, abbreviation });
+        });
+    }
+
+    /**
+     * Applies the triggers to one form filler. Loosely typed: the properties are newer than
+     * the frontend contract build/bridge-contract checks against.
+     * @param {any} formFiller
+     */
+    function applyTextShortcuts(formFiller) {
+        formFiller.textShortcuts = shortcutTriggers.map(abbreviation => ({ abbreviation }));
+        formFiller.resolveTextShortcut = resolveShortcutViaHost;
+    }
+
+    function installTextShortcuts() {
+        SmartWebMessaging.on("ui.form.configureTextShortcuts", payload => {
+            const list = payload && Array.isArray(payload.abbreviations) ? payload.abbreviations : [];
+            shortcutTriggers = list.filter(a => typeof a === "string" && a.length > 0 && !/\s/.test(a));
+            document.querySelectorAll("tiro-form-filler").forEach(applyTextShortcuts);
+            return { count: shortcutTriggers.length };
+        });
+
+        // The host's answer. No text means no snippet: the abbreviation stays as typed.
+        SmartWebMessaging.on("ui.form.resolveTextShortcut", payload => {
+            const requestId = payload && payload.requestId;
+            const resolve = pendingShortcutAnswers.get(requestId);
+            if (!resolve) return { accepted: false };
+            pendingShortcutAnswers.delete(requestId);
+            const text = payload.text;
+            const html = typeof payload.html === "string" && payload.html.length > 0 ? payload.html : undefined;
+            resolve(typeof text === "string" && text.length > 0 ? { text, html } : null);
+            return { accepted: true };
+        });
     }
 
     function installContentInsertion() {
@@ -854,6 +927,7 @@
             // <tiro-form-filler>: the host may want to insert into a field the page itself
             // renders (a free-text box beside the form) just as much as into the form's.
             installContentInsertion();
+            installTextShortcuts();
 
             const transportOk = SmartWebMessaging.init();
             if (!transportOk) {

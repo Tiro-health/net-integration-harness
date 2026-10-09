@@ -102,6 +102,22 @@ Public Class Form1
                                      Function() TiroRtf.ToHtml(ConclusionRtf),
                                      onResult:=AddressOf ShowInsertResult)
 
+        ' Text shortcuts: typing "µnka" then a space in a text field replaces it with a snippet.
+        ' Triggers are just the words; the snippet is looked up when one is typed. The user keeps
+        ' typing meanwhile — the delay stands in for a database lookup, and the answer lands
+        ' behind the caret. A real EHR loads the user's own abbreviations here.
+        TiroFormViewer.TextShortcutTriggers = New String() {"µnka", "µconc", "µpat"}
+        TiroFormViewer.ResolveTextShortcut =
+            Async Function(abbreviation)
+                Await System.Threading.Tasks.Task.Delay(200)
+                Select Case abbreviation
+                    Case "µnka" : Return New TiroSnippet("No known drug allergies.")
+                    Case "µconc" : Return TiroSnippet.FromRtf(ConclusionRtf)
+                    Case "µpat" : Return New TiroSnippet(patient.Name(0).Text)
+                    Case Else : Return Nothing
+                End Select
+            End Function
+
         ' The clinician writing the report and the visit it belongs to. The form's Klinische
         ' informatie fields prefill from these: Auteur from %user (the author), Datum consult
         ' from %encounter. Leave either out and its field stays empty.
