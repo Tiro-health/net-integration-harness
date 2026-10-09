@@ -393,12 +393,11 @@ namespace Tiro.Health.SmartWebMessaging
         /// Sends <c>ui.form.configureTextShortcuts</c>. The page acks with <c>count</c> accepted.
         /// </summary>
         public Task SendFormTextShortcutsAsync(
-            List<TextShortcutEntry> shortcuts,
-            List<string> abbreviations = null,
+            List<string> abbreviations,
             Func<SmartMessageResponse, Task> responseHandler = null,
             CancellationToken cancellationToken = default)
         {
-            return SendMessageAsync("ui.form.configureTextShortcuts", new FormTextShortcuts(shortcuts, abbreviations),
+            return SendMessageAsync("ui.form.configureTextShortcuts", new FormTextShortcuts(abbreviations),
                 responseHandler, cancellationToken);
         }
 

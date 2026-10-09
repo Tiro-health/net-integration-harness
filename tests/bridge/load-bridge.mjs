@@ -91,10 +91,6 @@ export async function loadBridge(formFillers, {
             forType.push(listener);
             documentListeners.set(type, forType);
         },
-        removeEventListener(type, listener) {
-            const forType = documentListeners.get(type) || [];
-            documentListeners.set(type, forType.filter(fn => fn !== listener));
-        },
         execCommand(name, showUi, value) {
             execCommands.push({ name, showUi, value });
             return execCommandResult;
@@ -176,16 +172,6 @@ export async function loadBridge(formFillers, {
             setData(type, value) { this.data[type] = value; }
             getData(type) { return this.data[type] ?? ""; }
         },
-        // Text shortcuts in rich-text fields send a beforeinput carrying a DataTransfer.
-        InputEvent: class InputEvent {
-            constructor(type, init) {
-                this.type = type;
-                this.inputType = init?.inputType;
-                this.dataTransfer = init?.dataTransfer ?? null;
-                this.bubbles = !!init?.bubbles;
-                this.cancelable = !!init?.cancelable;
-            }
-        },
         ClipboardEvent: class ClipboardEvent {
             constructor(type, init) {
                 this.type = type;
@@ -251,18 +237,6 @@ export async function loadBridge(formFillers, {
             (documentListeners.get("focusout") || []).forEach(fn =>
                 fn({ target: el, composedPath: () => [el] }));
             document.activeElement = activeAfter;
-        },
-        /**
-         * Simulate the user typing `data` into `el`: the `input` event that follows, as the
-         * capture listener on document sees it. Pass `init` to vary inputType/isComposing.
-         */
-        type: (el, data = " ", init = {}) => {
-            (documentListeners.get("input") || []).forEach(fn =>
-                fn({ target: el, composedPath: () => [el], inputType: "insertText", data, isComposing: false, ...init }));
-        },
-        /** Simulate the browser reporting a selection change. */
-        selectionChange: () => {
-            (documentListeners.get("selectionchange") || []).slice().forEach(fn => fn({ type: "selectionchange" }));
         },
         /** Simulate a host -> page envelope arriving over the transport. */
         receive: message => {

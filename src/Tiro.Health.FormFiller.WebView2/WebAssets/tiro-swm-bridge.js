@@ -15,9 +15,9 @@
  *                                              forwards user submissions to host
  *   - host content insertion                — ui.form.insertContent puts host-supplied text
  *                                              or HTML into the focused field at the caret
- *   - text shortcuts                        — ui.form.configureTextShortcuts: typed
- *                                              abbreviations expand into host snippets,
- *                                              preloaded or resolved on demand
+ *   - text shortcuts                        — ui.form.configureTextShortcuts: forwarded
+ *                                              to <tiro-form-filler>, which expands typed
+ *                                              abbreviations into host snippets
  *   - document CustomEvents (status hooks)  — tiro-connected, tiro-submitted,
  *                                              tiro-submit-error, tiro-cancelled,
  *                                              tiro-disconnected, tiro-sdk-error,
@@ -290,6 +290,7 @@
     // declared directly on TiroFormFiller, so the submit() contract is still checked.
     /** @param {import("@tiro-health/web-sdk").TiroFormFiller & HTMLElement & LitElementLike} formFiller */
     function wireFormFiller(formFiller) {
+        applyTextShortcuts(formFiller);
         // Endpoint config is driven by the protocol's sdc.configure message (per the SDC
         // SMART Web Messaging dialect — see github.com/brianpos/sdc-smart-web-messaging).
         // The host sends sdc.configure after handshake; we stash the payload here and
@@ -690,220 +691,67 @@
     // Text shortcuts (ui.form.configureTextShortcuts)
     // ------------------------------------------------------------
     //
-    // The host sends its abbreviations up front, with content (expanded at once) or without
-    // (content requested from the host when typed). Matching is local, so only a matched
-    // abbreviation ever leaves the page. An abbreviation matches as a whole word
-    // (case-sensitive) when a space follows. Only the word is replaced, behind the caret, so
-    // a late answer still lands after the user typed on; Ctrl+Z restores the abbreviation.
+    // Matching and replacement live in the web-sdk: <tiro-form-filler> watches its free-text
+    // fields for the abbreviations in `textShortcuts`, marks a typed one pending, asks
+    // `resolveTextShortcut` for its content, and replaces it behind the caret when the answer
+    // arrives. The bridge only forwards the host's triggers and carries each request to the
+    // host (ui.form.textShortcutRequested) and its answer back (ui.form.resolveTextShortcut).
 
-    /** @type {Map<string, {text: string, html: string | null}>} */
-    let textShortcuts = new Map();
+    /** The host's triggers: abbreviations only, content comes from the host when typed. */
+    let shortcutTriggers = /** @type {string[]} */ ([]);
 
-    /** Abbreviations whose content the host resolves on demand. @type {Set<string>} */
-    let resolvableShortcuts = new Set();
-
-    /** Requests awaiting the host's content, by requestId. @type {Map<string, {el: any, loc: any}>} */
-    const pendingShortcuts = new Map();
+    /** Requests awaiting the host's answer, by requestId. */
+    const pendingShortcutAnswers = new Map();
     let shortcutRequestCounter = 0;
-    const SHORTCUT_REQUEST_TIMEOUT_MS = 10000;
 
-    /** Set while expanding, so our own input events don't re-trigger. */
-    let expandingShortcut = false;
+    // The web-sdk gives up after 10 s as well; this only releases the entry.
+    const SHORTCUT_ANSWER_TIMEOUT_MS = 10000;
 
-    /** @param {string} ch */
-    const isWhitespace = ch => /\s/.test(ch);
-
-    // Word boundary: whitespace, or a zero-width character — editors keep one in an empty block.
-    /** @param {string} ch */
-    const isBoundary = ch => /[\s\u200B-\u200D\u2060]/.test(ch);
-
-    /** @param {string} word */
-    const isShortcut = word => textShortcuts.has(word) || resolvableShortcuts.has(word);
-
-    /** The word ending just before the space at `termPos`. @param {string} text @param {number} termPos */
-    function wordBefore(text, termPos) {
-        let start = termPos;
-        while (start > 0 && !isBoundary(text[start - 1])) start--;
-        return { word: text.slice(start, termPos), start };
-    }
-
-    /** @param {any} el */
-    function selectionOf(el) {
-        const root = typeof el.getRootNode === "function" ? el.getRootNode() : document;
-        return typeof root.getSelection === "function"
-            ? root.getSelection()
-            : (typeof document.getSelection === "function" ? document.getSelection() : null);
+    /**
+     * The `resolveTextShortcut` the web-sdk calls: asks the host and resolves with its answer,
+     * or null when it has none or doesn't answer in time.
+     * @param {string} abbreviation
+     */
+    function resolveShortcutViaHost(abbreviation) {
+        return new Promise(resolve => {
+            const requestId = "ts-" + (++shortcutRequestCounter);
+            pendingShortcutAnswers.set(requestId, resolve);
+            setTimeout(() => {
+                if (pendingShortcutAnswers.delete(requestId)) resolve(null);
+            }, SHORTCUT_ANSWER_TIMEOUT_MS);
+            SmartWebMessaging.sendEvent("ui.form.textShortcutRequested", { requestId, abbreviation });
+        });
     }
 
     /**
-     * Where the abbreviation before the caret is, or null: its word, and the range covering
-     * it plus the space (a text node for a contenteditable, value offsets otherwise).
-     * @param {any} el
+     * Applies the triggers to one form filler. Loosely typed: the properties are newer than
+     * the frontend contract build/bridge-contract checks against.
+     * @param {any} formFiller
      */
-    function locateShortcut(el) {
-        if (el.isContentEditable) {
-            const selection = selectionOf(el);
-            if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return null;
-            const node = selection.focusNode;
-            const end = selection.focusOffset;
-            if (!node || node.nodeType !== 3 || !el.contains(node) || end < 1) return null;
-            // Editors may store the space as U+00A0; \s covers it.
-            if (!isWhitespace(node.data[end - 1])) return null;
-            const { word, start } = wordBefore(node.data, end - 1);
-            return word && isShortcut(word) ? { word, node, start, end } : null;
-        }
-        const end = el.selectionStart;
-        if (typeof end !== "number" || end !== el.selectionEnd || end < 1) return null;
-        if (!isWhitespace(el.value[end - 1])) return null;
-        const { word, start } = wordBefore(el.value, end - 1);
-        return word && isShortcut(word) ? { word, start, end, term: el.value[end - 1] } : null;
+    function applyTextShortcuts(formFiller) {
+        formFiller.textShortcuts = shortcutTriggers.map(abbreviation => ({ abbreviation }));
+        formFiller.resolveTextShortcut = resolveShortcutViaHost;
     }
 
-    /**
-     * True when the abbreviation at `loc` is still there, as a whole word followed by
-     * whitespace, in the focused field. The user may have typed on after it: the replacement
-     * happens behind the caret and leaves the caret where it is.
-     * @param {any} el @param {any} loc
-     */
-    function stillAt(el, loc) {
-        if (!el.isConnected || !isTextEditable(el) || deepActiveElement() !== el) return false;
-        const text = el.isContentEditable
-            ? (loc.node.isConnected && el.contains(loc.node) ? loc.node.data : null)
-            : el.value;
-        if (typeof text !== "string") return false;
-        const wordEnd = loc.start + loc.word.length;
-        return text.slice(loc.start, wordEnd) === loc.word
-            && (loc.start === 0 || isBoundary(text[loc.start - 1]))
-            && isWhitespace(text[wordEnd] || "");
-    }
+    function installTextShortcuts() {
+        SmartWebMessaging.on("ui.form.configureTextShortcuts", payload => {
+            const list = payload && Array.isArray(payload.abbreviations) ? payload.abbreviations : [];
+            shortcutTriggers = list.filter(a => typeof a === "string" && a.length > 0 && !/\s/.test(a));
+            document.querySelectorAll("tiro-form-filler").forEach(applyTextShortcuts);
+            return { count: shortcutTriggers.length };
+        });
 
-    /**
-     * The caret as its distance from the end of its paragraph (a direct child of `el`), which
-     * a replacement earlier in the paragraph — or in another one — doesn't change.
-     * @param {any} el
-     */
-    function saveCaret(el) {
-        try {
-            const selection = selectionOf(el);
-            if (!selection || selection.rangeCount === 0 || !el.contains(selection.focusNode)) return null;
-            let block = selection.focusNode;
-            while (block.parentNode && block.parentNode !== el) block = block.parentNode;
-            const range = (block.ownerDocument || document).createRange();
-            range.selectNodeContents(block);
-            range.setStart(selection.focusNode, selection.focusOffset);
-            return { block, fromEnd: range.toString().length };
-        } catch (err) {
-            return null; // The expansion still happens; the caret ends after it.
-        }
-    }
-
-    /** @param {any} el @param {any} saved */
-    function restoreCaret(el, saved) {
-        if (!saved || !saved.block.isConnected) return;
-        const doc = saved.block.ownerDocument || document;
-        const walker = doc.createTreeWalker(saved.block, 4 /* SHOW_TEXT */);
-        const nodes = [];
-        for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n);
-        let remaining = saved.fromEnd;
-        for (let i = nodes.length - 1; i >= 0; i--) {
-            const length = nodes[i].data.length;
-            if (remaining <= length) {
-                const selection = selectionOf(el);
-                selection.removeAllRanges();
-                const range = doc.createRange();
-                range.setStart(nodes[i], length - remaining);
-                selection.addRange(range);
-                return;
-            }
-            remaining -= length;
-        }
-    }
-
-    /** @param {any} el @param {string} mode */
-    const reportExpanded = (el, mode) => fire("tiro-text-shortcut-expanded", { mode, target: el });
-
-    /**
-     * Replaces the abbreviation at `loc` with `content`, keeping the user's space and caret.
-     * Reports success through tiro-text-shortcut-expanded (no content: it can carry patient
-     * data).
-     * @param {any} el @param {any} loc @param {{text: string, html: string | null}} content
-     */
-    function applyShortcut(el, loc, content) {
-        expandingShortcut = true;
-        try {
-            const mode = el.isContentEditable
-                ? replaceInRichText(el, loc, content)
-                : replaceInTextControl(el, loc, content);
-            if (mode) reportExpanded(el, mode);
-        } catch (err) {
-            console.warn("[bridge] text shortcut expansion failed:", err);
-        } finally {
-            expandingShortcut = false;
-        }
-    }
-
-    /** @param {any} el @param {any} loc @param {{text: string, html: string | null}} content */
-    function replaceInTextControl(el, loc, content) {
-        const caretStart = el.selectionStart;
-        const caretEnd = el.selectionEnd;
-        const wordEnd = loc.start + loc.word.length;
-        el.setSelectionRange(loc.start, wordEnd);
-        if (!insertPlainTextInto(el, content.text)) return null;
-        const shift = (/** @type {number} */ p) => (p >= wordEnd ? p + content.text.length - loc.word.length : p);
-        el.setSelectionRange(shift(caretStart), shift(caretEnd));
-        return "text";
-    }
-
-    /**
-     * A synthetic beforeinput "insertReplacementText" — what a spellchecker sends — carrying
-     * the content. Lexical reads the DOM selection for beforeinput (not for paste), so it
-     * replaces exactly the selected word, in one undoable step, with HTML kept. It then puts
-     * its caret after the insert, so the user's caret is restored once it has committed.
-     * @param {any} el @param {any} loc @param {{text: string, html: string | null}} content
-     */
-    function replaceInRichText(el, loc, content) {
-        const saved = saveCaret(el);
-        const selection = selectionOf(el);
-        const range = (loc.node.ownerDocument || document).createRange();
-        range.setStart(loc.node, loc.start);
-        range.setEnd(loc.node, loc.start + loc.word.length);
-        selection.removeAllRanges();
-        selection.addRange(range);
-
-        const data = new DataTransfer();
-        data.setData("text/plain", content.text);
-        if (content.html) data.setData("text/html", content.html);
-        const handled = !el.dispatchEvent(new InputEvent("beforeinput", {
-            inputType: "insertReplacementText", dataTransfer: data, bubbles: true, cancelable: true,
-        }));
-        // An editor that ignores it (a plain contenteditable): insert on the selection directly.
-        if (!handled && !insertPlainTextInto(el, content.text)) {
-            restoreCaret(el, saved);
-            return null;
-        }
-        // After the editor's commit (a microtask), before the next keystroke (a task).
-        Promise.resolve().then(() => restoreCaret(el, saved));
-        return handled && content.html ? "html" : "text";
-    }
-
-    /** Deferred after the space lands; bails if the field lost focus meanwhile. @param {any} el */
-    function expandShortcutBeforeCaret(el) {
-        if (expandingShortcut || !el || !el.isConnected || !isTextEditable(el)) return;
-        if (!el.isContentEditable && deepActiveElement() !== el) return;
-
-        const loc = locateShortcut(el);
-        if (!loc) return;
-        const known = textShortcuts.get(loc.word);
-        if (known) {
-            applyShortcut(el, loc, known);
-            return;
-        }
-
-        // Ask the host. The answer arrives as ui.form.resolveTextShortcut.
-        const requestId = "ts-" + (++shortcutRequestCounter);
-        pendingShortcuts.set(requestId, { el, loc });
-        setTimeout(() => pendingShortcuts.delete(requestId), SHORTCUT_REQUEST_TIMEOUT_MS);
-        SmartWebMessaging.sendEvent("ui.form.textShortcutRequested", { requestId, abbreviation: loc.word });
+        // The host's answer. No text means no snippet: the abbreviation stays as typed.
+        SmartWebMessaging.on("ui.form.resolveTextShortcut", payload => {
+            const requestId = payload && payload.requestId;
+            const resolve = pendingShortcutAnswers.get(requestId);
+            if (!resolve) return { accepted: false };
+            pendingShortcutAnswers.delete(requestId);
+            const text = payload.text;
+            const html = typeof payload.html === "string" && payload.html.length > 0 ? payload.html : undefined;
+            resolve(typeof text === "string" && text.length > 0 ? { text, html } : null);
+            return { accepted: true };
+        });
     }
 
     function installContentInsertion() {
@@ -928,53 +776,6 @@
             if (!el || el !== lastEditable || !el.isContentEditable) return;
             lastRange = selectionRangeIn(el);
         }, true);
-
-        // Text shortcuts: only a typed space triggers (not paste, IME, or our own insert).
-        document.addEventListener("input", event => {
-            if ((textShortcuts.size === 0 && resolvableShortcuts.size === 0) || expandingShortcut) return;
-            const input = /** @type {any} */ (event);
-            if (input.isComposing || input.inputType !== "insertText" || input.data !== " ") return;
-            const el = originOf(event);
-            if (!isTextEditable(el)) return;
-            // Deferred so the editor has committed the space.
-            setTimeout(() => expandShortcutBeforeCaret(el), 0);
-        }, true);
-
-        SmartWebMessaging.on("ui.form.configureTextShortcuts", payload => {
-            const list = payload && Array.isArray(payload.shortcuts) ? payload.shortcuts : [];
-            const next = new Map();
-            for (const entry of list) {
-                const abbreviation = entry && entry.abbreviation;
-                const text = entry && entry.text;
-                if (typeof abbreviation !== "string" || abbreviation.length === 0) continue;
-                if (/\s/.test(abbreviation)) continue;
-                if (typeof text !== "string" || text.length === 0) continue;
-                const html = typeof entry.html === "string" && entry.html.length > 0 ? entry.html : null;
-                next.set(abbreviation, { text, html });
-            }
-            const resolvable = new Set();
-            const abbreviations = payload && Array.isArray(payload.abbreviations) ? payload.abbreviations : [];
-            for (const abbreviation of abbreviations) {
-                if (typeof abbreviation !== "string" || abbreviation.length === 0 || /\s/.test(abbreviation)) continue;
-                if (!next.has(abbreviation)) resolvable.add(abbreviation);
-            }
-            textShortcuts = next;
-            resolvableShortcuts = resolvable;
-            return { count: next.size + resolvable.size };
-        });
-
-        // The host's answer to ui.form.textShortcutRequested. No text means no snippet.
-        SmartWebMessaging.on("ui.form.resolveTextShortcut", payload => {
-            const requestId = payload && payload.requestId;
-            const pending = pendingShortcuts.get(requestId);
-            pendingShortcuts.delete(requestId);
-            const text = payload && payload.text;
-            if (!pending || typeof text !== "string" || text.length === 0) return { expanded: false };
-            if (!stillAt(pending.el, pending.loc)) return { expanded: false };
-            const html = typeof payload.html === "string" && payload.html.length > 0 ? payload.html : null;
-            applyShortcut(pending.el, pending.loc, { text, html });
-            return { expanded: true };
-        });
 
         SmartWebMessaging.on("ui.form.insertContent", payload => {
             const text = payload && payload.text;
@@ -1126,6 +927,7 @@
             // <tiro-form-filler>: the host may want to insert into a field the page itself
             // renders (a free-text box beside the form) just as much as into the form's.
             installContentInsertion();
+            installTextShortcuts();
 
             const transportOk = SmartWebMessaging.init();
             if (!transportOk) {

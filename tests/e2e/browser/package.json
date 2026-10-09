@@ -4,13 +4,9 @@
   "type": "module",
   "description": "GH-26 layer 1: the real <tiro-form-filler> driven by the real bridge against a real SDC server. Complements tests/bridge (stub element) and build/bridge-contract (types only).",
   "scripts": {
-    "test": "node --test flow.test.mjs text-shortcuts.test.mjs"
+    "test": "node --test flow.test.mjs"
   },
   "devDependencies": {
-    "@lexical/history": "0.52.0",
-    "@lexical/rich-text": "0.52.0",
-    "esbuild": "0.25.10",
-    "lexical": "0.52.0",
     "playwright": "1.56.0"
   }
 }

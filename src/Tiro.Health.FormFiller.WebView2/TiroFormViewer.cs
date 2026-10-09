@@ -105,41 +105,46 @@ namespace Tiro.Health.FormFiller.WebView2
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public IList<TiroContextMenuItem> ContextMenuItems { get; } = new List<TiroContextMenuItem>();
 
+        private IReadOnlyList<string> _textShortcutTriggers = new string[0];
+
         /// <summary>
-        /// Abbreviations the form expands as the user types: <c>µnka</c> + space becomes
-        /// "No known drug allergies. ". Sent by <c>SetContextAsync</c>; after a mid-session
-        /// change, call <see cref="UpdateTextShortcutsAsync"/>.
+        /// Text shortcut triggers: the abbreviations (e.g. <c>µpat</c>) the form watches for in
+        /// its free-text fields. When the user types one followed by a space, the form asks
+        /// <see cref="ResolveTextShortcut"/> for its content and replaces it.
         /// </summary>
         /// <remarks>
-        /// Load the user's whole list up front; the page matches locally, so typed text never
-        /// leaves it. Content is inserted as given — resolve placeholders first. Matches whole
-        /// words in free-text fields; Ctrl+Z restores the abbreviation; later duplicates win.
+        /// Words only, no content: even a large list is cheap, and snippets are fetched when
+        /// used. Matched as whole words, case-sensitive; entries containing whitespace are
+        /// ignored. Sent by <c>SetContextAsync</c>; assigning a new list once the form is shown
+        /// (e.g. on a user switch) sends it at once. Typed text other than a trigger never
+        /// leaves the page.
         /// </remarks>
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public IList<TiroTextShortcut> TextShortcuts { get; } = new List<TiroTextShortcut>();
+        public IReadOnlyList<string> TextShortcutTriggers
+        {
+            get => _textShortcutTriggers;
+            set
+            {
+                _textShortcutTriggers = value == null ? new string[0] : new List<string>(value).ToArray();
+                if (State == TiroFormViewerState.ContextSet) _ = SendTextShortcutsSafelyAsync();
+            }
+        }
 
         /// <summary>
-        /// Abbreviations whose content <see cref="ResolveTextShortcut"/> supplies when typed —
-        /// for a list too large to load up front. Sent like <see cref="TextShortcuts"/>, which
-        /// wins for an abbreviation in both.
-        /// </summary>
-        [Browsable(false)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public IList<string> TextShortcutAbbreviations { get; } = new List<string>();
-
-        /// <summary>
-        /// Called on the UI thread when the user types one of
-        /// <see cref="TextShortcutAbbreviations"/>; returns its content, or null for none.
+        /// Supplies the snippet for a typed trigger; null when there is none. Called on the UI
+        /// thread, so do slow work with <c>Await</c> — a blocking call freezes the EHR.
         /// </summary>
         /// <remarks>
-        /// May be async. A late answer still replaces the abbreviation behind the caret if the
-        /// user typed on; it is dropped if the abbreviation was edited, the field was left, or
-        /// 10 s passed. A resolver that throws is reported to telemetry and nothing is inserted.
+        /// The user does not wait: the abbreviation is marked pending and typing carries on.
+        /// The snippet replaces it behind the caret when it arrives, also if the user moved to
+        /// another field. It is dropped if the abbreviation was edited or removed, or if no
+        /// answer comes within 10 s. A resolver that throws is reported to telemetry and the
+        /// text stays as typed.
         /// </remarks>
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public Func<string, Task<TiroTextShortcut>> ResolveTextShortcut { get; set; }
+        public Func<string, Task<TiroSnippet>> ResolveTextShortcut { get; set; }
 
         /// <summary>
         /// Full control of the form's right-click menu. Called on every right-click with the
@@ -1021,7 +1026,7 @@ namespace Tiro.Health.FormFiller.WebView2
         /// </summary>
         private async void OnTextShortcutRequested(object sender, TextShortcutRequestedEventArgs e)
         {
-            TiroTextShortcut resolved = null;
+            TiroSnippet resolved = null;
             try
             {
                 var resolver = ResolveTextShortcut;
@@ -1275,7 +1280,7 @@ namespace Tiro.Health.FormFiller.WebView2
                     }
 
                     // Before the questionnaire, so they're active once the user can type.
-                    if (TextShortcuts.Count > 0 || TextShortcutAbbreviations.Count > 0)
+                    if (TextShortcutTriggers.Count > 0)
                         await SendTextShortcutsAsync(linkedCts.Token, cancellationToken);
 
                     var wrappedHandler = WrapForRoundTrip("sdc.displayQuestionnaire", span, cancellationToken, originalHandler: null);
@@ -1494,53 +1499,39 @@ namespace Tiro.Health.FormFiller.WebView2
         }
 
         /// <summary>
-        /// Resends <see cref="TextShortcuts"/>, replacing the page's list (e.g. after a user
-        /// switch). An empty list turns expansion off.
+        /// Resends the triggers after <see cref="TextShortcutTriggers"/> was assigned. Fire and
+        /// forget from a property setter, so every failure is reported here.
         /// </summary>
-        public async Task UpdateTextShortcutsAsync(CancellationToken cancellationToken = default)
+        private async Task SendTextShortcutsSafelyAsync()
         {
-            GuardCanInsertText();
-            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCts.Token))
+            try
             {
-                linkedCts.CancelAfter(HandshakeTimeoutMs);
-                await _initializationTask.WaitAsync(linkedCts.Token);
-                await WaitForHandshakeAsync(null, linkedCts.Token, cancellationToken,
-                    timeoutMessage: "Handshake timeout while updating text shortcuts.");
-                await SendTextShortcutsAsync(linkedCts.Token, cancellationToken);
+                await SendTextShortcutsAsync(_lifetimeCts.Token, CancellationToken.None);
+            }
+            catch (OperationCanceledException) { /* disposed meanwhile */ }
+            catch (ObjectDisposedException) { /* disposed meanwhile */ }
+            catch (Exception ex)
+            {
+                _telemetry.CaptureException(ex);
             }
         }
 
         /// <summary>
-        /// Sends <see cref="TextShortcuts"/>. Telemetry gets the count only — snippets can name a patient.
+        /// Sends <see cref="TextShortcutTriggers"/>. Telemetry gets the count only.
         /// </summary>
         private async Task SendTextShortcutsAsync(CancellationToken linkedToken, CancellationToken userToken)
         {
-            // Snapshot: the host may change the list meanwhile.
-            var entries = new List<TextShortcutEntry>();
-            foreach (var shortcut in new List<TiroTextShortcut>(TextShortcuts))
-            {
-                if (shortcut == null) continue;
-                entries.Add(new TextShortcutEntry
-                {
-                    Abbreviation = shortcut.Abbreviation,
-                    Text = shortcut.Text,
-                    Html = shortcut.Html,
-                });
-            }
-
-            var abbreviations = new List<string>();
-            foreach (var abbreviation in new List<string>(TextShortcutAbbreviations))
-                if (!string.IsNullOrEmpty(abbreviation)) abbreviations.Add(abbreviation);
+            var triggers = new List<string>();
+            foreach (var trigger in TextShortcutTriggers)
+                if (!string.IsNullOrEmpty(trigger)) triggers.Add(trigger);
 
             var span = _session?.StartTransaction("ui.form.configureTextShortcuts", "swm.send");
             span?.SetTag("messageType", "ui.form.configureTextShortcuts");
-            span?.SetTag("shortcut_count", entries.Count.ToString(CultureInfo.InvariantCulture));
-            span?.SetTag("resolvable_count", abbreviations.Count.ToString(CultureInfo.InvariantCulture));
+            span?.SetTag("trigger_count", triggers.Count.ToString(CultureInfo.InvariantCulture));
             try
             {
                 await _smartWebMessageHandler.SendFormTextShortcutsAsync(
-                    entries,
-                    abbreviations,
+                    triggers,
                     WrapForRoundTrip("ui.form.configureTextShortcuts", span, userToken, originalHandler: null),
                     linkedToken);
             }

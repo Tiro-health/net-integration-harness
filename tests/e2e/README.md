@@ -32,10 +32,6 @@ goes red for reasons outside the author's control gets ignored just as fast as a
 
 ## `browser/` — layer 1
 
-`text-shortcuts.test.mjs` also lives here: the bridge's text shortcuts against a real Lexical
-editor (pinned in `package.json`, bundled with esbuild at test time), typed with real keystrokes.
-It needs no SDC server.
-
 A static server stands in for the WebView2 virtual hosts (serving the page plus the
 *staged* web-sdk bundle) and `host-shim.mjs` stands in for the .NET host's protocol side,
 so `tiro-swm-bridge.js` runs **unmodified** — injected via `addInitScript`, which gives the
